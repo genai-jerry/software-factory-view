@@ -287,6 +287,11 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 /* ------------------------------- helpers ------------------------------- */
 
 async function loadAdminRepo(deps: AppDeps, ctx: RequestCtx, repoId: string, reply: { code: (n: number) => { send: (b: unknown) => unknown } }) {
+  const auth = await deps.credentials.auth();
+  if (!auth) {
+    reply.code(409).send({ error: "no GitHub App registered — complete setup first" });
+    return null;
+  }
   const { db } = deps.dbh;
   const repo = (await db.select().from(repos).where(and(eq(repos.id, repoId), inArray(repos.orgId, ctx.orgIds))).limit(1))[0];
   if (!repo) {
@@ -305,7 +310,7 @@ async function loadAdminRepo(deps: AppDeps, ctx: RequestCtx, repoId: string, rep
     return null;
   }
   const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0]!;
-  const client = new InstallationClient(deps.cfg.GITHUB_API_URL, deps.auth, estate.installationId);
+  const client = new InstallationClient(deps.cfg.GITHUB_API_URL, auth, estate.installationId);
   const [owner, name] = repo.fullName.split("/") as [string, string];
   return { repo, estate, client, owner, name };
 }

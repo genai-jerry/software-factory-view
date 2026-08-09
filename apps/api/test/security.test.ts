@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { AppAuth, encryptSecret, loadConfig } from "@console/core";
+import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { memberships, orgs, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -36,7 +36,18 @@ beforeAll(async () => {
   deps = {
     cfg,
     dbh: { db, sql: null as never, close: async () => undefined },
-    auth: new AppAuth({ apiUrl: "https://api.invalid", appId: "", privateKeyPem: "", oauthClientId: "", oauthClientSecret: "" }),
+    credentials: new CredentialStore({
+      masterKey: MASTER_KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => null, // no DB row: exercises the environment fallback
+      env: {
+        appId: "12345",
+        privateKeyPem: "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----",
+        webhookSecret: WEBHOOK_SECRET,
+        clientId: "Iv1.test",
+        clientSecret: "shh",
+      },
+    }),
     ingestQueue: { add: async (...args: unknown[]) => enqueued.push(args) } as never,
     reconcileQueue: { add: async () => undefined } as never,
   };

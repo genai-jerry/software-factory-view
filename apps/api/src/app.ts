@@ -7,6 +7,8 @@ import { registerGateRoutes } from "./routes/gate.js";
 import { registerWriteRoutes } from "./routes/write.js";
 import { registerQaRoutes } from "./routes/qa.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
+import { registerEstateRoutes } from "./routes/estates.js";
+import { registerSetupRoutes } from "./setup.js";
 import type { AppDeps } from "./context.js";
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -25,8 +27,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get("/api/health", async () => ({ ok: true, service: "console-api" }));
 
+  registerSetupRoutes(app, deps);
   registerAuthRoutes(app, deps);
   registerWebhookRoutes(app, deps);
+  registerEstateRoutes(app, deps);
   registerReadRoutes(app, deps);
   registerGateRoutes(app, deps);
   registerWriteRoutes(app, deps);

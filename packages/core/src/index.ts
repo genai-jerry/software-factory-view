@@ -4,3 +4,4 @@ export * from "./derive.js";
 export * from "./crypto.js";
 export * from "./config.js";
 export * from "./github.js";
+export * from "./credentials.js";

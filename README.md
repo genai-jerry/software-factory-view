@@ -23,7 +23,8 @@ Implemented (Phases 0–2 of the [delivery plan](docs/plan/04-delivery-plan.md),
 - **Decision log** — structured decisions posted to the epic with `<!-- console:decision=… -->`, indexed and
   searchable; gate approvals auto-record.
 - **Ask the Factory** — cited Q&A grounded only in the epic's own artifacts/threads/PRs/runs, per-org token budget.
-- **Onboarding** — labels step, write-through secrets, stub-files PR, 9-check validation suite, adopt-existing-install.
+- **Onboarding** — GitHub App self-registration (manifest flow), in-app estate/repo connection, labels step,
+  write-through secrets, stub-files PR, 9-check validation suite, adopt-existing-install.
 
 Not yet built (per plan): full RBAC/estate scoping, billing, notifications email/Slack, thread digests & gate
 review briefs, config editors with config-as-PR, Phase 5 deployment/testing views.
@@ -49,54 +50,61 @@ through the user-token client — approving or merging as the app is structurall
 
 ## Run it
 
-### 1. Prerequisites
+### Scripts
 
-Docker + Docker Compose, and a GitHub org where you can install a GitHub App.
-For the Q&A panel: an Anthropic API key.
-
-### 2. Register your GitHub App (once)
-
-GitHub → Settings → Developer settings → GitHub Apps → New:
-
-- **Webhook URL**: `https://<your-host>/webhooks/github` (for local testing use a tunnel, e.g. `smee.io` or `cloudflared`).
-- **Webhook secret**: generate one; goes in `.env` as `GITHUB_APP_WEBHOOK_SECRET`.
-- **Callback URL**: `https://<your-host>/auth/github/callback` — check *Request user authorization (OAuth) during installation* is **off**; the Console starts its own OAuth flow.
-- **Permissions**: Issues RW · Pull requests RW · Contents RW · Actions R · Checks R · Workflows R · Secrets W · Members R · Metadata R.
-- **Events**: issues, issue_comment, label, pull_request, pull_request_review, push, check_suite, check_run, workflow_run, installation, installation_repositories.
-- Generate a **private key**, convert to PKCS#8: `openssl pkcs8 -topk8 -nocrypt -in app.pem -out app-pkcs8.pem`.
-
-Install the App on your org and select your estate's repositories
-(e.g. `insurance-app-base`). The installation webhook creates the estate.
-
-### 3. Configure and start
+| Script | What it does |
+|---|---|
+| `./scripts/setup.sh` | One-time: checks the toolchain, writes `.env` with a generated encryption key, installs, builds, starts Postgres/Redis, migrates |
+| `./scripts/dev.sh` | Dev mode — API + worker + Vite with rebuild-on-change, on **:5173**. `./scripts/dev.sh api worker` runs a subset |
+| `./scripts/start.sh` | Full Docker stack (nginx + api + worker + postgres + redis) on **:8080**. `--rebuild` forces a rebuild |
+| `./scripts/stop.sh` | Stops dev processes and the Docker stack. `--volumes` also drops the database |
+| `./scripts/logs.sh` | Tails logs from whichever mode is running; `./scripts/logs.sh api` for one service |
 
 ```bash
-cp .env.example .env        # fill in the App credentials
-openssl rand -base64 32     # -> CONSOLE_MASTER_KEY
-docker compose up --build
+./scripts/setup.sh     # once
+./scripts/dev.sh       # then, day to day
 ```
 
-Open http://localhost:8080 → Sign in with GitHub.
+### Configuration: one secret, everything else in the app
 
-### 4. Adopt your existing factory estate
+`.env` needs exactly **one** value, and `setup.sh` generates it:
 
-Onboarding page → **Reconcile estate now**. The reconciler walks GitHub and
-imports issues, PRs, runs, gate assignments (`factory-approvers.json`) and
-change-folder artifacts — zero re-setup for a repo that was factory-enabled by
-hand. Mission control fills in as it completes.
-
-### 5. Dev mode (no Docker)
-
-```bash
-pnpm install
-docker compose up -d postgres redis
-pnpm db:migrate
-pnpm dev:api      # :8787
-pnpm dev:worker
-pnpm dev:web      # :5173, proxies /api to :8787
+```
+CONSOLE_MASTER_KEY=...   # 32 random bytes; encrypts stored tokens, the App's
+                         # private key, and cached repo content at rest
 ```
 
-`DEV_FAKE_LOGIN=1` allows `/auth/dev-login` to exercise the UI without a GitHub App
+There are **no repo or org IDs in any config file.** When you open the Console:
+
+1. **Setup screen** creates the Console's own GitHub App for you. GitHub builds it
+   from a manifest and hands back the app id, private key, webhook secret and OAuth
+   pair in one exchange — nothing to copy, no PKCS#1→PKCS#8 conversion. The
+   credentials are stored encrypted in the database.
+2. **Install the App** on the org you want (button on the confirmation screen).
+3. **Onboarding → Connect an estate** lists the installations *your GitHub identity
+   can see*, you tick the repositories to watch, and the Console syncs them
+   immediately — no waiting on a webhook.
+
+Set `PUBLIC_ORIGIN` if you reach the Console anywhere other than the default for
+your mode; OAuth callbacks and the App's webhook URL are derived from it.
+`ANTHROPIC_API_KEY` is optional and only enables the Q&A panel. The `.env.example`
+"Advanced" block lets you pin App credentials in the environment instead, for
+immutable deployments — the database registration simply takes precedence when present.
+
+### Adopt your existing factory estate
+
+After connecting repos, Onboarding → **Reconcile estate now** walks GitHub and imports
+issues, PRs, runs, gate assignments (`factory-approvers.json`) and change-folder
+artifacts — zero re-setup for a repo that was factory-enabled by hand.
+
+### Webhooks and local runs
+
+GitHub cannot reach `localhost`, so on a local run no webhooks arrive. Everything still
+works — reconcile pulls the current state on demand. For live updates, expose the
+Console (`cloudflared tunnel --url http://localhost:5173`), set `PUBLIC_ORIGIN` to that
+URL, and register the App from there so its webhook URL matches.
+
+`DEV_FAKE_LOGIN=1` enables `/auth/dev-login` to browse the UI with no GitHub App at all
 (read-only — GitHub writes need a real token).
 
 ## Testing guide (what to try)

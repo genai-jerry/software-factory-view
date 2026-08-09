@@ -1,5 +1,25 @@
 /** DTO shapes mirroring the API responses. */
 
+export interface SetupStatus {
+  configured: boolean;
+  source: "database" | "environment" | null;
+  appSlug: string | null;
+  hasMasterKey: boolean;
+  publicOrigin: string;
+  insightEnabled: boolean;
+  devLogin: boolean;
+}
+
+export interface InstallationSummary {
+  installationId: number;
+  account: string;
+  accountType: string;
+  avatarUrl: string | null;
+  estateId: string | null;
+  estateName: string | null;
+  repos: Array<{ nodeId: string; fullName: string; defaultBranch: string; private: boolean; connected: boolean }>;
+}
+
 export interface Me {
   login: string;
   name: string | null;

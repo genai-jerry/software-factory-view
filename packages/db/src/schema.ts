@@ -19,6 +19,28 @@ import {
  * No table mixes the two.
  */
 
+/* ------------------------------- console-native: instance config ------------------------------- */
+
+/**
+ * The Console's own GitHub App credentials. Kept here rather than in the
+ * environment so an operator can register the App from the setup screen
+ * (manifest flow) and never hand-copy a private key. Secrets are encrypted
+ * with CONSOLE_MASTER_KEY, which remains the one thing the environment must
+ * supply. Singleton: exactly one row, id = 'default'.
+ */
+export const githubAppConfig = pgTable("github_app_config", {
+  id: text("id").primaryKey().default("default"),
+  appId: text("app_id").notNull(),
+  slug: text("slug"),
+  htmlUrl: text("html_url"),
+  encryptedPrivateKey: text("encrypted_private_key").notNull(),
+  encryptedWebhookSecret: text("encrypted_webhook_secret").notNull(),
+  clientId: text("client_id").notNull(),
+  encryptedClientSecret: text("encrypted_client_secret").notNull(),
+  configuredBy: text("configured_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ------------------------------- console-native: identity ------------------------------- */
 
 export const orgs = pgTable("orgs", {

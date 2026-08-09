@@ -1,4 +1,4 @@
-import { AppAuth, decryptSecret, UserClient, type ConsoleConfig } from "@console/core";
+import { CredentialStore, decryptSecret, UserClient, type ConsoleConfig } from "@console/core";
 import { memberships, sessions, users, type Db, type DbHandle } from "@console/db";
 import { and, eq, gt } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -8,7 +8,8 @@ import type { Queue } from "bullmq";
 export interface AppDeps {
   cfg: ConsoleConfig;
   dbh: DbHandle;
-  auth: AppAuth;
+  /** Resolves the Console's GitHub App credentials (database first, env fallback). */
+  credentials: CredentialStore;
   ingestQueue: Queue;
   reconcileQueue: Queue;
 }

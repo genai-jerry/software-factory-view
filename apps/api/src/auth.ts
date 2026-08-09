@@ -15,12 +15,16 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { cfg, dbh } = deps;
 
   app.get("/auth/github/login", async (_req, reply) => {
-    if (cfg.DEV_FAKE_LOGIN === "1") return reply.redirect("/auth/dev-login");
+    const creds = await deps.credentials.resolve();
+    if (!creds) {
+      if (cfg.DEV_FAKE_LOGIN === "1") return reply.redirect("/auth/dev-login");
+      return reply.redirect("/setup");
+    }
     const state = randomToken(16);
     oauthStates.set(state, Date.now() + 10 * 60_000);
     const redirectUri = `${cfg.PUBLIC_ORIGIN}/auth/github/callback`;
     const url =
-      `${cfg.GITHUB_WEB_URL}/login/oauth/authorize?client_id=${encodeURIComponent(cfg.GITHUB_OAUTH_CLIENT_ID)}` +
+      `${cfg.GITHUB_WEB_URL}/login/oauth/authorize?client_id=${encodeURIComponent(creds.clientId)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
     return reply.redirect(url);
   });
@@ -33,7 +37,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
     oauthStates.delete(state);
 
-    const { accessToken } = await deps.auth.exchangeOAuthCode(code, cfg.GITHUB_WEB_URL);
+    const auth = await deps.credentials.auth();
+    if (!auth) return reply.code(409).send({ error: "no GitHub App registered — complete setup first" });
+    const { accessToken } = await auth.exchangeOAuthCode(code, cfg.GITHUB_WEB_URL);
     const gh = new UserClient(cfg.GITHUB_API_URL, accessToken);
     const me = await gh.me();
 

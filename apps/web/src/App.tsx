@@ -1,19 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api.js";
-import type { Me } from "./types.js";
+import type { Me, SetupStatus } from "./types.js";
 import { MissionControl } from "./pages/MissionControl.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
 import { OnboardingPage } from "./pages/Onboarding.js";
+import { SetupPage } from "./pages/Setup.js";
 
 export function App() {
+  const location = useLocation();
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status"), retry: false });
   const me = useQuery<Me, ApiError>({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/me"), retry: false });
+
+  if (location.pathname === "/setup") return <SetupPage />;
+  if (setup.data && !setup.data.configured && !setup.data.devLogin) return <SetupPage />;
 
   if (me.isLoading || (!me.data && !me.isError)) return <div className="main">Loading…</div>;
   if (me.isError || !me.data) {
-    if (me.error.status === 401) return <LoginPage />;
+    if (me.error.status === 401) return <LoginPage devLogin={setup.data?.devLogin ?? false} />;
     return (
       <div className="login-page">
         <div className="login-card">
@@ -72,13 +78,14 @@ export function App() {
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/setup" element={<SetupPage />} />
         </Routes>
       </main>
     </div>
   );
 }
 
-function LoginPage() {
+function LoginPage({ devLogin }: { devLogin: boolean }) {
   return (
     <div className="login-page">
       <div className="login-card">
@@ -90,6 +97,11 @@ function LoginPage() {
         <a href="/auth/github/login">
           <button className="primary">Sign in with GitHub</button>
         </a>
+        {devLogin && (
+          <p className="muted" style={{ marginTop: "1rem" }}>
+            Dev mode: <a href="/auth/dev-login">sign in without GitHub</a>
+          </p>
+        )}
       </div>
     </div>
   );

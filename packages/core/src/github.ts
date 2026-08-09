@@ -88,6 +88,27 @@ export class AppAuth {
     return data.token;
   }
 
+  /** Every installation of this App (app JWT). */
+  async listInstallations(): Promise<Array<{ id: number; account: { login: string; type?: string } }>> {
+    const jwt = await this.appJwt();
+    const { json } = await ghFetch(this.cfg.apiUrl, jwt, "GET", "/app/installations?per_page=100");
+    return json as never;
+  }
+
+  /** Convert a manifest code into a full credential set (two-click App registration). */
+  async convertManifest(code: string): Promise<{
+    id: number;
+    slug: string;
+    html_url: string;
+    pem: string;
+    webhook_secret: string;
+    client_id: string;
+    client_secret: string;
+  }> {
+    const { json } = await ghFetch(this.cfg.apiUrl, null, "POST", `/app-manifests/${encodeURIComponent(code)}/conversions`);
+    return json as never;
+  }
+
   async exchangeOAuthCode(code: string, githubWebUrl: string): Promise<{ accessToken: string }> {
     const res = await fetch(`${githubWebUrl}/login/oauth/access_token`, {
       method: "POST",
@@ -382,6 +403,28 @@ export class UserClient extends RepoReader {
 
   async me(): Promise<{ id: number; login: string; name: string | null; avatar_url: string }> {
     return (await this.req("GET", "/user")) as never;
+  }
+
+  /**
+   * App installations this *user* can see — the visibility floor for the
+   * connect-an-estate flow: you can only wire up an installation on an org you
+   * are actually a member of.
+   */
+  async listMyInstallations(): Promise<Array<{ id: number; account: { login: string; type?: string; avatar_url?: string } }>> {
+    const json = (await this.req("GET", "/user/installations?per_page=100")) as {
+      installations: Array<{ id: number; account: { login: string; type?: string; avatar_url?: string } }>;
+    };
+    return json.installations ?? [];
+  }
+
+  /** Repositories the user can see within one installation. */
+  async listInstallationRepos(
+    installationId: number,
+  ): Promise<Array<{ node_id: string; full_name: string; default_branch: string; private: boolean }>> {
+    const json = (await this.req("GET", `/user/installations/${installationId}/repositories?per_page=100`)) as {
+      repositories: Array<{ node_id: string; full_name: string; default_branch: string; private: boolean }>;
+    };
+    return json.repositories ?? [];
   }
 
   async createComment(owner: string, repo: string, issueNumber: number, body: string): Promise<GhComment> {

@@ -26,7 +26,9 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: AppDeps): void
     async (req, reply) => {
       const raw = (req as unknown as { rawBodyBuffer: Buffer }).rawBodyBuffer;
       const signature = req.headers["x-hub-signature-256"] as string | undefined;
-      if (!verifyWebhookSignature(deps.cfg.GITHUB_APP_WEBHOOK_SECRET, raw, signature)) {
+      const secret = await deps.credentials.webhookSecret();
+      if (!secret) return reply.code(503).send({ error: "no GitHub App registered" });
+      if (!verifyWebhookSignature(secret, raw, signature)) {
         return reply.code(401).send({ error: "bad signature" });
       }
       const event = req.headers["x-github-event"] as string | undefined;
