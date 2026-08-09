@@ -4,13 +4,21 @@ Decisions that must be settled before the first epic is filed, because changing
 them later is expensive. Everything here follows the spec's recommendation
 (§01 6) unless a note says otherwise.
 
+> **Revision (2026-08-09):** the spec recommended Next.js SSR for the web
+> layer. Per product-owner direction, the web layer is instead a **separate
+> single-page application talking to the API over HTTP** — a clean UI/backend
+> split with an API-driven contract. The SSR rationale ("fast first paint of
+> workspaces") is traded for a simpler deployment story, one authorisation
+> surface (the API), and independent scaling/release of UI and backend. §1a
+> below defines the security and deployment structure this requires.
+
 ## 1. Stack
 
 | Layer | Choice | Why |
 |---|---|---|
 | Language | TypeScript end-to-end | One toolchain; shared types between API and web |
-| Web | Next.js (App Router) | SSR for fast first paint of workspaces |
-| API | Fastify, **separate service** | Webhooks must not share Next.js cold-start behaviour |
+| Web | **React 18 + Vite SPA** (react-router, TanStack Query) | Static asset bundle; no server runtime of its own; deployable on any static host or nginx container |
+| API | Fastify, **separate service** | The single backend surface: auth, REST API, webhook endpoint |
 | Jobs/queue | BullMQ on Redis | Webhook workers, reconciler, artifact prefetch, insight jobs |
 | DB | Postgres 16 | Projections + native data. `pgvector` only *if and when* artifact search needs it — not in Phase 0 |
 | GitHub | Octokit (App + OAuth flavours) | |
@@ -23,21 +31,60 @@ them later is expensive. Everything here follows the spec's recommendation
 | Open item | Decision | Rationale |
 |---|---|---|
 | Drizzle vs Prisma | **Drizzle** | Projection workers do high-volume `INSERT … ON CONFLICT DO UPDATE` upserts with a `gh_updated_at` guard in the `WHERE` clause. Drizzle expresses that natively; Prisma's `upsert` cannot carry the guard without raw SQL, which would defeat the point of the ORM on the hottest path |
-| Monorepo tooling | pnpm workspaces + Turborepo | Cheapest thing that caches builds across `apps/` and `packages/` |
-| Web ↔ API boundary | Next.js server components call the Fastify API over internal HTTP; request/response shapes are Zod schemas exported from `packages/core` | Keeps one authorisation implementation. The web app holds **no** GitHub credentials of its own |
+| Monorepo tooling | pnpm workspaces | Cheapest thing that works across `apps/` and `packages/` |
+| Web ↔ API boundary | The SPA calls the Fastify API over HTTP with a session cookie; request/response shapes are Zod schemas exported from `packages/core` and shared by both sides | Keeps one authorisation implementation. The web app holds **no** GitHub credentials of its own — it is static files |
 | Session store | Signed, HTTP-only cookie → server-side session row in Postgres | Session rows are revocable, which F-U10 (removal invalidates sessions) requires |
-| Testing | Vitest (unit/integration) + Playwright (E2E) + recorded webhook fixtures from the live estate | Fixture-driven projection tests are the only honest way to prove order-tolerance |
+| Testing | Vitest (unit/integration) + webhook fixtures replayed through the projectors | Fixture-driven projection tests are the only honest way to prove order-tolerance |
+
+## 1a. SPA + API: security and deployment structure
+
+The split introduces a browser↔API trust boundary that SSR did not have.
+Decisions, in order of consequence:
+
+**Same-origin deployment.** In every deployed environment the SPA and the API
+share one public origin: nginx (or the platform's edge) serves the static
+bundle and reverse-proxies `/api/*` and `/auth/*` to the API service, and
+`/webhooks/*` directly to the API as well. Same-origin means cookies need no
+`SameSite=None`, no CORS surface exists in production, and the SPA needs no
+configured API base URL. In development, the Vite dev server proxies the same
+paths to the local API — the browser still sees one origin.
+
+**Authentication.** GitHub OAuth (authorization-code flow) handled entirely by
+the API. On callback the API creates a session row and sets an **opaque session
+id** in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. No JWT in
+`localStorage` — nothing readable by page JavaScript, nothing to exfiltrate via
+XSS, and sessions are individually revocable (F-U10).
+
+**CSRF.** Two independent layers: `SameSite=Lax` blocks cross-site sends of
+the cookie on non-navigation requests, and every state-changing endpoint
+requires an `X-Console-Csrf: 1` custom header — a cross-origin page cannot add
+a custom header without a CORS preflight, which the API (no CORS enabled)
+rejects. OAuth callback is additionally protected by the `state` parameter.
+
+**Webhook endpoint.** `/webhooks/github` is unauthenticated by design and
+verified by HMAC signature instead; it lives on the API service but outside the
+session/CSRF middleware, and never sets cookies.
+
+**Content security.** The API sets `Cache-Control: no-store` on all
+authenticated JSON. nginx sets a strict CSP on the SPA (self-only scripts,
+no inline), `X-Content-Type-Options`, and `frame-ancestors 'none'`. Rendered
+markdown is sanitised server-side before it reaches the SPA.
+
+**Deployment units.** Four containers behind one edge: `web` (nginx + static
+bundle), `api` (Fastify), `worker` (BullMQ), plus Postgres and Redis. UI and
+API version independently; the API carries the OpenAPI-shaped contract and
+rejects unknown-version breaking calls rather than assuming lockstep deploys.
 
 ## 2. Monorepo layout
 
 ```
-apps/web/          Next.js app — rendering only, no GitHub credentials
-apps/api/          Fastify API + webhook endpoint
+apps/web/          React + Vite SPA — static assets only, no GitHub credentials
+apps/api/          Fastify API + auth + webhook endpoint
 apps/worker/       BullMQ workers (ingest, reconcile, prefetch, insight)   [added to the spec's list]
 packages/core/     domain model, projection logic, GitHub client, config compiler, Zod contracts
 packages/insight/  context assembly + Claude API wrapper
 packages/db/       Drizzle schema, migrations, tenant-scoped query layer
-infra/             docker-compose, deploy manifests
+infra/             docker-compose, nginx config, deploy manifests
 docs/              this spec set and plan
 ```
 

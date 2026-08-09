@@ -1,0 +1,17 @@
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+// Dev server proxies API paths to the local Fastify service so the browser
+// always sees one origin — mirroring the nginx layout in deployment.
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      "/api": "http://localhost:8787",
+      "/auth": "http://localhost:8787",
+      "/webhooks": "http://localhost:8787",
+    },
+  },
+  build: { outDir: "dist", sourcemap: false },
+});
