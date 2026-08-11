@@ -66,7 +66,9 @@ export async function requireAuth(deps: AppDeps, req: FastifyRequest, reply: Fas
     return null;
   }
   if (ctx.orgIds.length === 0) {
-    void reply.code(403).send({ error: "no org membership — install the GitHub App or ask an admin to invite you" });
+    void reply
+      .code(403)
+      .send({ error: "not a member of any estate on this Console — claim it if it is new, or ask an owner to connect one you can read" });
     return null;
   }
   return ctx;

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api.js";
 import type { Me, SetupStatus } from "./types.js";
@@ -21,6 +22,13 @@ export function App() {
   if (me.isLoading || (!me.data && !me.isError)) return <div className="main">Loading…</div>;
   if (me.isError || !me.data) {
     if (me.error.status === 401) return <LoginPage devLogin={setup.data?.devLogin ?? false} />;
+    // Nobody has claimed this Console yet: membership is granted by being able
+    // to read a repo in a connected estate, and on a fresh install there are
+    // none — so the first user would otherwise be locked out of the very page
+    // that connects one. "Org" here is the Console's own tenant record, not a
+    // GitHub organisation; a personal account is fine.
+    if (me.error.status === 403 && setup.data?.claimable) return <ClaimConsole />;
+
     return (
       <div className="login-page">
         <div className="login-card">
@@ -28,8 +36,8 @@ export function App() {
           <p className="banner error">{me.error.message}</p>
           {me.error.status === 403 && (
             <p className="muted">
-              Signed in, but no org membership yet. Install the GitHub App on your org, then sign in again — or sign in with an
-              account that can read an estate repo.
+              Signed in, but you are not a member of any estate on this Console. Ask an owner to connect an estate containing a
+              repository you can read, then sign in again.
             </p>
           )}
           <p>
@@ -84,6 +92,47 @@ export function App() {
           <Route path="/setup" element={<SetupPage />} />
         </Routes>
       </main>
+    </div>
+  );
+}
+
+/**
+ * First-run claim. The Console's tenancy is its own — an "org" here is a row in
+ * its database, not a GitHub organisation — so a personal GitHub account needs
+ * nothing bought or created on GitHub's side. Only offered while no membership
+ * exists anywhere on the instance; the API refuses a second claim.
+ */
+function ClaimConsole() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const claim = () => {
+    setBusy(true);
+    setError(null);
+    api
+      .post("/api/setup/claim-owner")
+      .then(() => window.location.assign("/onboarding"))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="login-page">
+      <div className="login-card" style={{ maxWidth: "34rem", textAlign: "left" }}>
+        <h2 style={{ textAlign: "center" }}>⚙ Claim this Console</h2>
+        <p className="muted">
+          Nobody owns this Console yet. Claiming it makes you the owner, which is what lets you connect an estate — the
+          repositories this Console watches.
+        </p>
+        <p className="muted">
+          This does not need a GitHub organisation. The Console keeps its own tenancy, so a personal account works; you connect
+          whichever repositories the App is installed on, personal or org-owned.
+        </p>
+        {error && <div className="banner error">{error}</div>}
+        <p style={{ textAlign: "center" }}>
+          <button className="primary" onClick={claim} disabled={busy}>
+            {busy ? "Claiming…" : "Claim it and continue →"}
+          </button>
+        </p>
+      </div>
     </div>
   );
 }

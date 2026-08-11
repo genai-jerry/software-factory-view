@@ -20,9 +20,14 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.get("/api/setup/status", async () => {
     const creds = await deps.credentials.resolve();
     const hasMasterKey = Boolean(deps.cfg.CONSOLE_MASTER_KEY);
+    // Nobody owns this Console yet. Sign-in alone grants no membership — that
+    // comes from being able to read a repo in an estate, and on a fresh install
+    // there are no estates — so the first user has to claim it to get in at all.
+    const claimable = (await db.select({ id: memberships.id }).from(memberships).limit(1)).length === 0;
     return {
       configured: creds !== null,
       credentialError: deps.credentials.error,
+      claimable,
       source: creds?.source ?? null,
       appSlug: creds?.slug ?? null,
       hasMasterKey,

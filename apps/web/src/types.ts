@@ -4,6 +4,8 @@ export interface SetupStatus {
   configured: boolean;
   /** Set when a stored registration exists but could not be decrypted. */
   credentialError: string | null;
+  /** No membership exists yet, so the first user in may claim ownership. */
+  claimable: boolean;
   source: "database" | "environment" | null;
   appSlug: string | null;
   hasMasterKey: boolean;
