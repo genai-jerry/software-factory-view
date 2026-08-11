@@ -18,7 +18,7 @@ if [ -d "$RUN_DIR" ]; then
     name="$(basename "$pidfile" .pid)"
     pid="$(cat "$pidfile")"
     if kill -0 "$pid" 2>/dev/null; then
-      kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      kill_tree "$pid"
       ok "stopped dev process: $name (pid $pid)"
       stopped_any=1
     fi

@@ -17,6 +17,29 @@ dim()  { printf '%s%s%s\n' "$c_dim" "$*" "$c_reset"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+child_pids() { # child_pids PID -> direct children, one per line
+  if have pgrep; then pgrep -P "$1" 2>/dev/null || true
+  else ps -eo pid=,ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'
+  fi
+}
+
+# Stop a service started by dev.sh, along with anything it spawned. Services
+# started under setsid lead their own process group, so signalling -PID gets the
+# lot. Without setsid (macOS) they share this script's group, which must not be
+# signalled — so walk the descendants instead, deepest first: `tsc --watch` sits
+# two levels down behind an `sh -c`, and killing only the direct child orphans it.
+kill_tree() { # kill_tree PID
+  local pid="$1" child
+  kill -0 "$pid" 2>/dev/null || return 0
+  if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+    kill -- "-$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    return 0
+  fi
+  for child in $(child_pids "$pid"); do kill_tree "$child"; done
+  kill "$pid" 2>/dev/null || true
+}
+
 # Load .env into the environment without clobbering anything already exported.
 load_env() {
   [ -f "$REPO_ROOT/.env" ] || return 0

@@ -10,10 +10,12 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$REPO_ROOT"
 
-WANTED=("$@")
-[ ${#WANTED[@]} -eq 0 ] && WANTED=(api worker web)
+# A string rather than an array: under `set -u`, bash 3.2 — the bash macOS
+# ships — treats an empty array as an unbound variable and aborts.
+WANTED="$*"
+[ -n "$WANTED" ] || WANTED="api worker web"
 
-wants() { for w in "${WANTED[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
+wants() { case " $WANTED " in *" $1 "*) return 0 ;; esac; return 1; }
 
 [ -f .env ] || die "No .env — run ./scripts/setup.sh first"
 
@@ -35,16 +37,13 @@ port_open "$(db_port)" || die "Postgres is not running on :$(db_port) — run ./
 port_open "$(redis_port)" || warn "Redis is not running on :$(redis_port) — the worker will retry until it is"
 
 mkdir -p "$LOG_DIR"
-PIDS=()
+PIDS=""
 
 cleanup() {
+  trap - INT TERM EXIT   # run once, not again on the EXIT that follows a signal
   echo
   say "Stopping…"
-  for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-    # Kill the whole process group: tsc --watch spawns children.
-    kill -- "-$pid" 2>/dev/null || true
-  done
+  for pid in $PIDS; do kill_tree "$pid"; done
   wait 2>/dev/null || true
   ok "Stopped."
 }
@@ -54,9 +53,14 @@ start() { # start NAME COMMAND...
   local name="$1"; shift
   local log="$LOG_DIR/$name.log"
   : > "$log"
-  setsid "$@" >>"$log" 2>&1 &
+  # setsid gives each service its own process group so Ctrl-C can take its
+  # children (tsc --watch spawns some) with it. macOS has no setsid, so fall
+  # back to a plain background job — kill_tree handles both shapes.
+  if have setsid; then setsid "$@" >>"$log" 2>&1 &
+  else "$@" >>"$log" 2>&1 &
+  fi
   local pid=$!
-  PIDS+=("$pid")
+  PIDS="$PIDS $pid"
   echo "$pid" > "$RUN_DIR/$name.pid"
   ok "$name started (pid $pid) → $log"
 }

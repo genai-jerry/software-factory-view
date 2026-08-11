@@ -68,9 +68,10 @@ if docker_up; then
   for svc_var_port in "postgres DB_PORT 5432" "redis REDIS_PORT 6379"; do
     # shellcheck disable=SC2086
     set -- $svc_var_port
-    svc="$1"; var="$2"; want="${!2:-}"
+    svc="$1"; var="$2"; default_port="$3"
+    eval "want=\${$var:-}"   # eval, not ${!var}: portable back to bash 3.2
     [ -n "$want" ] || want="$(env_value "$var")"
-    [ -n "$want" ] || want="$3"
+    [ -n "$want" ] || want="$default_port"
     if port_open "$want" && ! compose_owns_port "$svc" "$want"; then
       free="$(find_free_port $((want + 1)))" || die "No free port near $want for $svc"
       warn "Something else is already listening on :$want — publishing $svc on :$free instead"

@@ -25,11 +25,14 @@ if [ -z "$origin" ]; then
   ok "PUBLIC_ORIGIN defaulted to http://localhost:8080"
 fi
 
-build_args=()
-[ "${1:-}" = "--rebuild" ] && build_args+=(--build)
-
 say "Starting the stack"
-compose up -d "${build_args[@]}" || die "docker compose failed"
+# Spelled out rather than built up in an array: under `set -u`, bash 3.2 — the
+# bash macOS ships — treats an empty array as unbound and aborts.
+if [ "${1:-}" = "--rebuild" ]; then
+  compose up -d --build || die "docker compose failed"
+else
+  compose up -d || die "docker compose failed"
+fi
 
 wait_for_port 8080 web 90 || warn "web has not opened :8080 yet — check ./scripts/logs.sh web"
 
