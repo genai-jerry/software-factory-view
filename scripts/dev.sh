@@ -23,16 +23,16 @@ wants() { for w in "${WANTED[@]}"; do [ "$w" = "$1" ] && return 0; done; return 
 # PUBLIC_ORIGIN still wins, which is how you point dev at a public tunnel.
 SHELL_PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
 load_env
-: "${DATABASE_URL:=postgres://console:console@localhost:5432/console}"
-: "${REDIS_URL:=redis://localhost:6379}"
+DATABASE_URL="$(db_url)"
+REDIS_URL="$(redis_url)"
 : "${API_PORT:=8787}"
 export DATABASE_URL REDIS_URL API_PORT
 export PUBLIC_ORIGIN="${SHELL_PUBLIC_ORIGIN:-http://localhost:5173}"
 
 [ -n "${CONSOLE_MASTER_KEY:-}" ] || warn "CONSOLE_MASTER_KEY is unset — sign-in and setup will be disabled (run ./scripts/setup.sh)"
 
-port_open 5432 || die "Postgres is not running on :5432 — run ./scripts/setup.sh"
-port_open 6379 || warn "Redis is not running on :6379 — the worker will retry until it is"
+port_open "$(db_port)" || die "Postgres is not running on :$(db_port) — run ./scripts/setup.sh"
+port_open "$(redis_port)" || warn "Redis is not running on :$(redis_port) — the worker will retry until it is"
 
 mkdir -p "$LOG_DIR"
 PIDS=()

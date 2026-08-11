@@ -55,40 +55,65 @@ pnpm -r build >/dev/null
 ok "build complete"
 
 # ---------------------------------------------------------------- infra
+load_env
 say "Starting Postgres and Redis"
 started=""
-if docker_up && compose up -d postgres redis >/dev/null 2>&1; then
-  started="docker"
-  ok "postgres + redis running (docker compose)"
-else
+if docker_up; then
+  # Both services are published on the host, because the migration runner and
+  # the dev servers connect from there. If another process already owns a
+  # default port — a Postgres you installed yourself, most likely — publish
+  # ours somewhere free rather than letting the host port point at a stranger's
+  # database. That is exactly how migrations end up running against a Postgres
+  # with no 'console' role.
+  for svc_var_port in "postgres DB_PORT 5432" "redis REDIS_PORT 6379"; do
+    # shellcheck disable=SC2086
+    set -- $svc_var_port
+    svc="$1"; var="$2"; want="${!2:-}"
+    [ -n "$want" ] || want="$(env_value "$var")"
+    [ -n "$want" ] || want="$3"
+    if port_open "$want" && ! compose_owns_port "$svc" "$want"; then
+      free="$(find_free_port $((want + 1)))" || die "No free port near $want for $svc"
+      warn "Something else is already listening on :$want — publishing $svc on :$free instead"
+      set_env_value "$var" "$free"
+      want="$free"
+    fi
+    export "$var=$want"
+  done
+
+  if compose up -d postgres redis >/dev/null 2>&1; then
+    started="docker"
+    ok "postgres (:$DB_PORT) + redis (:$REDIS_PORT) running (docker compose)"
+  else
+    warn "docker compose could not start postgres/redis"
+  fi
+fi
+
+if [ -z "$started" ]; then
   dim "Docker unavailable — trying local services"
+  export DB_PORT="$(db_port)" REDIS_PORT="$(redis_port)"
   if have pg_ctlcluster || [ -d /etc/postgresql ]; then
     service postgresql start >/dev/null 2>&1 || sudo service postgresql start >/dev/null 2>&1 || true
   fi
   have redis-server && (redis-cli ping >/dev/null 2>&1 || redis-server --daemonize yes >/dev/null 2>&1) || true
 
-  if port_open 5432; then
+  if port_open "$DB_PORT"; then
     started="local"
-    # Make sure the console role/database exist.
-    if have psql; then
-      su postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='console'\"" 2>/dev/null | grep -q 1 \
-        || su postgres -c "psql -c \"CREATE ROLE console LOGIN PASSWORD 'console' CREATEDB;\"" >/dev/null 2>&1 || true
-      su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='console'\"" 2>/dev/null | grep -q 1 \
-        || su postgres -c "psql -c 'CREATE DATABASE console OWNER console;'" >/dev/null 2>&1 || true
-    fi
+    # A local Postgres has none of the Console's own setup — create the role and
+    # database it connects as, or say plainly that we could not.
+    ensure_console_role "$DB_PORT" "$(db_password)" \
+      || warn "Create them yourself, then re-run: CREATE ROLE console LOGIN PASSWORD '$(db_password)' CREATEDB; CREATE DATABASE console OWNER console;"
     ok "postgres + redis running (local services)"
   fi
 fi
 [ -n "$started" ] || die "Could not start Postgres. Start Docker, or install postgresql + redis, then re-run."
 
-wait_for_port 5432 postgres || die "Postgres did not come up on :5432"
-port_open 6379 || warn "Redis is not answering on :6379 — the worker queue will not run"
+wait_for_port "$DB_PORT" postgres || die "Postgres did not come up on :$DB_PORT"
+port_open "$REDIS_PORT" || warn "Redis is not answering on :$REDIS_PORT — the worker queue will not run"
 
 # ---------------------------------------------------------------- migrate
 say "Applying database migrations"
-load_env
-DATABASE_URL="${DATABASE_URL:-postgres://console:console@localhost:5432/console}" \
-  node packages/db/dist/migrate-cli.js
+DATABASE_URL="$(db_url)" node packages/db/dist/migrate-cli.js \
+  || die "Migrations failed — see the diagnosis above."
 ok "database ready"
 
 echo

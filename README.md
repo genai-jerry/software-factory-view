@@ -107,6 +107,19 @@ URL, and register the App from there so its webhook URL matches.
 `DEV_FAKE_LOGIN=1` enables `/auth/dev-login` to browse the UI with no GitHub App at all
 (read-only — GitHub writes need a real token).
 
+### If you already run Postgres or Redis locally
+
+The Console's `docker-compose` Postgres and Redis are published on the host, because
+migrations and the dev servers connect from there. When ports 5432/6379 are already
+taken — a Homebrew or Postgres.app install, say — `setup.sh` publishes the Console's
+services on the next free ports and records `DB_PORT`/`REDIS_PORT` in `.env`; the other
+scripts read them from there. Nothing needs to be stopped.
+
+To use *your own* Postgres instead, set `DATABASE_URL` in `.env` and create what it
+names: `createuser --createdb --pwprompt console && createdb -O console console`.
+`role "console" does not exist` during migrations means the connection reached a
+Postgres that never had that setup done.
+
 ## Testing guide (what to try)
 
 1. **Read model**: file a plain issue on a factory repo → it appears at `factory:intake`

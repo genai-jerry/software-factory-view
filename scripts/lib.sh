@@ -63,6 +63,15 @@ wait_for_port() { # wait_for_port PORT LABEL [TIMEOUT]
   return 1
 }
 
+find_free_port() { # find_free_port START -> first port nothing is listening on
+  local p="$1" i=0
+  while [ "$i" -lt 50 ]; do
+    port_open "$p" || { echo "$p"; return 0; }
+    p=$((p+1)); i=$((i+1))
+  done
+  return 1
+}
+
 compose() {
   if docker compose version >/dev/null 2>&1; then docker compose "$@"
   elif have docker-compose; then docker-compose "$@"
@@ -71,3 +80,82 @@ compose() {
 }
 
 docker_up() { docker info >/dev/null 2>&1; }
+
+# Does our own compose service publish this host port? Used to tell "the port is
+# busy because the Console is already running" apart from "the port is busy
+# because something else owns it".
+compose_owns_port() { # compose_owns_port SERVICE PORT
+  local cid; cid="$(compose ps -q "$1" 2>/dev/null | head -1)" || return 1
+  [ -n "$cid" ] || return 1
+  docker port "$cid" 2>/dev/null | grep -q ":$2\$"
+}
+
+# ---------------------------------------------------------------- connections
+#
+# Host ports for Postgres and Redis. The Docker services publish these, and
+# everything that runs on the host (migrations, dev servers) connects to them.
+# They are overridable in .env because a machine with its own Postgres on 5432
+# would otherwise collide — and connecting to that Postgres by accident is how
+# you get "role \"console\" does not exist" halfway through setup.
+db_port()    { local v="${DB_PORT:-}";    [ -n "$v" ] || v="$(env_value DB_PORT)";    echo "${v:-5432}"; }
+redis_port() { local v="${REDIS_PORT:-}"; [ -n "$v" ] || v="$(env_value REDIS_PORT)"; echo "${v:-6379}"; }
+db_password() { local v="${DB_PASSWORD:-}"; [ -n "$v" ] || v="$(env_value DB_PASSWORD)"; echo "${v:-console}"; }
+
+urlencode() { # percent-encode a URL component (passwords may contain @ : / …)
+  local s="${1-}" out="" c i
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._~-]) out="$out$c" ;;
+      *) out="$out$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# An explicit DATABASE_URL always wins; otherwise build one from DB_PASSWORD and
+# the host port the Console's Postgres is published on.
+db_url() {
+  local u="${DATABASE_URL:-}"
+  [ -n "$u" ] || u="$(env_value DATABASE_URL)"
+  if [ -n "$u" ]; then echo "$u"; return 0; fi
+  echo "postgres://console:$(urlencode "$(db_password)")@localhost:$(db_port)/console"
+}
+
+redis_url() {
+  local u="${REDIS_URL:-}"
+  [ -n "$u" ] || u="$(env_value REDIS_URL)"
+  if [ -n "$u" ]; then echo "$u"; return 0; fi
+  echo "redis://localhost:$(redis_port)"
+}
+
+# Run SQL against a locally-installed Postgres as a superuser, trying the ways a
+# superuser is usually reachable: the current user (Homebrew/Postgres.app), the
+# postgres role, then su postgres (Debian/Ubuntu packages). Prints rows; returns
+# non-zero if no route connects.
+super_sql() { # super_sql PORT SQL
+  local port="$1" sql="$2"
+  have psql || return 1
+  psql -h localhost -p "$port" -d postgres -tAc "$sql" 2>/dev/null && return 0
+  psql -h localhost -p "$port" -U postgres -d postgres -tAc "$sql" 2>/dev/null && return 0
+  su postgres -c "psql -p $port -tAc \"$sql\"" 2>/dev/null && return 0
+  return 1
+}
+
+# Make sure a locally-installed Postgres has the role and database the Console
+# connects as. Returns non-zero (with an explanation) if it could not.
+ensure_console_role() { # ensure_console_role PORT PASSWORD
+  local port="$1" pw="$2"
+  have psql || { warn "psql is not on PATH — cannot create the 'console' role automatically"; return 1; }
+  super_sql "$port" 'SELECT 1' >/dev/null || {
+    warn "Could not reach the Postgres on :$port as a superuser"
+    return 1
+  }
+  super_sql "$port" "SELECT 1 FROM pg_roles WHERE rolname='console'" | grep -q 1 \
+    || super_sql "$port" "CREATE ROLE console LOGIN PASSWORD '$pw' CREATEDB" >/dev/null \
+    || { warn "Could not create the 'console' role on :$port"; return 1; }
+  super_sql "$port" "SELECT 1 FROM pg_database WHERE datname='console'" | grep -q 1 \
+    || super_sql "$port" "CREATE DATABASE console OWNER console" >/dev/null \
+    || { warn "Could not create the 'console' database on :$port"; return 1; }
+  return 0
+}
