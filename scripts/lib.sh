@@ -120,9 +120,40 @@ compose_owns_port() { # compose_owns_port SERVICE PORT
 # They are overridable in .env because a machine with its own Postgres on 5432
 # would otherwise collide — and connecting to that Postgres by accident is how
 # you get "role \"console\" does not exist" halfway through setup.
-db_port()    { local v="${DB_PORT:-}";    [ -n "$v" ] || v="$(env_value DB_PORT)";    echo "${v:-5432}"; }
-redis_port() { local v="${REDIS_PORT:-}"; [ -n "$v" ] || v="$(env_value REDIS_PORT)"; echo "${v:-6379}"; }
+port_value() { # port_value VAR DEFAULT -> exported value, else .env, else default
+  local v; eval "v=\${$1:-}"
+  [ -n "$v" ] || v="$(env_value "$1")"
+  echo "${v:-$2}"
+}
+
+db_port()    { port_value DB_PORT 5432; }
+redis_port() { port_value REDIS_PORT 6379; }
 db_password() { local v="${DB_PASSWORD:-}"; [ -n "$v" ] || v="$(env_value DB_PASSWORD)"; echo "${v:-console}"; }
+
+# Settle which host port a service binds, and export it so both `compose` and
+# the rest of the script agree. Precedence: an exported variable, then .env,
+# then the default. If that port is busy with something that is not ours, move
+# to the next free one and record it in .env — docker refuses to start the whole
+# stack over a single "port is already allocated", and the thing holding it is
+# usually the developer's own dev server.
+#
+# SERVICE is the compose service that would legitimately already hold the port;
+# pass "-" for a process compose knows nothing about (the dev servers).
+#
+# Exports VAR; does not print it, so call it as a statement (a command
+# substitution would run it in a subshell and lose the export).
+claim_port() { # claim_port SERVICE|- VAR DEFAULT
+  local svc="$1" var="$2" default_port="$3" want free label
+  label="$svc"; [ "$label" = "-" ] && label="$var"
+  want="$(port_value "$var" "$default_port")"
+  if port_open "$want" && { [ "$svc" = "-" ] || ! compose_owns_port "$svc" "$want"; }; then
+    free="$(find_free_port $((want + 1)))" || die "No free port near $want for $label"
+    warn "Something else is already listening on :$want — using :$free for $label instead"
+    set_env_value "$var" "$free"
+    want="$free"
+  fi
+  export "$var=$want"
+}
 
 urlencode() { # percent-encode a URL component (passwords may contain @ : / …)
   local s="${1-}" out="" c i

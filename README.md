@@ -107,13 +107,25 @@ URL, and register the App from there so its webhook URL matches.
 `DEV_FAKE_LOGIN=1` enables `/auth/dev-login` to browse the UI with no GitHub App at all
 (read-only — GitHub writes need a real token).
 
-### If you already run Postgres or Redis locally
+### Ports
 
-The Console's `docker-compose` Postgres and Redis are published on the host, because
-migrations and the dev servers connect from there. When ports 5432/6379 are already
-taken — a Homebrew or Postgres.app install, say — `setup.sh` publishes the Console's
-services on the next free ports and records `DB_PORT`/`REDIS_PORT` in `.env`; the other
-scripts read them from there. Nothing needs to be stopped.
+Every service is published on the host, and every port is pinnable in `.env`:
+
+| Variable | Default | What listens there |
+|---|---|---|
+| `WEB_PORT` | 8080 | nginx — the origin you open (`start.sh`) |
+| `WEB_DEV_PORT` | 5173 | Vite — the origin you open (`dev.sh`) |
+| `API_PORT` | 8787 | the API. In Docker this moves the host side only; inside the container it stays 8787, where nginx proxies |
+| `DB_PORT` | 5432 | Postgres — migrations and the dev servers connect here |
+| `REDIS_PORT` | 6379 | Redis |
+
+Leave them unset and the defaults apply. When a default is already taken by something
+that is not the Console — a Homebrew Postgres, a leftover `dev.sh` on 8787 — the scripts
+publish on the next free port and record it in `.env`, because docker aborts the whole
+stack over one busy port. Changing `WEB_PORT` changes the origin, so `start.sh` keeps a
+localhost `PUBLIC_ORIGIN` in step with it; a tunnel URL is left as you set it. `dev.sh`
+only moves a port for a service it is itself starting, so `./scripts/dev.sh web` beside
+a separate `./scripts/dev.sh api` still proxies to that API rather than around it.
 
 To use *your own* Postgres instead, set `DATABASE_URL` in `.env` and create what it
 names: `createuser --createdb --pwprompt console && createdb -O console console`.

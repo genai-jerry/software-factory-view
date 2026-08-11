@@ -65,21 +65,8 @@ if docker_up; then
   # ours somewhere free rather than letting the host port point at a stranger's
   # database. That is exactly how migrations end up running against a Postgres
   # with no 'console' role.
-  for svc_var_port in "postgres DB_PORT 5432" "redis REDIS_PORT 6379"; do
-    # shellcheck disable=SC2086
-    set -- $svc_var_port
-    svc="$1"; var="$2"; default_port="$3"
-    eval "want=\${$var:-}"   # eval, not ${!var}: portable back to bash 3.2
-    [ -n "$want" ] || want="$(env_value "$var")"
-    [ -n "$want" ] || want="$default_port"
-    if port_open "$want" && ! compose_owns_port "$svc" "$want"; then
-      free="$(find_free_port $((want + 1)))" || die "No free port near $want for $svc"
-      warn "Something else is already listening on :$want — publishing $svc on :$free instead"
-      set_env_value "$var" "$free"
-      want="$free"
-    fi
-    export "$var=$want"
-  done
+  claim_port postgres DB_PORT 5432
+  claim_port redis REDIS_PORT 6379
 
   if compose up -d postgres redis >/dev/null 2>&1; then
     started="docker"

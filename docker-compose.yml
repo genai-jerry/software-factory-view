@@ -37,13 +37,17 @@ services:
     environment:
       DATABASE_URL: postgres://console:${DB_PASSWORD:-console}@postgres:5432/console
       REDIS_URL: redis://redis:6379
+      # Fixed inside the container — nginx proxies to api:8787. API_PORT from
+      # .env moves the *host* port only (see ports below); this overrides the
+      # env_file value so the two cannot drift apart.
+      API_PORT: 8787
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     ports:
-      - "8787:8787"
+      - "${API_PORT:-8787}:8787"
 
   worker:
     build:
@@ -67,7 +71,7 @@ services:
     depends_on:
       - api
     ports:
-      - "8080:80"
+      - "${WEB_PORT:-8080}:80"
 
 volumes:
   pgdata:

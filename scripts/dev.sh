@@ -19,17 +19,25 @@ wants() { case " $WANTED " in *" $1 "*) return 0 ;; esac; return 1; }
 
 [ -f .env ] || die "No .env — run ./scripts/setup.sh first"
 
-# In dev the browser talks to Vite (:5173), which proxies to the API — so OAuth
-# callbacks and the App's webhook URL must point at Vite's origin, not at the
-# :8080 value .env carries for the Docker layout. An explicitly exported
+# In dev the browser talks to Vite (WEB_DEV_PORT, 5173 by default), which proxies
+# to the API — so OAuth callbacks and the App's webhook URL must point at Vite's
+# origin, not at the WEB_PORT value .env carries for the Docker layout. An explicitly
 # PUBLIC_ORIGIN still wins, which is how you point dev at a public tunnel.
 SHELL_PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
 load_env
 DATABASE_URL="$(db_url)"
 REDIS_URL="$(redis_url)"
-: "${API_PORT:=8787}"
-export DATABASE_URL REDIS_URL API_PORT
-export PUBLIC_ORIGIN="${SHELL_PUBLIC_ORIGIN:-http://localhost:5173}"
+export DATABASE_URL REDIS_URL
+
+# Claim a port only for a service this invocation actually starts: with
+# `dev.sh web` alongside a separate `dev.sh api`, moving API_PORT would point
+# Vite's proxy away from the API that is already running on it.
+export API_PORT="$(port_value API_PORT 8787)"
+export WEB_DEV_PORT="$(port_value WEB_DEV_PORT 5173)"
+if wants api; then claim_port - API_PORT 8787; fi
+if wants web; then claim_port - WEB_DEV_PORT 5173; fi
+
+export PUBLIC_ORIGIN="${SHELL_PUBLIC_ORIGIN:-http://localhost:$WEB_DEV_PORT}"
 
 [ -n "${CONSOLE_MASTER_KEY:-}" ] || warn "CONSOLE_MASTER_KEY is unset — sign-in and setup will be disabled (run ./scripts/setup.sh)"
 
@@ -85,14 +93,14 @@ if wants api; then
   wait_for_port "$API_PORT" api 30 && ok "api listening on :$API_PORT" || warn "api has not opened :$API_PORT yet — check $LOG_DIR/api.log"
 fi
 if wants web; then
-  wait_for_port 5173 web 30 >/dev/null || true
+  wait_for_port "$WEB_DEV_PORT" web 30 >/dev/null || true
 fi
 
 echo
 say "Factory Console (dev)"
-wants web && echo "   UI       http://localhost:5173"
+wants web && echo "   UI       http://localhost:$WEB_DEV_PORT"
 wants api && echo "   API      http://localhost:$API_PORT/api/health"
-echo "   Setup    http://localhost:5173/setup"
+echo "   Setup    http://localhost:$WEB_DEV_PORT/setup"
 echo "   Logs     tail -f $LOG_DIR/*.log      (or ./scripts/logs.sh)"
 echo
 dim "Ctrl-C stops everything."
