@@ -20,6 +20,11 @@ export default defineConfig({
       "/api": apiOrigin,
       "/auth": apiOrigin,
       "/webhooks": apiOrigin,
+      // The GitHub App manifest flow is server-rendered by the API (it has to
+      // POST a form to github.com). Only this prefix — /setup itself is the
+      // SPA's own page, and serving the SPA here instead would leave the
+      // browser on a route it does not know, asking /api/me who it is.
+      "/setup/github-app": apiOrigin,
     },
   },
   build: { outDir: "dist", sourcemap: false },

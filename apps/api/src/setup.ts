@@ -32,9 +32,11 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /**
-   * Renders the auto-submitting form GitHub's manifest flow requires (the
-   * manifest must arrive as a form POST to github.com, which a JSON API cannot
-   * do on the client's behalf).
+   * Renders the form GitHub's manifest flow requires — the manifest must arrive
+   * as a form POST to github.com, which a JSON API cannot do on the client's
+   * behalf. Submitted by hand rather than by an inline script: this page is
+   * served through nginx, whose CSP is `script-src 'self'`, so an auto-submit
+   * would be blocked and leave the button apparently doing nothing.
    */
   app.get<{ Querystring: { org?: string; name?: string } }>("/setup/github-app", async (req, reply) => {
     const already = await deps.credentials.resolve();
@@ -58,14 +60,14 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     return reply.type("text/html").send(
       page(
-        "Creating your GitHub App…",
-        `<p>Redirecting to GitHub to create the <strong>${escapeHtml(name)}</strong> App.
-           Review the permissions there and confirm.</p>
-         <form id="f" method="post" action="${escapeHtml(action)}">
+        "Create your GitHub App",
+        `<p>This sends GitHub a manifest for the <strong>${escapeHtml(name)}</strong> App.
+           Review the permissions on GitHub and confirm there; it hands the
+           credentials straight back to this Console.</p>
+         <form method="post" action="${escapeHtml(action)}">
            <input type="hidden" name="manifest" value="${escapeHtml(JSON.stringify(manifest))}" />
-           <button type="submit">Continue to GitHub</button>
-         </form>
-         <script>document.getElementById('f').submit()</script>`,
+           <button type="submit">Continue to GitHub →</button>
+         </form>`,
       ),
     );
   });
