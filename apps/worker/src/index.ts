@@ -1,5 +1,5 @@
 import { CredentialStore, loadConfig } from "@console/core";
-import { connectDb, githubAppConfig, runMigrations } from "@console/db";
+import { connectDb, getRuntimeSetting, githubAppConfig, isLogLevel, LogStore, LOG_LEVEL_SETTING, runMigrations } from "@console/db";
 import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
@@ -20,6 +20,15 @@ const cfg = loadConfig();
 async function main(): Promise<void> {
   await runMigrations(cfg.DATABASE_URL);
   const { db, close } = connectDb(cfg.DATABASE_URL);
+
+  // The worker has no HTTP surface, so the log table is the only way its
+  // failures are visible in a deployed install — and projection and
+  // reconciliation both run here. captureConsole picks up the lines below and
+  // anything the jobs log.
+  const storedLevel = await getRuntimeSetting(db, LOG_LEVEL_SETTING).catch(() => null);
+  const logs = new LogStore(db, { service: "worker", level: isLogLevel(storedLevel) ? storedLevel : cfg.LOG_LEVEL });
+  logs.captureConsole();
+  logs.start({ followLevel: true });
   const connection = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null });
 
   const credentials = new CredentialStore({
@@ -78,6 +87,7 @@ async function main(): Promise<void> {
   console.log(resolved ? `github app: ${resolved.slug ?? resolved.appId} (from ${resolved.source})` : "github app: not registered yet — jobs will wait");
 
   const shutdown = async () => {
+    await logs.stop();
     await ingestWorker.close();
     await reconcileWorker.close();
     await reconcileQueue.close();

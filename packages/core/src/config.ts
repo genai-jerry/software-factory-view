@@ -37,6 +37,8 @@ const envSchema = z.object({
   /** Dev-only bypass: "1" allows login as a fixed dev user without GitHub OAuth. */
   DEV_FAKE_LOGIN: z.string().default("0"),
   NODE_ENV: z.string().default("development"),
+  /** Starting log level. The stored runtime setting overrides it once set. */
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 
 export type ConsoleConfig = z.infer<typeof envSchema> & { githubAppPrivateKeyPem: string };

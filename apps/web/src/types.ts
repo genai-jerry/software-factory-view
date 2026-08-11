@@ -216,3 +216,20 @@ export interface ValidationResult {
   ok: boolean;
   checks: Array<{ check: string; ok: boolean | null; detail: string }>;
 }
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface LogEvent {
+  id: number;
+  ts: string;
+  service: string;
+  level: string;
+  message: string;
+  context: unknown;
+}
+
+export interface LogsResponse {
+  events: LogEvent[];
+  level: LogLevel;
+  levels: LogLevel[];
+}

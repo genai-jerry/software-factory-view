@@ -1,6 +1,6 @@
 import { CredentialStore, decryptSecret, UserClient, type ConsoleConfig } from "@console/core";
-import { memberships, sessions, users, type Db, type DbHandle } from "@console/db";
-import { and, eq, gt } from "drizzle-orm";
+import { memberships, sessions, users, type Db, type DbHandle, type LogStore } from "@console/db";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Queue } from "bullmq";
 
@@ -12,6 +12,8 @@ export interface AppDeps {
   credentials: CredentialStore;
   ingestQueue: Queue;
   reconcileQueue: Queue;
+  /** This process's log writer; also how the UI changes the level at runtime. */
+  logs: LogStore;
 }
 
 /** Per-request authenticated context: the caller and their org scope. */
@@ -65,6 +67,26 @@ export async function requireAuth(deps: AppDeps, req: FastifyRequest, reply: Fas
   }
   if (ctx.orgIds.length === 0) {
     void reply.code(403).send({ error: "no org membership — install the GitHub App or ask an admin to invite you" });
+    return null;
+  }
+  return ctx;
+}
+
+/**
+ * Guard for routes that expose instance-wide internals rather than repository
+ * data — logs above all, which carry whatever any org's activity happened to
+ * produce. Ordinary membership is not enough; the caller must own an org.
+ */
+export async function requireOwner(deps: AppDeps, req: FastifyRequest, reply: FastifyReply): Promise<RequestCtx | null> {
+  const ctx = await requireAuth(deps, req, reply);
+  if (!ctx) return null;
+  const owned = await deps.dbh.db
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(and(eq(memberships.userId, ctx.userId), inArray(memberships.role, ["owner", "admin"])))
+    .limit(1);
+  if (owned.length === 0) {
+    void reply.code(403).send({ error: "owner or admin only" });
     return null;
   }
   return ctx;

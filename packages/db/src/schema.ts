@@ -1,5 +1,6 @@
 import {
   bigint,
+  bigserial,
   boolean,
   index,
   integer,
@@ -40,6 +41,37 @@ export const githubAppConfig = pgTable("github_app_config", {
   configuredBy: text("configured_by"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Instance settings that must be changeable without a redeploy. The log level
+ * lives here rather than in the environment so it can be turned up from the UI
+ * on a running install and turned back down afterwards.
+ */
+export const runtimeSettings = pgTable("runtime_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+/**
+ * Application logs, in the database because the API and the worker are separate
+ * containers and a production operator has no shell in either. Capped to the
+ * most recent rows — this is a diagnostic window, not an audit trail (auditLog
+ * is that, and is never pruned). Secrets are redacted before insert.
+ */
+export const logEvents = pgTable(
+  "log_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
+    service: text("service").notNull(), // api | worker
+    level: text("level").notNull(), // debug | info | warn | error
+    message: text("message").notNull(),
+    context: jsonb("context"),
+  },
+  (t) => [index("log_events_ts_idx").on(t.ts), index("log_events_level_idx").on(t.level)],
+);
 
 /* ------------------------------- console-native: identity ------------------------------- */
 

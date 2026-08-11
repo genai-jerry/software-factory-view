@@ -8,11 +8,19 @@ import { registerWriteRoutes } from "./routes/write.js";
 import { registerQaRoutes } from "./routes/qa.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
 import { registerEstateRoutes } from "./routes/estates.js";
+import { registerLogRoutes } from "./routes/logs.js";
 import { registerSetupRoutes } from "./setup.js";
 import type { AppDeps } from "./context.js";
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: deps.cfg.NODE_ENV === "test" ? "warn" : "info" } });
+  // Fastify's own logging is teed into the log store so request lines and
+  // handler errors show up in the UI alongside everything else.
+  const app = Fastify({
+    logger: {
+      level: deps.cfg.NODE_ENV === "test" ? "warn" : deps.logs.level,
+      stream: deps.logs.pinoStream(),
+    },
+  });
   await app.register(cookie);
 
   // No CORS is registered on purpose: the SPA is same-origin behind the edge
@@ -36,6 +44,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerWriteRoutes(app, deps);
   registerQaRoutes(app, deps);
   registerOnboardingRoutes(app, deps);
+  registerLogRoutes(app, deps);
 
   return app;
 }

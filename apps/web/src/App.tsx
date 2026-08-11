@@ -8,6 +8,7 @@ import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
 import { OnboardingPage } from "./pages/Onboarding.js";
 import { SetupPage } from "./pages/Setup.js";
+import { LogsPage } from "./pages/Logs.js";
 
 export function App() {
   const location = useLocation();
@@ -54,6 +55,7 @@ export function App() {
           <NavLink to="/blocked">Blocked</NavLink>
           <NavLink to="/decisions">Decisions</NavLink>
           <NavLink to="/onboarding">Onboarding</NavLink>
+          <NavLink to="/logs">Logs</NavLink>
         </nav>
         <div style={{ marginTop: "2rem" }} className="muted">
           {me.data.avatarUrl && (
@@ -78,6 +80,7 @@ export function App() {
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/logs" element={<LogsPage />} />
           <Route path="/setup" element={<SetupPage />} />
         </Routes>
       </main>

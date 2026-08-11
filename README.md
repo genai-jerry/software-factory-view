@@ -123,6 +123,24 @@ URL, and register the App from there so its webhook URL matches.
 `DEV_FAKE_LOGIN=1` enables `/auth/dev-login` to browse the UI with no GitHub App at all
 (read-only — GitHub writes need a real token).
 
+### Logs
+
+**Logs** in the sidebar shows the API's and the worker's own output, live. A deployed
+Console is two containers with no shell attached, and the worker — where projection and
+reconciliation run, and so where sync failures appear — has no HTTP surface of its own;
+both write into `log_events`, which is what that page reads.
+
+The recording level is set from the same page and stored in the database, so turning on
+`debug` needs no redeploy: the API applies it at once and the worker within ~15s, and it
+survives a restart. Turn it back down afterwards — the table keeps a rolling window of
+the most recent ~5000 lines, which `debug` fills quickly. `LOG_LEVEL` in `.env` is only
+the starting value before anything is stored.
+
+Secrets are masked before a line is written — tokens, JWTs, private keys, encrypted
+blobs, and any field whose name looks like a credential — because the page is readable
+in the browser. The window is a diagnostic aid, not an audit trail; `audit_log` is that,
+and is never pruned. Access is owner/admin only, since logs span every connected org.
+
 ### Ports
 
 Every service is published on the host, and every port is pinnable in `.env`:

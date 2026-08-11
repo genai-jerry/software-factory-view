@@ -1,5 +1,5 @@
 import { CredentialStore, loadConfig } from "@console/core";
-import { connectDb, githubAppConfig, runMigrations } from "@console/db";
+import { connectDb, getRuntimeSetting, githubAppConfig, isLogLevel, LogStore, LOG_LEVEL_SETTING, runMigrations } from "@console/db";
 import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
@@ -18,6 +18,14 @@ async function main(): Promise<void> {
 
   await runMigrations(cfg.DATABASE_URL);
   const dbh = connectDb(cfg.DATABASE_URL);
+
+  // Logs go to the database as well as stdout: a deployed Console is a
+  // container with no shell, and the UI is the only way in. followLevel keeps
+  // this process in step with the level set from that UI.
+  const stored = await getRuntimeSetting(dbh.db, LOG_LEVEL_SETTING).catch(() => null);
+  const logs = new LogStore(dbh.db, { service: "api", level: isLogLevel(stored) ? stored : cfg.LOG_LEVEL });
+  logs.captureConsole();
+  logs.start({ followLevel: true });
   const connection = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null });
 
   const credentials = new CredentialStore({
@@ -36,7 +44,7 @@ async function main(): Promise<void> {
   const ingestQueue = new Queue("ingest", { connection });
   const reconcileQueue = new Queue("reconcile", { connection });
 
-  const app = await buildApp({ cfg, dbh, credentials, ingestQueue, reconcileQueue });
+  const app = await buildApp({ cfg, dbh, credentials, ingestQueue, reconcileQueue, logs });
   await app.listen({ port: cfg.API_PORT, host: "0.0.0.0" });
 
   const resolved = await credentials.resolve();

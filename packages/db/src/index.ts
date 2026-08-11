@@ -3,6 +3,7 @@ import postgres from "postgres";
 import * as schema from "./schema.js";
 
 export * from "./schema.js";
+export * from "./logstore.js";
 export { runMigrations } from "./migrate.js";
 
 export type Db = PostgresJsDatabase<typeof schema>;
