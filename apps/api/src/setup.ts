@@ -22,6 +22,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     const hasMasterKey = Boolean(deps.cfg.CONSOLE_MASTER_KEY);
     return {
       configured: creds !== null,
+      credentialError: deps.credentials.error,
       source: creds?.source ?? null,
       appSlug: creds?.slug ?? null,
       hasMasterKey,

@@ -50,12 +50,23 @@ export interface CredentialStoreOptions {
 
 export class CredentialStore {
   private cached: ResolvedAppCredentials | null = null;
+  private lastError: string | null = null;
 
   constructor(private readonly opts: CredentialStoreOptions) {}
 
   /** Drop the cache after the setup flow writes new credentials. */
   invalidate(): void {
     this.cached = null;
+    this.lastError = null;
+  }
+
+  /**
+   * Why the stored registration could not be used, if there is one and it
+   * failed. Surfaced on the setup screen: an unreadable row is otherwise a 500
+   * from whichever route happened to need credentials first.
+   */
+  get error(): string | null {
+    return this.lastError;
   }
 
   async resolve(): Promise<ResolvedAppCredentials | null> {
@@ -63,16 +74,26 @@ export class CredentialStore {
 
     const row = await this.opts.load();
     if (row) {
-      this.cached = {
-        appId: row.appId,
-        slug: row.slug,
-        privateKeyPem: decryptSecret(row.encryptedPrivateKey, this.opts.masterKey),
-        webhookSecret: decryptSecret(row.encryptedWebhookSecret, this.opts.masterKey),
-        clientId: row.clientId,
-        clientSecret: decryptSecret(row.encryptedClientSecret, this.opts.masterKey),
-        source: "database",
-      };
-      return this.cached;
+      try {
+        this.cached = {
+          appId: row.appId,
+          slug: row.slug,
+          privateKeyPem: decryptSecret(row.encryptedPrivateKey, this.opts.masterKey),
+          webhookSecret: decryptSecret(row.encryptedWebhookSecret, this.opts.masterKey),
+          clientId: row.clientId,
+          clientSecret: decryptSecret(row.encryptedClientSecret, this.opts.masterKey),
+          source: "database",
+        };
+        this.lastError = null;
+        return this.cached;
+      } catch (err) {
+        // Almost always CONSOLE_MASTER_KEY no longer matching the key the row
+        // was written with. Report it as unconfigured rather than throwing, so
+        // the setup screen can explain it and take a fresh registration.
+        this.lastError =
+          `the stored GitHub App credentials could not be decrypted (${(err as Error).message}). ` +
+          "CONSOLE_MASTER_KEY is not the key they were saved with — restore that key, or register the App again below.";
+      }
     }
 
     const env = this.opts.env;

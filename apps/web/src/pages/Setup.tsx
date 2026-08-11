@@ -29,6 +29,12 @@ export function SetupPage() {
           </div>
         )}
 
+        {s.credentialError && (
+          <div className="banner error">
+            <strong>A GitHub App is registered, but its credentials cannot be read.</strong> {s.credentialError}
+          </div>
+        )}
+
         {s.configured ? (
           <>
             <div className="banner info">

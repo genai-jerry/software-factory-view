@@ -19,8 +19,16 @@ export function encryptSecret(plaintext: string, masterKeyB64: string): string {
 }
 
 export function decryptSecret(sealed: string, masterKeyB64: string): string {
-  const [v, ivB64, tagB64, ctB64] = sealed.split(".");
-  if (v !== "v1" || !ivB64 || !tagB64 || !ctB64) throw new Error("malformed sealed secret");
+  const parts = sealed.split(".");
+  const [v, ivB64, tagB64, ctB64] = parts;
+  // An empty ciphertext is a sealed empty string, not a malformed envelope —
+  // base64 of nothing is "". Rejecting it made a legitimately blank secret (an
+  // App with no webhook, say) unreadable and took every credential lookup with
+  // it. Absent segments are still malformed; base64 never contains a dot, so a
+  // well-formed envelope has exactly four parts.
+  if (parts.length !== 4 || v !== "v1" || !ivB64 || !tagB64 || ctB64 === undefined) {
+    throw new Error("malformed sealed secret");
+  }
   const key = keyFrom(masterKeyB64);
   const decipher = createDecipheriv(ALG, key, Buffer.from(ivB64, "base64"));
   decipher.setAuthTag(Buffer.from(tagB64, "base64"));
