@@ -111,7 +111,6 @@ export function SetupPage() {
  * store rather than onto the deployment host as environment variables.
  */
 function ManualCredentials({ origin, disabled }: { origin: string; disabled: boolean }) {
-  const [open, setOpen] = useState(false);
   const [appId, setAppId] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -131,27 +130,34 @@ function ManualCredentials({ origin, disabled }: { origin: string; disabled: boo
   };
 
   return (
-    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)} style={{ marginTop: "1rem" }}>
-      <summary className="muted">Already created an App yourself? Enter its credentials</summary>
+    <div style={{ marginTop: "1.75rem", borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}>
+      <h3 style={{ margin: "0 0 0.25rem" }}>Or use an App you already created</h3>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Enter its credentials here and they are stored encrypted in the database — so a production install needs nothing in the
+        environment but <code>CONSOLE_MASTER_KEY</code>.
+      </p>
 
-      <p className="muted" style={{ marginTop: "0.75rem" }}>
-        Set these on the App in GitHub first — they are derived from this Console's origin, so they must match exactly:
-      </p>
-      <ul className="muted">
-        <li>
-          Callback URL <code>{origin}/auth/github/callback</code>
-        </li>
-        <li>
-          Webhook URL <code>{origin}/webhooks/github</code>
-        </li>
-        <li>
-          Setup URL <code>{origin}/onboarding</code>
-        </li>
-      </ul>
-      <p className="muted">
-        Leave <em>Expire user authorization tokens</em> off — the Console holds no refresh token, so your sign-in would lapse
-        after a few hours. Permissions and events are the same list as above.
-      </p>
+      <details>
+        <summary className="muted">What to configure on the App in GitHub</summary>
+        <p className="muted" style={{ marginTop: "0.5rem" }}>
+          These come from this Console's own origin and must match exactly:
+        </p>
+        <ul className="muted">
+          <li>
+            Callback URL <code>{origin}/auth/github/callback</code>
+          </li>
+          <li>
+            Webhook URL <code>{origin}/webhooks/github</code>
+          </li>
+          <li>
+            Setup URL <code>{origin}/onboarding</code>
+          </li>
+        </ul>
+        <p className="muted">
+          Leave <em>Expire user authorization tokens</em> off — the Console holds no refresh token, so your sign-in would lapse
+          after a few hours. Permissions and events are the same list as above.
+        </p>
+      </details>
 
       <p>
         <label className="muted">App ID</label>
@@ -191,6 +197,6 @@ function ManualCredentials({ origin, disabled }: { origin: string; disabled: boo
         They are checked against GitHub before anything is stored, then encrypted with <code>CONSOLE_MASTER_KEY</code> and kept
         in the database — nothing is written to disk or to the environment.
       </p>
-    </details>
+    </div>
   );
 }
