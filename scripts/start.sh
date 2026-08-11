@@ -56,9 +56,9 @@ say "Starting the stack"
 # Spelled out rather than built up in an array: under `set -u`, bash 3.2 — the
 # bash macOS ships — treats an empty array as unbound and aborts.
 if [ "${1:-}" = "--rebuild" ]; then
-  compose up -d --build || die "docker compose failed"
+  compose_up --build || die "docker compose failed"
 else
-  compose up -d || die "docker compose failed"
+  compose_up || die "docker compose failed"
 fi
 
 wait_for_port "$WEB_PORT" web 90 || warn "web has not opened :$WEB_PORT yet — check ./scripts/logs.sh web"

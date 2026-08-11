@@ -104,13 +104,70 @@ compose() {
 
 docker_up() { docker info >/dev/null 2>&1; }
 
-# Does our own compose service publish this host port? Used to tell "the port is
-# busy because the Console is already running" apart from "the port is busy
-# because something else owns it".
+# Does our own compose service hold this host port? Distinguishes "busy because
+# the Console is already running" from "busy because something else owns it" —
+# moving out of the way of our own container is how the port creeps upward on
+# every re-run.
 compose_owns_port() { # compose_owns_port SERVICE PORT
-  local cid; cid="$(compose ps -q "$1" 2>/dev/null | head -1)" || return 1
-  [ -n "$cid" ] || return 1
-  docker port "$cid" 2>/dev/null | grep -q ":$2\$"
+  local svc="$1" port="$2"
+  # Ask docker which container publishes the port and whether it is ours. Labels
+  # are exact; `docker port` output formatting varies between versions and hosts.
+  docker ps --filter "publish=$port" \
+      --format '{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.project.working_dir"}}' \
+      2>/dev/null | grep -qx "$svc|$REPO_ROOT" && return 0
+  # Fallback for when that filter or those labels are unavailable: if this
+  # project already has a container for the service, leave the port alone and
+  # let compose reconcile it. A genuinely foreign holder then shows up as a bind
+  # failure, which compose_up handles.
+  [ -n "$(compose ps -aq "$svc" 2>/dev/null)" ]
+}
+
+# `docker compose up` that treats docker as the authority on port conflicts. A
+# pre-flight probe cannot see everything — a listener bound only to IPv6 (docker
+# reports these as "Bind for :::8787"), or a port docker itself has reserved —
+# so when the daemon refuses to bind, move that port and try again.
+compose_up() { # compose_up [ARG...] — same arguments as `compose up -d`
+  local tmp rc port var free attempt=0
+  tmp="$(mktemp)"
+  while [ "$attempt" -lt 6 ]; do
+    attempt=$((attempt + 1))
+    # -e off around the pipeline: a failed `up` is the case being handled here,
+    # not a reason to abandon the script. PIPESTATUS[0] is compose's own status,
+    # since tee always succeeds.
+    set +e
+    compose up -d "$@" 2>&1 | tee "$tmp"
+    rc=${PIPESTATUS[0]}
+    set -e
+    if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
+
+    port="$(port_from_bind_error "$tmp")"
+    [ -n "$port" ] || break
+    var="$(var_holding_port "$port")"
+    [ -n "$var" ] || break
+    free="$(find_free_port $((port + 1)))" || break
+    warn "Docker could not bind :$port — retrying with $var=$free"
+    set_env_value "$var" "$free"
+    export "$var=$free"
+  done
+  rm -f "$tmp"
+  return 1
+}
+
+port_from_bind_error() { # port_from_bind_error FILE -> host port docker could not bind
+  sed -n \
+    -e 's/.*[Bb]ind for [^ ]*:\([0-9][0-9]*\) failed.*/\1/p' \
+    -e 's/.*bind host port for [^:]*:\([0-9][0-9]*\):.*/\1/p' \
+    -e 's/.*listen tcp[^:]*:\([0-9][0-9]*\): bind: address already in use.*/\1/p' \
+    "$1" | head -1
+}
+
+var_holding_port() { # var_holding_port PORT -> the claimed variable set to it
+  local p="$1" v val
+  for v in $CLAIMED_PORT_VARS; do
+    eval "val=\${$v:-}"
+    [ "$val" = "$p" ] && { echo "$v"; return 0; }
+  done
+  return 1
 }
 
 # ---------------------------------------------------------------- connections
@@ -142,9 +199,12 @@ db_password() { local v="${DB_PASSWORD:-}"; [ -n "$v" ] || v="$(env_value DB_PAS
 #
 # Exports VAR; does not print it, so call it as a statement (a command
 # substitution would run it in a subshell and lose the export).
+CLAIMED_PORT_VARS=""   # variables claim_port has settled, for var_holding_port
+
 claim_port() { # claim_port SERVICE|- VAR DEFAULT
   local svc="$1" var="$2" default_port="$3" want free label
   label="$svc"; [ "$label" = "-" ] && label="$var"
+  case " $CLAIMED_PORT_VARS " in *" $var "*) ;; *) CLAIMED_PORT_VARS="$CLAIMED_PORT_VARS $var" ;; esac
   want="$(port_value "$var" "$default_port")"
   if port_open "$want" && { [ "$svc" = "-" ] || ! compose_owns_port "$svc" "$want"; }; then
     free="$(find_free_port $((want + 1)))" || die "No free port near $want for $label"

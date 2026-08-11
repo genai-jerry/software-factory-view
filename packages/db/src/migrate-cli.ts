@@ -57,17 +57,73 @@ function diagnose(err: unknown, raw: string): string | undefined {
       break;
   }
 
-  if ((err as NodeJS.ErrnoException)?.code === "ECONNREFUSED") {
-    return [
-      `Nothing is listening at ${where}.`,
-      `Start the Console's Postgres with ./scripts/setup.sh, or set DATABASE_URL to`,
-      `a Postgres you are already running.`,
-    ].join("\n");
+  switch ((err as NodeJS.ErrnoException)?.code) {
+    case "ECONNREFUSED":
+      return [
+        `Nothing is listening at ${where}.`,
+        `Start the Console's Postgres with ./scripts/setup.sh, or set DATABASE_URL to`,
+        `a Postgres you are already running.`,
+      ].join("\n");
+    case "ECONNRESET":
+      // Retried already, so this is not a slow start: something accepts the
+      // connection and then drops it. Docker's port proxy does exactly that
+      // when the container behind it never comes up.
+      return [
+        `Something at ${where} accepts connections and then closes them, and it did`,
+        `not settle. If that is the Console's container, Postgres inside it is not`,
+        `running — check why:`,
+        `  ./scripts/logs.sh postgres        (or: docker compose logs postgres)`,
+        ``,
+        `A volume left over from a different DB_PASSWORD is the usual cause; the`,
+        `password is only applied when the volume is first created. Reset it with:`,
+        `  ./scripts/stop.sh --volumes && ./scripts/setup.sh   # destroys the local database`,
+      ].join("\n");
+    default:
+      return undefined;
   }
-  return undefined;
 }
 
-runMigrations(url)
+/**
+ * Errors that mean "not ready yet" rather than "wrong". Docker publishes a port
+ * as soon as the container starts, and its proxy accepts connections before
+ * Postgres is listening behind it — the connection is then reset, which is why
+ * a migration run immediately after `compose up` sees ECONNRESET rather than a
+ * refusal. 57P03 is the same story from a Postgres that is still starting up.
+ */
+const TRANSIENT = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "57P03", // cannot_connect_now — the database system is starting up
+  "08006", // connection_failure
+  "08001", // sqlclient_unable_to_establish_sqlconnection
+]);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry while the far end is still coming up, then let the real error through. */
+async function waitForDatabase<T>(run: () => Promise<T>, timeoutMs = 60_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 250;
+  let announced = false;
+  for (;;) {
+    try {
+      return await run();
+    } catch (err) {
+      const code = (err as PgError & NodeJS.ErrnoException)?.code;
+      if (!code || !TRANSIENT.has(code) || Date.now() >= deadline) throw err;
+      if (!announced) {
+        console.error(`waiting for Postgres at ${target(url).where} to accept connections…`);
+        announced = true;
+      }
+      await sleep(delay);
+      delay = Math.min(delay * 2, 2_000);
+    }
+  }
+}
+
+waitForDatabase(() => runMigrations(url))
   .then((applied) => {
     console.log(applied.length ? `applied: ${applied.join(", ")}` : "up to date");
     process.exit(0);

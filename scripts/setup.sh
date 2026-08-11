@@ -68,7 +68,7 @@ if docker_up; then
   claim_port postgres DB_PORT 5432
   claim_port redis REDIS_PORT 6379
 
-  if compose up -d postgres redis >/dev/null 2>&1; then
+  if compose_up postgres redis >/dev/null 2>&1; then
     started="docker"
     ok "postgres (:$DB_PORT) + redis (:$REDIS_PORT) running (docker compose)"
   else
@@ -95,13 +95,23 @@ if [ -z "$started" ]; then
 fi
 [ -n "$started" ] || die "Could not start Postgres. Start Docker, or install postgresql + redis, then re-run."
 
+# An open port is not a ready Postgres: docker's proxy accepts connections the
+# moment the container starts and resets them until the server behind it is
+# listening. The migration runner retries through that, so this is only a coarse
+# "something is there at all" check.
 wait_for_port "$DB_PORT" postgres || die "Postgres did not come up on :$DB_PORT"
 port_open "$REDIS_PORT" || warn "Redis is not answering on :$REDIS_PORT — the worker queue will not run"
 
 # ---------------------------------------------------------------- migrate
 say "Applying database migrations"
-DATABASE_URL="$(db_url)" node packages/db/dist/migrate-cli.js \
-  || die "Migrations failed — see the diagnosis above."
+if ! DATABASE_URL="$(db_url)" node packages/db/dist/migrate-cli.js; then
+  if [ "$started" = "docker" ]; then
+    echo
+    dim "Last lines from the postgres container:"
+    compose logs --tail=20 postgres 2>&1 | sed 's/^/  /' || true
+  fi
+  die "Migrations failed — see the diagnosis above."
+fi
 ok "database ready"
 
 echo
