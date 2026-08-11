@@ -74,7 +74,23 @@ CONSOLE_MASTER_KEY=...   # 32 random bytes; encrypts stored tokens, the App's
                          # private key, and cached repo content at rest
 ```
 
-There are **no repo or org IDs in any config file.** When you open the Console:
+There are **no repo or org IDs in any config file.** Two ways to give the Console its
+App, both ending in the same place — encrypted in the database, nothing on the host:
+
+1. **Let GitHub create it** (below) — two clicks, nothing to copy.
+2. **Enter one you created yourself** — on the same `/setup` screen, *"Already created an
+   App yourself?"*. Paste the App ID, client id/secret, webhook secret and the private
+   key exactly as GitHub gave it to you; the PKCS#1→PKCS#8 conversion happens server-side.
+   The credentials are proved against GitHub's `/app` before anything is stored, so a
+   mismatched App ID fails there and then rather than as a 401 during the first sync.
+   The screen also prints the callback, webhook and setup URLs for *this* origin, which
+   are what the App must be configured with.
+
+Use the second when one App has to serve both a local run and production, or when an org
+admin created the App for you. It keeps production first-run to the browser — no secrets
+in the environment, no `.env` on the deployment host.
+
+When you open the Console:
 
 1. **Setup screen** creates the Console's own GitHub App for you. GitHub builds it
    from a manifest and hands back the app id, private key, webhook secret and OAuth

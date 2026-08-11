@@ -89,6 +89,8 @@ export function SetupPage() {
                 make updates faster.
               </p>
             </details>
+            <ManualCredentials origin={s.publicOrigin} disabled={!s.hasMasterKey} />
+
             {s.devLogin && (
               <p className="muted">
                 Dev mode is on: you can also <a href="/auth/dev-login">sign in without GitHub</a> to look around first.
@@ -98,5 +100,97 @@ export function SetupPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The other way in: register an App the operator created by hand. Needed where
+ * the manifest flow does not fit — an App shared between a local run and
+ * production, or one an org admin created — and it keeps production first-run
+ * to the same screen, with the credentials going straight into the encrypted
+ * store rather than onto the deployment host as environment variables.
+ */
+function ManualCredentials({ origin, disabled }: { origin: string; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [appId, setAppId] = useState("");
+  const [privateKeyPem, setPrivateKeyPem] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    setBusy(true);
+    setError(null);
+    api
+      .post<{ slug: string }>("/api/setup/credentials", { appId, privateKeyPem, webhookSecret, clientId, clientSecret })
+      .then(() => window.location.reload())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)} style={{ marginTop: "1rem" }}>
+      <summary className="muted">Already created an App yourself? Enter its credentials</summary>
+
+      <p className="muted" style={{ marginTop: "0.75rem" }}>
+        Set these on the App in GitHub first — they are derived from this Console's origin, so they must match exactly:
+      </p>
+      <ul className="muted">
+        <li>
+          Callback URL <code>{origin}/auth/github/callback</code>
+        </li>
+        <li>
+          Webhook URL <code>{origin}/webhooks/github</code>
+        </li>
+        <li>
+          Setup URL <code>{origin}/onboarding</code>
+        </li>
+      </ul>
+      <p className="muted">
+        Leave <em>Expire user authorization tokens</em> off — the Console holds no refresh token, so your sign-in would lapse
+        after a few hours. Permissions and events are the same list as above.
+      </p>
+
+      <p>
+        <label className="muted">App ID</label>
+        <input inputMode="numeric" placeholder="123456" value={appId} onChange={(e) => setAppId(e.target.value)} />
+      </p>
+      <p>
+        <label className="muted">Client ID</label>
+        <input placeholder="Iv1.0123456789abcdef" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+      </p>
+      <p>
+        <label className="muted">Client secret</label>
+        <input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+      </p>
+      <p>
+        <label className="muted">Webhook secret (blank if the App has no webhook configured)</label>
+        <input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} />
+      </p>
+      <p>
+        <label className="muted">Private key — paste the whole .pem file; no conversion needed</label>
+        <textarea
+          rows={6}
+          spellCheck={false}
+          placeholder={"-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----"}
+          value={privateKeyPem}
+          onChange={(e) => setPrivateKeyPem(e.target.value)}
+          style={{ width: "100%", fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}
+        />
+      </p>
+
+      {error && <div className="banner error">{error}</div>}
+      <p>
+        <button className="primary" onClick={submit} disabled={disabled || busy || !appId || !privateKeyPem || !clientId || !clientSecret}>
+          {busy ? "Checking with GitHub…" : "Save credentials"}
+        </button>
+      </p>
+      <p className="muted">
+        They are checked against GitHub before anything is stored, then encrypted with <code>CONSOLE_MASTER_KEY</code> and kept
+        in the database — nothing is written to disk or to the environment.
+      </p>
+    </details>
   );
 }

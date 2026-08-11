@@ -88,6 +88,17 @@ export class AppAuth {
     return data.token;
   }
 
+  /**
+   * The App this key and id actually belong to. Used to check credentials at
+   * the moment they are entered: a mistyped app id or a key from a different
+   * App is otherwise a 401 much later, somewhere unrelated.
+   */
+  async verifyApp(): Promise<{ id: number; slug: string; html_url: string; name: string }> {
+    const jwt = await this.appJwt();
+    const { json } = await ghFetch(this.cfg.apiUrl, jwt, "GET", "/app");
+    return json as never;
+  }
+
   /** Every installation of this App (app JWT). */
   async listInstallations(): Promise<Array<{ id: number; account: { login: string; type?: string } }>> {
     const jwt = await this.appJwt();

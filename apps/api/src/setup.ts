@@ -148,6 +148,95 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
   });
 
+  /**
+   * Register an App the operator created by hand, from the setup screen. Same
+   * destination as the manifest flow — encrypted in github_app_config — so a
+   * production install needs no credentials in the environment and no secrets
+   * on the deployment host.
+   *
+   * The credentials are proved against GitHub before they are stored: an app id
+   * that does not match the key, or a key from another App, fails here rather
+   * than as an unexplained 401 during the first sync.
+   */
+  app.post<{
+    Body: {
+      appId?: string;
+      privateKeyPem?: string;
+      webhookSecret?: string;
+      clientId?: string;
+      clientSecret?: string;
+    };
+  }>("/api/setup/credentials", async (req, reply) => {
+    if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
+    if (!deps.cfg.CONSOLE_MASTER_KEY) {
+      return reply.code(500).send({ error: "CONSOLE_MASTER_KEY is not set on the API — set it and restart" });
+    }
+
+    // Open only while unconfigured, exactly as the manifest flow is: replacing
+    // an App that already exists takes an authenticated session.
+    const already = await deps.credentials.resolve();
+    let ctx = null as Awaited<ReturnType<typeof resolveSession>>;
+    if (already) {
+      ctx = await resolveSession(db, deps.cfg, req);
+      if (!ctx) return reply.code(403).send({ error: "this Console already has a GitHub App — sign in to replace it" });
+    }
+
+    const appId = req.body?.appId?.trim() ?? "";
+    const privateKeyPem = req.body?.privateKeyPem?.trim() ?? "";
+    const webhookSecret = req.body?.webhookSecret?.trim() ?? "";
+    const clientId = req.body?.clientId?.trim() ?? "";
+    const clientSecret = req.body?.clientSecret?.trim() ?? "";
+
+    const missing = Object.entries({ appId, privateKeyPem, clientId, clientSecret })
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    if (missing.length) return reply.code(400).send({ error: `missing: ${missing.join(", ")}` });
+    if (!/^\d+$/.test(appId)) return reply.code(400).send({ error: "App ID is the numeric id from the App's settings page" });
+
+    // GitHub hands out PKCS#1; do the conversion here so nobody has to know that.
+    let pkcs8: string;
+    try {
+      pkcs8 = await toPkcs8(privateKeyPem);
+    } catch {
+      return reply.code(400).send({ error: "that does not parse as a private key — paste the whole .pem, BEGIN and END lines included" });
+    }
+
+    let verified: { id: number; slug: string; html_url: string };
+    try {
+      verified = await new AppAuth({
+        apiUrl: deps.cfg.GITHUB_API_URL,
+        appId,
+        privateKeyPem: pkcs8,
+        oauthClientId: clientId,
+        oauthClientSecret: clientSecret,
+      }).verifyApp();
+    } catch (err) {
+      return reply
+        .code(400)
+        .send({ error: `GitHub rejected these credentials: ${(err as Error).message}. Check the App ID matches the private key.` });
+    }
+
+    const key = deps.cfg.CONSOLE_MASTER_KEY;
+    const values = {
+      appId,
+      slug: verified.slug,
+      htmlUrl: verified.html_url,
+      encryptedPrivateKey: encryptSecret(pkcs8, key),
+      encryptedWebhookSecret: encryptSecret(webhookSecret, key),
+      clientId,
+      encryptedClientSecret: encryptSecret(clientSecret, key),
+      configuredBy: ctx?.login ?? null,
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(githubAppConfig)
+      .values({ id: "default", ...values })
+      .onConflictDoUpdate({ target: githubAppConfig.id, set: values });
+    deps.credentials.invalidate();
+
+    return { ok: true, slug: verified.slug, htmlUrl: verified.html_url, webhookSecretSet: Boolean(webhookSecret) };
+  });
+
   /** Bootstrap the very first user as an owner when no memberships exist yet. */
   app.post("/api/setup/claim-owner", async (req, reply) => {
     const ctx = await resolveSession(db, deps.cfg, req);
