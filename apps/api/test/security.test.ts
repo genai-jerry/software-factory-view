@@ -50,6 +50,7 @@ beforeAll(async () => {
     }),
     ingestQueue: { add: async (...args: unknown[]) => enqueued.push(args) } as never,
     reconcileQueue: { add: async () => undefined } as never,
+    openspecQueue: { add: async () => undefined } as never,
   };
   app = await buildApp(deps);
 

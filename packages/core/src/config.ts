@@ -32,6 +32,9 @@ const envSchema = z.object({
   /** Monthly insight token budget per org (input+output tokens). */
   INSIGHT_ORG_BUDGET_TOKENS: z.coerce.number().default(5_000_000),
 
+  /** Pinned @fission-ai/openspec version the onboarding worker installs (never `latest`: it executes on the Console host). */
+  OPENSPEC_VERSION: z.string().default("1.8.0"),
+
   /** Staleness banner threshold, minutes since last successful sync. */
   STALENESS_THRESHOLD_MINUTES: z.coerce.number().default(15),
   /** Dev-only bypass: "1" allows login as a fixed dev user without GitHub OAuth. */

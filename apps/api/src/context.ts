@@ -12,6 +12,7 @@ export interface AppDeps {
   credentials: CredentialStore;
   ingestQueue: Queue;
   reconcileQueue: Queue;
+  openspecQueue: Queue;
 }
 
 /** Per-request authenticated context: the caller and their org scope. */
