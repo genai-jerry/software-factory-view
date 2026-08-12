@@ -155,3 +155,83 @@ describe("manual App registration", () => {
     expect(res.json().webhookVerification).toBe(false);
   });
 });
+
+describe("editing a stored registration", () => {
+  it("keeps the fields the edit leaves blank", async () => {
+    expect((await post(VALID)).statusCode).toBe(200);
+
+    const res = await post({ ...VALID, privateKeyPem: "", clientSecret: "rotated", webhookSecret: "" }, { cookie: sessionCookie });
+    expect(res.statusCode).toBe(200);
+
+    const resolved = await deps.credentials.resolve();
+    expect(resolved?.clientSecret).toBe("rotated");
+    expect(resolved?.privateKeyPem).toContain("BEGIN PRIVATE KEY"); // kept, not blanked
+    expect(resolved?.webhookSecret).toBe("whsec"); // kept, so deliveries stay verified
+  });
+
+  it("falls back to the stored identifiers when only a secret is sent", async () => {
+    await post(VALID);
+
+    const res = await post({ clientSecret: "rotated" }, { cookie: sessionCookie });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ appId: "123456", slug: "factory-console" });
+  });
+
+  it("refuses to graft the stored key onto a different App", async () => {
+    await post(VALID);
+
+    const res = await post({ ...VALID, appId: "999", privateKeyPem: "" }, { cookie: sessionCookie });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/different App ID/);
+    expect((await deps.credentials.resolve())?.appId).toBe("123456");
+
+    const secret = await post({ ...VALID, clientId: "Iv1.other", clientSecret: "" }, { cookie: sessionCookie });
+    expect(secret.statusCode).toBe(400);
+    expect(secret.json().error).toMatch(/different OAuth client id/);
+  });
+
+  it("clears the slug when the field is sent empty", async () => {
+    await post(VALID);
+    expect((await post({ ...VALID, slug: "" }, { cookie: sessionCookie })).json().slug).toBeNull();
+  });
+
+  it("still demands the full set when the credentials come from the environment", async () => {
+    // No stored row: an env-configured Console has nothing to patch, and
+    // half-copying its secrets into the database would be worse than asking.
+    deps.credentials = new CredentialStore({
+      masterKey: MASTER_KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => null,
+      env: { appId: "9", privateKeyPem: PKCS1, webhookSecret: "w", clientId: "Iv1.env", clientSecret: "envsecret" },
+    });
+    app = await buildApp(deps);
+
+    const res = await post({ clientSecret: "rotated" }, { cookie: sessionCookie });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/environment/);
+  });
+
+  it("stays open while nobody owns the Console yet", async () => {
+    // The App's own OAuth pair is what signs people in, so gating setup on a
+    // session before anyone can have one would lock the fix behind the break.
+    await deps.dbh.db.delete(memberships);
+    expect((await post(VALID)).statusCode).toBe(200);
+
+    const anon = await post({ clientSecret: "rotated" });
+    expect(anon.statusCode).toBe(200);
+    expect((await deps.credentials.resolve())?.clientSecret).toBe("rotated");
+  });
+
+  it("tells the setup screen what is stored, without the secrets", async () => {
+    await post(VALID);
+    const body = (await app.inject({ method: "GET", url: "/api/setup/status" })).json();
+
+    expect(body).toMatchObject({ configured: true, appId: "123456", clientId: "Iv1.abc", hasWebhookSecret: true });
+    expect(body.canEditApp).toBe(false); // signed out, and this Console has an owner
+    expect(Object.keys(body)).not.toContain("clientSecret");
+    expect(JSON.stringify(body)).not.toContain("PRIVATE KEY");
+
+    const signedIn = await app.inject({ method: "GET", url: "/api/setup/status", headers: { cookie: sessionCookie } });
+    expect(signedIn.json().canEditApp).toBe(true);
+  });
+});

@@ -97,8 +97,14 @@ function LoginPage({ devLogin }: { devLogin: boolean }) {
         <a href="/auth/github/login">
           <button className="primary">Sign in with GitHub</button>
         </a>
+        {/* Sign-in runs on the Console's own GitHub App, so a wrong OAuth pair
+            fails here with nothing to click. This is the way to the screen that
+            fixes it. */}
+        <p className="muted" style={{ marginTop: "1rem" }}>
+          Sign-in failing? <a href="/setup">Check the GitHub App details</a>
+        </p>
         {devLogin && (
-          <p className="muted" style={{ marginTop: "1rem" }}>
+          <p className="muted">
             Dev mode: <a href="/auth/dev-login">sign in without GitHub</a>
           </p>
         )}

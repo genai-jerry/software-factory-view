@@ -1,8 +1,8 @@
 import { AppAuth, buildAppManifest, encryptSecret, randomToken, toPkcs8 } from "@console/core";
 import { githubAppConfig, memberships, orgs, users } from "@console/db";
 import { eq } from "drizzle-orm";
-import type { FastifyInstance } from "fastify";
-import { resolveSession, type AppDeps } from "./context.js";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { resolveSession, type AppDeps, type RequestCtx } from "./context.js";
 
 /**
  * First-run setup: register the Console's own GitHub App via GitHub's manifest
@@ -11,13 +11,14 @@ import { resolveSession, type AppDeps } from "./context.js";
  * which are stored encrypted. No hand-copied credentials, no PKCS#1→PKCS#8
  * conversion step, no chance of a mistyped webhook secret.
  *
- * The flow is open only while the Console is unconfigured — once an App exists,
- * re-registration requires an authenticated owner.
+ * The same screen edits the registration afterwards (see setupAccess for who
+ * may): rotating a secret or correcting the App ID is a patch over the stored
+ * row, not a re-run of the whole handshake.
  */
 export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
-  app.get("/api/setup/status", async () => {
+  app.get("/api/setup/status", async (req) => {
     const creds = await deps.credentials.resolve();
     const hasMasterKey = Boolean(deps.cfg.CONSOLE_MASTER_KEY);
     return {
@@ -25,6 +26,14 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       source: creds?.source ?? null,
       appSlug: creds?.slug ?? null,
       appId: creds?.appId ?? null,
+      // The OAuth client id is public by construction — it travels in the
+      // authorize URL on every sign-in — so it can prefill the edit form. The
+      // key and the two secrets never leave the server; the form reports them
+      // as "stored" and leaves them blank to keep.
+      clientId: creds?.clientId ?? null,
+      hasWebhookSecret: Boolean(creds?.webhookSecret),
+      /** Whether this caller could save a change from the setup screen. */
+      canEditApp: (await setupAccess(deps, req)).allowed,
       hasMasterKey,
       credentialError: deps.credentials.credentialError,
       publicOrigin: deps.cfg.PUBLIC_ORIGIN,
@@ -39,15 +48,11 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
    * do on the client's behalf).
    */
   app.get<{ Querystring: { org?: string; name?: string } }>("/setup/github-app", async (req, reply) => {
-    const already = await deps.credentials.resolve();
-    if (already) {
-      const ctx = await resolveSession(db, deps.cfg, req);
-      if (!ctx) {
-        return reply
-          .code(403)
-          .type("text/html")
-          .send(page("Already configured", "<p>This Console already has a GitHub App. Sign in as an owner to re-register.</p>"));
-      }
+    if (!(await setupAccess(deps, req)).allowed) {
+      return reply
+        .code(403)
+        .type("text/html")
+        .send(page("Already configured", "<p>This Console already has a GitHub App. Sign in to re-register it.</p>"));
     }
 
     const state = randomToken(16);
@@ -149,58 +154,87 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /**
-   * Manual registration: paste the five credentials of a GitHub App you
-   * already have. The manifest flow above is the easy path, but it needs the
-   * Console to be reachable from github.com — a laptop behind NAT, an
-   * air-gapped install, or an App that predates this Console all land here
-   * instead. Same storage, same encryption; the private key is converted to
-   * PKCS#8 for you rather than left as a documented openssl incantation.
+   * Manual registration, and the way to edit a registration afterwards: the
+   * five credentials of a GitHub App you already have. The manifest flow above
+   * is the easy path, but it needs the Console to be reachable from github.com
+   * — a laptop behind NAT, an air-gapped install, or an App that predates this
+   * Console all land here instead. Same storage, same encryption; the private
+   * key is converted to PKCS#8 for you rather than left as a documented
+   * openssl incantation.
+   *
+   * On a Console that already has a stored registration this is a patch: blank
+   * fields keep what is stored, so rotating a client secret does not mean
+   * re-pasting the private key.
    */
   app.post<{ Body: ManualCredentials }>("/api/setup/credentials", async (req, reply) => {
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
 
-    // Open while unconfigured (first run has no one to sign in as); once an App
-    // exists, replacing it is an authenticated act — same rule as the manifest flow.
-    const already = await deps.credentials.resolve();
-    if (already) {
-      const ctx = await resolveSession(db, deps.cfg, req);
-      if (!ctx) return reply.code(403).send({ error: "sign in to replace the registered GitHub App" });
-    }
+    const { allowed, ctx } = await setupAccess(deps, req);
+    if (!allowed) return reply.code(403).send({ error: "sign in to change the registered GitHub App" });
 
     const key = deps.cfg.CONSOLE_MASTER_KEY;
     if (!key) return reply.code(400).send({ error: "CONSOLE_MASTER_KEY is not set on the API — credentials cannot be stored" });
 
+    // Only a stored row can be edited field by field. Credentials pinned in the
+    // environment are not ours to half-copy into the database, and a row we
+    // cannot decrypt resolves to null — so both of those need the full set,
+    // which is also how you repair them.
+    const current = await deps.credentials.resolve();
+    const stored = current?.source === "database" ? current : null;
+
     const body = req.body ?? ({} as ManualCredentials);
-    const appId = String(body.appId ?? "").trim();
-    const privateKeyPem = String(body.privateKeyPem ?? "").replace(/\\n/g, "\n").trim();
-    const clientId = String(body.clientId ?? "").trim();
-    const clientSecret = String(body.clientSecret ?? "").trim();
-    const webhookSecret = String(body.webhookSecret ?? "").trim();
-    const slug = String(body.slug ?? "").trim();
+    const field = (v: unknown) => String(v ?? "").trim();
+    const appId = field(body.appId) || stored?.appId || "";
+    const submittedKey = String(body.privateKeyPem ?? "").replace(/\\n/g, "\n").trim();
+    const clientId = field(body.clientId) || stored?.clientId || "";
+    const clientSecret = field(body.clientSecret) || stored?.clientSecret || "";
+    const webhookSecret = field(body.webhookSecret) || stored?.webhookSecret || "";
+    // The slug is optional and worth being able to remove, so an empty one that
+    // was actually sent means "clear it" rather than "keep".
+    const slug = body.slug === undefined ? (stored?.slug ?? "") : field(body.slug);
 
     const missing = [
       ["appId", appId],
-      ["privateKeyPem", privateKeyPem],
+      ["privateKeyPem", submittedKey || stored?.privateKeyPem || ""],
       ["clientId", clientId],
       ["clientSecret", clientSecret],
     ]
       .filter(([, v]) => !v)
       .map(([k]) => k);
-    if (missing.length > 0) return reply.code(400).send({ error: `missing required field(s): ${missing.join(", ")}` });
+    if (missing.length > 0) {
+      const hint =
+        current?.source === "environment"
+          ? " — this Console's credentials come from the environment, so there is no stored registration to edit; enter the full set to store one"
+          : "";
+      return reply.code(400).send({ error: `missing required field(s): ${missing.join(", ")}${hint}` });
+    }
     if (!/^\d+$/.test(appId)) {
       return reply.code(400).send({ error: "App ID must be the numeric id from the App's settings page, not its name or slug" });
     }
-
-    let pkcs8: string;
-    try {
-      pkcs8 = await toPkcs8(privateKeyPem);
-    } catch (err) {
-      return reply
-        .code(400)
-        .send({ error: `that private key could not be read (${(err as Error).message}). Paste the whole .pem file, BEGIN/END lines included.` });
+    // Keeping a blank field means keeping the stored value — which is only ever
+    // right for the same App. Pointing the Console at a different one and
+    // inheriting the old key would store a pairing that authenticates as
+    // nothing, and the failure would surface later as an opaque 401 from GitHub.
+    if (stored && appId !== stored.appId && !submittedKey) {
+      return reply.code(400).send({ error: "that is a different App ID — paste that App's own private key as well" });
+    }
+    if (stored && clientId !== stored.clientId && !field(body.clientSecret)) {
+      return reply.code(400).send({ error: "that is a different OAuth client id — enter its client secret as well" });
     }
 
-    const ctx = await resolveSession(db, deps.cfg, req);
+    let pkcs8: string;
+    if (submittedKey) {
+      try {
+        pkcs8 = await toPkcs8(submittedKey);
+      } catch (err) {
+        return reply
+          .code(400)
+          .send({ error: `that private key could not be read (${(err as Error).message}). Paste the whole .pem file, BEGIN/END lines included.` });
+      }
+    } else {
+      pkcs8 = stored!.privateKeyPem; // already PKCS#8 — it was converted on the way in
+    }
+
     const values = {
       appId,
       slug: slug || null,
@@ -209,13 +243,17 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       encryptedWebhookSecret: encryptSecret(webhookSecret, key),
       clientId,
       encryptedClientSecret: encryptSecret(clientSecret, key),
-      configuredBy: ctx?.login ?? null,
       updatedAt: new Date(),
     };
     await db
       .insert(githubAppConfig)
-      .values({ id: "default", ...values })
-      .onConflictDoUpdate({ target: githubAppConfig.id, set: values });
+      .values({ id: "default", ...values, configuredBy: ctx?.login ?? null })
+      .onConflictDoUpdate({
+        target: githubAppConfig.id,
+        // configuredBy only when we know who: an unauthenticated first-run edit
+        // must not wipe the name already on the row.
+        set: ctx ? { ...values, configuredBy: ctx.login } : values,
+      });
     deps.credentials.invalidate();
 
     return { ok: true, appId, slug: slug || null, webhookVerification: Boolean(webhookSecret) };
@@ -233,6 +271,28 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     await db.insert(memberships).values({ orgId: org.id, userId: user.id, role: "owner" });
     return { ok: true, orgId: org.id };
   });
+}
+
+/**
+ * Who may register or edit the Console's GitHub App.
+ *
+ * Open while this Console has nothing to protect — no App registered, or no one
+ * who owns it — and authenticated once both exist. The membership half matters
+ * as much as the credential half: the App's own OAuth pair is what signs people
+ * in, so on a Console where the App is registered but nobody has claimed
+ * ownership yet, requiring a session would lock the fix behind the sign-in that
+ * a wrong client secret breaks. That window is already unguarded — claim-owner
+ * hands the first caller an org — so this protects exactly as much as before.
+ * Once an owner exists, the environment variables and DEV_FAKE_LOGIN remain the
+ * documented ways back in.
+ */
+async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
+  const db = deps.dbh.db;
+  const ctx = await resolveSession(db, deps.cfg, req);
+  if (ctx) return { allowed: true, ctx };
+  if (!(await deps.credentials.resolve())) return { allowed: true, ctx: null };
+  const claimed = await db.select({ orgId: memberships.orgId }).from(memberships).limit(1);
+  return { allowed: claimed.length === 0, ctx: null };
 }
 
 const manifestStates = new Map<string, number>();
