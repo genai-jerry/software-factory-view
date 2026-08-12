@@ -25,6 +25,13 @@ if [ -z "$origin" ]; then
   ok "PUBLIC_ORIGIN defaulted to http://localhost:8080"
 fi
 
+# Preflight: the api container publishes API_HOST_PORT (default 8787) for
+# host-side debugging. If another process owns it, compose fails cryptically.
+api_port="$(env_value API_HOST_PORT)"; api_port="${api_port:-8787}"
+if ! compose ps --quiet api 2>/dev/null | grep -q . && port_open "$api_port"; then
+  die "Port $api_port is already in use by another process — stop it, or set API_HOST_PORT in .env to a free port"
+fi
+
 build_args=()
 [ "${1:-}" = "--rebuild" ] && build_args+=(--build)
 

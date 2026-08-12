@@ -36,7 +36,9 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8787:8787"
+      # Host-side debugging convenience only — nginx reaches the api over the
+      # compose network. Change API_HOST_PORT if something else owns 8787.
+      - "${API_HOST_PORT:-8787}:8787"
 
   worker:
     build:
