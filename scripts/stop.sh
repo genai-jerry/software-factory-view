@@ -9,6 +9,13 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$REPO_ROOT"
 
+# --volumes is destructive, so it has exactly one spelling; anything else is a
+# typo, and a silently ignored one would leave the database standing.
+case "${1:-}" in
+  ""|--volumes) ;;
+  *) die "Unknown argument '$1' — usage: ./scripts/stop.sh [--volumes]" ;;
+esac
+
 stopped_any=""
 
 # Dev processes recorded by dev.sh
