@@ -157,6 +157,9 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
   const state = useQuery({
     queryKey: ["onboarding", estateId],
     queryFn: () => api.get<OnboardingState>(`/api/estates/${estateId}/onboarding`),
+    // The OpenSpec step runs async in the worker — poll while any repo has one in flight.
+    refetchInterval: (q) =>
+      q.state.data?.repos.some((r) => ["pending", "running"].includes(r.steps["openspec"]?.status ?? "")) ? 3000 : false,
   });
   const reconcile = useMutation({
     mutationFn: () => api.post(`/api/estates/${estateId}/reconcile`),
@@ -232,7 +235,7 @@ function RepoOnboarding({
   const stepBadge = (step: string) => {
     const s = repo.steps[step];
     if (!s) return null;
-    return <span className={`badge ${s.status === "ok" ? "merge" : "blocked"}`}>{s.status}</span>;
+    return <span className={`badge ${s.status === "ok" ? "merge" : s.status === "failed" ? "blocked" : ""}`}>{s.status}</span>;
   };
 
   return (
@@ -276,10 +279,28 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>3 · OpenSpec</strong> — checked by validation; if missing run{" "}
-          <code>npx -y @fission-ai/openspec@latest init --tools claude</code> and push
+          <strong>3 · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
+          the enablement branch; no terminal needed {stepBadge("openspec")}
         </span>
+        <button
+          onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/openspec`)}
+          disabled={run.isPending || ["pending", "running"].includes(repo.steps["openspec"]?.status ?? "")}
+        >
+          {["pending", "running"].includes(repo.steps["openspec"]?.status ?? "") ? "Installing…" : "Install"}
+        </button>
       </div>
+      {repo.steps["openspec"]?.status === "failed" && typeof repo.steps["openspec"]?.detail["error"] === "string" && (
+        <p className="muted">✗ {repo.steps["openspec"]!.detail["error"] as string} — fix and re-run, or fall back to{" "}
+          <code>npx -y @fission-ai/openspec@latest init --tools claude</code> locally
+        </p>
+      )}
+      {typeof repo.steps["openspec"]?.detail["prUrl"] === "string" && (
+        <p className="muted">
+          → scaffold pushed to the{" "}
+          <a href={repo.steps["openspec"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">enablement PR</a> (merge it
+          on GitHub)
+        </p>
+      )}
 
       <div className="check-row">
         <span style={{ flex: 1 }}>

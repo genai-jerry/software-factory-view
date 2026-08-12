@@ -95,6 +95,33 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     },
   );
 
+  /**
+   * Step 3 — OpenSpec: no terminal required. Queues a worker job that runs the
+   * pinned upstream CLI in a scratch directory and pushes the scaffold onto the
+   * enablement branch, so it rides the same human-merged PR as the stubs.
+   */
+  app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/openspec", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
+    if (!target) return;
+    const { repo, client, owner, name } = target;
+    try {
+      // Idempotence: initialised on the default branch means nothing to queue.
+      const existing = await client.listDir(owner, name, "openspec");
+      if (existing.length > 0) {
+        await recordStep(deps, repo, "openspec", "ok", { found: true });
+        return { ok: true, found: true, message: "openspec/ already on the repo — nothing to do" };
+      }
+      await recordStep(deps, repo, "openspec", "pending", { queuedAt: new Date().toISOString() });
+      await deps.openspecQueue.add("init", { repoId: repo.id }, { removeOnComplete: 100, removeOnFail: 100 });
+      return { ok: true, queued: true };
+    } catch (err) {
+      await recordStep(deps, repo, "openspec", "failed", { error: (err as Error).message });
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
   /** Step 5 — stub-files PR: the consuming repo's whole footprint, one PR, human-merged. */
   app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/stubs", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
@@ -253,7 +280,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 
       // 7. OpenSpec initialised.
       const openspec = await client.listDir(owner, name, "openspec");
-      push("openspec", openspec.length > 0, openspec.length ? "openspec/ present" : "openspec/ missing — run: npx -y @fission-ai/openspec@latest init --tools claude");
+      push("openspec", openspec.length > 0, openspec.length ? "openspec/ present" : "openspec/ missing — run step 3 (Install OpenSpec) and merge the PR");
 
       // 8. Issue template present.
       const template = await client.getFileAtRef(owner, name, ".github/ISSUE_TEMPLATE/factory-requirement.yml");
@@ -319,7 +346,7 @@ async function recordStep(
   deps: AppDeps,
   repo: { id: string; orgId: string; estateId: string },
   step: string,
-  status: "ok" | "failed",
+  status: "pending" | "ok" | "failed",
   detail: Record<string, unknown>,
 ): Promise<void> {
   await deps.dbh.db

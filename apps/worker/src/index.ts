@@ -4,6 +4,7 @@ import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { processWebhook, type WebhookJob } from "./ingest.js";
+import { runOpenspecInit, type OpenspecJob } from "./openspec.js";
 import { reconcileAll } from "./reconcile.js";
 
 /**
@@ -69,17 +70,35 @@ async function main(): Promise<void> {
     console.error(`reconcile job ${job?.id} failed:`, err.message);
   });
 
+  // Onboarding step 3: run the pinned OpenSpec CLI and push the scaffold to
+  // the enablement branch. Serial — each job shells out to npx.
+  const openspecWorker = new Worker<OpenspecJob>(
+    "openspec",
+    async (job) => {
+      credentials.invalidate();
+      const auth = await credentials.requireAuth();
+      const result = await runOpenspecInit(db, cfg, auth, job.data);
+      console.log(`openspec init for repo ${job.data.repoId}: found=${result.found} pushed=${result.pushed} skipped=${result.skipped}`);
+      return result;
+    },
+    { connection, concurrency: 1 },
+  );
+  openspecWorker.on("failed", (job, err) => {
+    console.error(`openspec job ${job?.id} (repo ${job?.data.repoId}) failed:`, err.message);
+  });
+
   // Nightly reconciliation (03:17 UTC — off the top of the hour, politely off-peak).
   const reconcileQueue = new Queue("reconcile", { connection });
   await reconcileQueue.upsertJobScheduler("nightly-reconcile", { pattern: "17 3 * * *" }, { data: {} });
 
   const resolved = await credentials.resolve();
-  console.log("worker up: queues=[ingest, reconcile]");
+  console.log("worker up: queues=[ingest, reconcile, openspec]");
   console.log(resolved ? `github app: ${resolved.slug ?? resolved.appId} (from ${resolved.source})` : "github app: not registered yet — jobs will wait");
 
   const shutdown = async () => {
     await ingestWorker.close();
     await reconcileWorker.close();
+    await openspecWorker.close();
     await reconcileQueue.close();
     await connection.quit();
     await close();

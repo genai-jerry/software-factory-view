@@ -35,8 +35,9 @@ async function main(): Promise<void> {
 
   const ingestQueue = new Queue("ingest", { connection });
   const reconcileQueue = new Queue("reconcile", { connection });
+  const openspecQueue = new Queue("openspec", { connection });
 
-  const app = await buildApp({ cfg, dbh, credentials, ingestQueue, reconcileQueue });
+  const app = await buildApp({ cfg, dbh, credentials, ingestQueue, reconcileQueue, openspecQueue });
   await app.listen({ port: cfg.API_PORT, host: "0.0.0.0" });
 
   const resolved = await credentials.resolve();
