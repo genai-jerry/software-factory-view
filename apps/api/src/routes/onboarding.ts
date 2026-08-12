@@ -2,7 +2,7 @@ import { FACTORY_LABELS, InstallationClient, parseApproverFile } from "@console/
 import { estates, gateAssignments, memberships, onboardingRuns, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
+import { requireAuth, userClient, type AppDeps, type RequestCtx } from "../context.js";
 
 /**
  * Onboarding (spec 03): idempotent steps that report found / created / fixed,
@@ -13,6 +13,33 @@ import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
 
 const FACTORY_REPO = "genai-jerry/claude-software-factory";
 const FACTORY_REF = "v1";
+
+/**
+ * The profile issue's trigger label. Deliberately not in FACTORY_LABELS: that
+ * list is the board's state model (`isFactoryState` drives the projections),
+ * and this is a kind marker on one maintenance issue, not a place in the
+ * pipeline.
+ */
+const PROFILE_LABEL = {
+  name: "factory:profile",
+  color: "5A4A7A",
+  description: "Repo profile issue: the Profiler drafts and re-checks .factory/profile.json (kind, not a state)",
+};
+const PROFILE_ISSUE_TITLE = "Factory: repo profile";
+const PROFILE_ISSUE_BODY = [
+  "The **Profiler** drafts this repository's `.factory/profile.json` — the stack facts every factory",
+  "role treats as authoritative here (FACTORY.md §2c).",
+  "",
+  "It runs in this repository's own Actions runner, reads the code, and *runs* the test/build/lint",
+  "commands it proposes rather than guessing them. It opens a PR with its evidence field by field.",
+  "**Review that PR before merging it** — merging is where you agree to what the factory will treat",
+  "as true from then on.",
+  "",
+  "Re-run it any time by removing and re-applying the `factory:profile` label. A push to the default",
+  "branch that touches a manifest, lockfile, CI workflow or tool config re-checks it automatically.",
+  "",
+  "Filed by the Factory Console.",
+].join("\n");
 
 export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
@@ -181,7 +208,93 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     }
   });
 
-  /** Step 6 — validation suite: green/red per check, zero writes on a healthy repo. */
+  /**
+   * Step 6 — the repo profile (FACTORY.md §2c).
+   *
+   * The Console does not write this one and could not write it well: the
+   * profile is the repo's stack facts, and deriving them means reading the
+   * code, which is the one thing the Console has no business holding. So it
+   * asks instead. Filing an issue labelled `factory:profile` starts the
+   * Profiler role inside the repo's *own* Actions runner, where the code
+   * already is; it drafts the profile, verifies the commands by running them,
+   * and opens a PR for a human to merge. What comes back to the Console is a
+   * PR and, once merged, one file it already fetches.
+   *
+   * Filed under the signed-in user's identity, not the App's: the router
+   * ignores bot-authored issues on `opened`, and this is a person asking.
+   */
+  app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/profile", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
+    if (!target) return;
+    const { repo, client, owner, name } = target;
+
+    try {
+      // Idempotence, like every other step: a profile on the default branch is
+      // the finished state, so re-running verifies instead of filing again.
+      const existing = await client.getFileAtRef(owner, name, ".factory/profile.json");
+      if (existing) {
+        await recordStep(deps, repo, "profile", "ok", { found: true });
+        return { ok: true, found: true, message: "profile already on the default branch — nothing to do" };
+      }
+
+      // Preconditions, checked rather than assumed. Both failures would
+      // otherwise land as a red Actions run the Console can see the conclusion
+      // of but not the reason for, and the operator would be reading logs to
+      // learn something answerable here.
+      const stub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
+      if (!stub) {
+        return reply.code(409).send({
+          error:
+            "the enablement PR is not merged yet — GitHub only fires workflows that exist on the default branch, so nothing would start. Merge it, then run this step.",
+        });
+      }
+      const hasKey =
+        (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) ||
+        (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
+      if (!hasKey) {
+        return reply.code(409).send({
+          error: "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN on this repo — the agent run would fail before it read a line of code. Run the secret step first.",
+        });
+      }
+
+      // Self-healing, the same way the pipeline creates factory:in-progress on
+      // first use: a repo onboarded before the Profiler existed never re-ran
+      // setup-labels.sh, and the trigger label has to exist to be applied.
+      await client.createLabel(owner, name, PROFILE_LABEL);
+
+      // The profile issue is a singleton — one per repo, reused — so the
+      // drafts, the drift checks and their evidence read as one thread.
+      const user = userClient(deps, ctx);
+      const found = (await client.listIssuesByLabel(owner, name, PROFILE_LABEL.name))[0];
+      if (found) {
+        if (found.state === "closed") await user.reopenIssue(owner, name, found.number);
+        // The Profiler drops the label when it finishes, so re-applying is what
+        // asks for another run. Remove first for the case where a previous run
+        // died before its cleanup: adding a label that is already there is a
+        // no-op and emits no event, which would look like a button that does
+        // nothing.
+        await user.removeLabel(owner, name, found.number, PROFILE_LABEL.name);
+        await user.addLabels(owner, name, found.number, [PROFILE_LABEL.name]);
+        await recordStep(deps, repo, "profile", "pending", { issueNumber: found.number, issueUrl: found.html_url });
+        return { ok: true, issueNumber: found.number, issueUrl: found.html_url, rerun: true };
+      }
+
+      const issue = await user.createIssue(owner, name, {
+        title: PROFILE_ISSUE_TITLE,
+        labels: [PROFILE_LABEL.name],
+        body: PROFILE_ISSUE_BODY,
+      });
+      await recordStep(deps, repo, "profile", "pending", { issueNumber: issue.number, issueUrl: issue.html_url });
+      return { ok: true, issueNumber: issue.number, issueUrl: issue.html_url, rerun: false };
+    } catch (err) {
+      await recordStep(deps, repo, "profile", "failed", { error: (err as Error).message });
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /** Step 7 — validation suite: green/red per check, zero writes on a healthy repo. */
   app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/validate", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
@@ -234,13 +347,33 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 
       // 4. profile.json parses and carries the schema's required keys.
       const profile = await client.getFileAtRef(owner, name, ".factory/profile.json");
-      if (!profile) push("profile", false, ".factory/profile.json missing — implementer/reviewer/qa are hard-blocked");
-      else {
+      if (!profile) {
+        push("profile", false, ".factory/profile.json missing — implementer/reviewer/qa are hard-blocked. Run the profile step: the Profiler drafts it from the code and opens a PR");
+      } else {
         try {
           const parsed = JSON.parse(profile.content) as Record<string, unknown>;
           const required = ["repo", "stack", "branches", "commands"];
           const absent = required.filter((k) => !(k in parsed));
-          push("profile", absent.length === 0, absent.length ? `missing required keys: ${absent.join(", ")}` : "parses, required keys present");
+          // Schema-valid and useless is a real state: the required keys say
+          // nothing about the fields that carry the repo's actual knowledge, and
+          // a profile with no conventions and no gotchas leaves the roles
+          // guessing exactly where guessing costs the most.
+          const thin = (["conventions", "gotchas", "review_checklist", "qa_notes"] as const).filter((k) => {
+            const v = parsed[k];
+            return !Array.isArray(v) || v.length === 0;
+          });
+          const commands = (parsed.commands ?? {}) as Record<string, unknown>;
+          const noCommands = ["test", "build", "lint"].every((k) => !commands[k]);
+          const notes = [
+            absent.length ? `missing required keys: ${absent.join(", ")}` : null,
+            thin.length ? `empty: ${thin.join(", ")}` : null,
+            noCommands ? "every command is null — no role can verify its own work here" : null,
+          ].filter(Boolean);
+          push(
+            "profile",
+            absent.length === 0,
+            notes.length ? notes.join("; ") : "parses, required keys present, carries repo knowledge",
+          );
         } catch (e) {
           push("profile", false, `does not parse: ${(e as Error).message}`);
         }
@@ -371,6 +504,29 @@ on:
     types: [opened, labeled, closed]
   issue_comment:
     types: [created]
+  # Profile drift (FACTORY.md §2c): the paths a repo's stack facts go stale
+  # from. A push touching one re-runs the Profiler, which opens a PR only where
+  # it disagrees with .factory/profile.json. Delete this block to turn the
+  # check off; add the manifests your stack actually uses.
+  push:
+    paths:
+      - "package.json"
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+      - "package-lock.json"
+      - "yarn.lock"
+      - "pyproject.toml"
+      - "requirements*.txt"
+      - "go.mod"
+      - "Cargo.toml"
+      - "pom.xml"
+      - "build.gradle*"
+      - "Gemfile"
+      - "composer.json"
+      - "Makefile"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - ".github/workflows/**"
   workflow_dispatch:
     inputs:
       issue_number:
@@ -380,10 +536,11 @@ on:
         description: "Factory role to run"
         required: true
         type: choice
-        options: [intake, planner, architect, dispatch, implementer, reviewer, qa, release, ops]
+        options: [intake, planner, architect, dispatch, implementer, reviewer, qa, release, ops, profiler]
 
 concurrency:
-  group: factory-\${{ github.event.issue.number || inputs.issue_number }}
+  # Push (profile drift) carries no issue number and gets its own lane.
+  group: factory-\${{ github.event.issue.number || inputs.issue_number || 'profile' }}
   cancel-in-progress: false
 
 permissions:
@@ -428,6 +585,7 @@ jobs:
         reviewer: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
         implementer: ["claude-opus-5", "claude-sonnet-5"],
         qa: ["claude-opus-5", "claude-sonnet-5"],
+        profiler: ["claude-opus-5", "claude-sonnet-5"],
         release: ["claude-opus-5", "claude-sonnet-5"],
         dispatch: ["claude-haiku-4-5-20251001", "claude-sonnet-5"],
         ops: ["claude-haiku-4-5-20251001", "claude-sonnet-5"],

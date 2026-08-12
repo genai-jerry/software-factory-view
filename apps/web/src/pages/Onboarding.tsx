@@ -314,14 +314,7 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>4 · Profile</strong> — author <code>.factory/profile.json</code> (the one genuinely-yours file); validation
-          checks schema keys
-        </span>
-      </div>
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>5 · Stub files PR</strong> — workflow stubs (permissions intact), models, approvers, issue template, settings.
+          <strong>4 · Stub files PR</strong> — workflow stubs (permissions intact), models, approvers, issue template, settings.
           Merging the PR is the human act that enables the factory. {stepBadge("stubs")}
         </span>
         <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
@@ -332,6 +325,31 @@ function RepoOnboarding({
         <p className="muted">
           → <a href={repo.steps["stubs"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">enablement PR</a> (merge it on
           GitHub)
+        </p>
+      )}
+
+      <div className="check-row">
+        <span style={{ flex: 1 }}>
+          <strong>5 · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
+          authoritative here. The <strong>Profiler</strong> drafts it inside your repository's own Actions: it reads the code,
+          runs your test/build/lint commands to check they work, and opens a PR for you to review. The Console never reads your
+          source. {stepBadge("profile")}
+        </span>
+        <button
+          onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/profile`)}
+          disabled={run.isPending}
+          title="Files an issue labelled factory:profile, which starts the Profiler role in this repo's Actions"
+        >
+          {repo.steps["profile"] ? "Re-run" : "Draft it"}
+        </button>
+      </div>
+      {typeof repo.steps["profile"]?.detail["issueUrl"] === "string" && (
+        <p className="muted">
+          → the run reports on{" "}
+          <a href={repo.steps["profile"]!.detail["issueUrl"] as string} target="_blank" rel="noreferrer">
+            its profile issue
+          </a>
+          . This turns <code>ok</code> once the profile PR is merged — the factory is not enabled here until it is.
         </p>
       )}
 

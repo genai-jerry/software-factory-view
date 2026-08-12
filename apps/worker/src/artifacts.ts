@@ -5,6 +5,7 @@ import {
   changes,
   gateAssignments,
   issues,
+  onboardingRuns,
   pullRequests,
   repos,
   type Db,
@@ -182,6 +183,29 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
       lastSyncedAt: new Date(),
     })
     .where(eq(repos.id, repo.id));
+
+  // The profile step is finished by a merge in GitHub, not by anything the
+  // Console does: it asks the Profiler for a draft and then waits. This is the
+  // moment that answer arrives, so close the step here rather than making the
+  // onboarding page poll for a file it already fetches. Only ever marked ok —
+  // a profile that later disappears is the validation suite's story to tell.
+  if (profile) {
+    await db
+      .insert(onboardingRuns)
+      .values({
+        orgId: repo.orgId,
+        estateId: repo.estateId,
+        repoId: repo.id,
+        step: "profile",
+        status: "ok",
+        detail: { sha: profile.sha },
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [onboardingRuns.repoId, onboardingRuns.step],
+        set: { status: "ok", detail: { sha: profile.sha }, updatedAt: new Date() },
+      });
+  }
 }
 
 /** Repair parent links for task issues using the authoritative sub-issues API. */
