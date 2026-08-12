@@ -37,8 +37,12 @@ export function OnboardingPage() {
  * Step 0, in the app: pick a GitHub App installation you belong to and the
  * repositories that form the estate. No repo or org IDs in any config file,
  * and no dependency on an installation webhook arriving.
+ *
+ * Exported because the shell shows it on its own to a signed-in user who
+ * belongs to nothing yet — connecting is what makes them a member, so it has
+ * to be reachable from outside the membership-gated layout.
  */
-function ConnectEstate({ onConnected }: { onConnected: () => void }) {
+export function ConnectEstate({ onConnected }: { onConnected: () => void }) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
   const installations = useQuery({
     queryKey: ["installations"],

@@ -88,6 +88,24 @@ describe("session auth", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it("answers /api/me for a member of nothing, while its data stays out of reach", async () => {
+    // The first user of a Console belongs to nothing until they connect an
+    // estate, and that screen needs to know who they are. 403 here stranded
+    // them on a page whose only advice — sign in again — changed nothing.
+    const { db } = deps.dbh;
+    const newcomer = (await db.insert(users).values({ ghUserId: 77, login: "bob" }).returning())[0]!;
+    await db.insert(sessions).values({ id: "sess-newcomer", userId: newcomer.id, expiresAt: new Date(Date.now() + 3600_000) });
+    const cookie = "console_session=sess-newcomer";
+
+    const me = await app.inject({ method: "GET", url: "/api/me", headers: { cookie } });
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({ login: "bob", orgs: [] });
+
+    expect((await app.inject({ method: "GET", url: "/api/attention", headers: { cookie } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/api/estates", headers: { cookie } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/api/me" })).statusCode).toBe(401);
+  });
+
   it("sets no-store on authenticated JSON", async () => {
     const res = await app.inject({ method: "GET", url: "/api/attention", headers: { cookie: sessionCookie } });
     expect(res.headers["cache-control"]).toBe("no-store");
