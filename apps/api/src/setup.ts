@@ -25,6 +25,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       source: creds?.source ?? null,
       appSlug: creds?.slug ?? null,
       hasMasterKey,
+      credentialError: deps.credentials.credentialError,
       publicOrigin: deps.cfg.PUBLIC_ORIGIN,
       insightEnabled: Boolean(deps.cfg.ANTHROPIC_API_KEY),
       devLogin: deps.cfg.DEV_FAKE_LOGIN === "1",

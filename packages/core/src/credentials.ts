@@ -50,29 +50,51 @@ export interface CredentialStoreOptions {
 
 export class CredentialStore {
   private cached: ResolvedAppCredentials | null = null;
+  private lastError: string | null = null;
 
   constructor(private readonly opts: CredentialStoreOptions) {}
 
   /** Drop the cache after the setup flow writes new credentials. */
   invalidate(): void {
     this.cached = null;
+    this.lastError = null;
+  }
+
+  /**
+   * Set when a stored registration exists but cannot be opened with the
+   * current master key — the reason behind an otherwise puzzling
+   * "unconfigured" state.
+   */
+  get credentialError(): string | null {
+    return this.lastError;
   }
 
   async resolve(): Promise<ResolvedAppCredentials | null> {
     if (this.cached) return this.cached;
+    this.lastError = null;
 
     const row = await this.opts.load();
     if (row) {
-      this.cached = {
-        appId: row.appId,
-        slug: row.slug,
-        privateKeyPem: decryptSecret(row.encryptedPrivateKey, this.opts.masterKey),
-        webhookSecret: decryptSecret(row.encryptedWebhookSecret, this.opts.masterKey),
-        clientId: row.clientId,
-        clientSecret: decryptSecret(row.encryptedClientSecret, this.opts.masterKey),
-        source: "database",
-      };
-      return this.cached;
+      try {
+        this.cached = {
+          appId: row.appId,
+          slug: row.slug,
+          privateKeyPem: decryptSecret(row.encryptedPrivateKey, this.opts.masterKey),
+          webhookSecret: decryptSecret(row.encryptedWebhookSecret, this.opts.masterKey),
+          clientId: row.clientId,
+          clientSecret: decryptSecret(row.encryptedClientSecret, this.opts.masterKey),
+          source: "database",
+        };
+        return this.cached;
+      } catch (err) {
+        // A row we cannot open must not brick the Console: /setup is the only
+        // place to repair it, and /setup needs the API up. Report unconfigured
+        // — loudly — instead of crash-looping at boot.
+        this.lastError =
+          `the stored GitHub App registration cannot be decrypted (${(err as Error).message}). ` +
+          "CONSOLE_MASTER_KEY has most likely changed since the App was registered. " +
+          "Restore the original key, or re-register the App at /setup — which overwrites the stored row.";
+      }
     }
 
     const env = this.opts.env;
@@ -113,7 +135,7 @@ export class CredentialStore {
   /** Throwing variant for paths that cannot proceed unconfigured. */
   async requireAuth(): Promise<AppAuth> {
     const auth = await this.auth();
-    if (!auth) throw new Error("no GitHub App registered — complete setup at /setup");
+    if (!auth) throw new Error(this.lastError ?? "no GitHub App registered — complete setup at /setup");
     return auth;
   }
 

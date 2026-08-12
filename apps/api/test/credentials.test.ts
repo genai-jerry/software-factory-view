@@ -72,6 +72,67 @@ describe("credential resolution", () => {
     expect((await store.resolve())?.appId).toBe("42");
   });
 
+  it("reports a row it cannot decrypt as unconfigured instead of throwing", async () => {
+    // The Console must stay up: /setup is the only place to repair this, and
+    // crashing at boot would take that screen down with it.
+    const store = new CredentialStore({
+      masterKey: KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => ({
+        appId: "999",
+        slug: "broken",
+        encryptedPrivateKey: "not-a-sealed-secret",
+        encryptedWebhookSecret: encryptSecret("s", KEY),
+        clientId: "c",
+        encryptedClientSecret: encryptSecret("cs", KEY),
+      }),
+      env: EMPTY_ENV,
+    });
+
+    expect(await store.resolve()).toBeNull();
+    expect(store.credentialError).toMatch(/cannot be decrypted/);
+    expect(store.credentialError).toMatch(/CONSOLE_MASTER_KEY/);
+    await expect(store.requireAuth()).rejects.toThrow(/cannot be decrypted/);
+  });
+
+  it("reports a row sealed under a different master key the same way", async () => {
+    const otherKey = randomBytes(32).toString("base64");
+    const store = new CredentialStore({
+      masterKey: KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => ({
+        appId: "999",
+        slug: "rotated",
+        encryptedPrivateKey: encryptSecret("stored-pem", otherKey),
+        encryptedWebhookSecret: encryptSecret("s", otherKey),
+        clientId: "c",
+        encryptedClientSecret: encryptSecret("cs", otherKey),
+      }),
+      env: EMPTY_ENV,
+    });
+
+    expect(await store.resolve()).toBeNull();
+    expect(store.credentialError).toMatch(/cannot be decrypted/);
+  });
+
+  it("falls back to environment credentials when the stored row is unreadable", async () => {
+    const store = new CredentialStore({
+      masterKey: KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => ({
+        appId: "999",
+        slug: "broken",
+        encryptedPrivateKey: "garbage",
+        encryptedWebhookSecret: "garbage",
+        clientId: "c",
+        encryptedClientSecret: "garbage",
+      }),
+      env: { appId: "1", privateKeyPem: "pem", webhookSecret: "whsec", clientId: "cid", clientSecret: "csec" },
+    });
+    expect((await store.resolve())?.source).toBe("environment");
+    expect(store.credentialError).toMatch(/cannot be decrypted/);
+  });
+
   it("caches a resolved App, and invalidate() forces a re-read", async () => {
     let row: StoredRow = {
       appId: "1",

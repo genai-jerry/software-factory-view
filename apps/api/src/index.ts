@@ -42,6 +42,7 @@ async function main(): Promise<void> {
 
   const resolved = await credentials.resolve();
   console.log(`api up on :${cfg.API_PORT}`);
+  if (credentials.credentialError) console.warn(`github app: ${credentials.credentialError}`);
   console.log(
     resolved
       ? `github app: ${resolved.slug ?? resolved.appId} (from ${resolved.source})`
