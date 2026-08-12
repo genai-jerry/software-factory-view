@@ -156,6 +156,17 @@ describe("manual App registration", () => {
   });
 });
 
+describe("reaching the setup screen", () => {
+  it("redirects the directory form of /setup to the SPA screen", async () => {
+    // The edge gives the api everything under /setup/, so this URL reaches
+    // Fastify rather than index.html — and answered a JSON 404 to someone
+    // looking for the setup screen.
+    const res = await app.inject({ method: "GET", url: "/setup/" });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/setup");
+  });
+});
+
 describe("editing a stored registration", () => {
   it("keeps the fields the edit leaves blank", async () => {
     expect((await post(VALID)).statusCode).toBe(200);

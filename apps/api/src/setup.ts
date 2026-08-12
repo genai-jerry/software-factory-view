@@ -43,6 +43,15 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /**
+   * The edge routes /setup/* here (the manifest handshake is server-rendered)
+   * and bare /setup to the SPA, which leaves the directory form of the same URL
+   * — typed, autocompleted from a previous /setup/github-app visit, or added by
+   * a proxy — landing on Fastify with nothing to serve. It answered a JSON 404
+   * to an operator who was looking for the setup screen. Send it one segment up.
+   */
+  app.get("/setup/", async (_req, reply) => reply.redirect("/setup"));
+
+  /**
    * Renders the auto-submitting form GitHub's manifest flow requires (the
    * manifest must arrive as a form POST to github.com, which a JSON API cannot
    * do on the client's behalf).
