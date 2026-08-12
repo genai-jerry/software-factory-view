@@ -223,6 +223,19 @@ export class RepoReader {
     return (await this.req("GET", `/repos/${owner}/${repo}/issues/${num}`)) as GhIssue;
   }
 
+  /**
+   * Issues carrying a label, open or closed — by label and never by search,
+   * because the search index lags issue creation by seconds to minutes and a
+   * singleton issue looked up too soon gets filed twice.
+   */
+  async listIssuesByLabel(owner: string, repo: string, label: string): Promise<GhIssue[]> {
+    const rows = (await this.req(
+      "GET",
+      `/repos/${owner}/${repo}/issues?state=all&per_page=100&labels=${encodeURIComponent(label)}`,
+    )) as Array<GhIssue & { pull_request?: unknown }>;
+    return rows.filter((i) => !i.pull_request);
+  }
+
   async listIssueComments(owner: string, repo: string, num: number, page = 1): Promise<GhComment[]> {
     return (await this.req("GET", `/repos/${owner}/${repo}/issues/${num}/comments?per_page=100&page=${page}`)) as GhComment[];
   }
@@ -457,6 +470,10 @@ export class UserClient extends RepoReader {
 
   async closeIssue(owner: string, repo: string, issueNumber: number): Promise<void> {
     await this.req("PATCH", `/repos/${owner}/${repo}/issues/${issueNumber}`, { state: "closed" });
+  }
+
+  async reopenIssue(owner: string, repo: string, issueNumber: number): Promise<void> {
+    await this.req("PATCH", `/repos/${owner}/${repo}/issues/${issueNumber}`, { state: "open" });
   }
 
   async createIssue(owner: string, repo: string, opts: { title: string; body: string; labels?: string[] }): Promise<GhIssue> {

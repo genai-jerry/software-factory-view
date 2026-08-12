@@ -6,6 +6,12 @@ export interface SetupStatus {
   appSlug: string | null;
   /** The registered App's numeric id, shown so an operator can confirm which App is in use. */
   appId: string | null;
+  /** The OAuth client id — public by construction, so the edit form can prefill it. */
+  clientId: string | null;
+  /** Whether a webhook secret is stored (the secret itself never leaves the API). */
+  hasWebhookSecret: boolean;
+  /** Whether this browser could save a change to the App registration. */
+  canEditApp: boolean;
   hasMasterKey: boolean;
   /** Set when a stored registration exists but cannot be decrypted. */
   credentialError: string | null;

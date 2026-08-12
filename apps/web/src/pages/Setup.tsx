@@ -60,6 +60,11 @@ export function SetupPage() {
               {s.appId && <> — App ID <code>{s.appId}</code></>} is registered; credentials loaded from {s.source}.
             </div>
             <p className="muted">
+              Client ID <code>{s.clientId ?? "—"}</code> · webhook deliveries{" "}
+              {s.hasWebhookSecret ? "are verified" : "are not verified (no webhook secret stored)"} · webhook URL{" "}
+              <code>{s.publicOrigin}/webhooks/github</code>.
+            </p>
+            <p className="muted">
               Next: install the App on the org whose repositories you want, then connect the estate from the Onboarding page.
             </p>
             <p>
@@ -68,10 +73,10 @@ export function SetupPage() {
               </a>
             </p>
             <details>
-              <summary className="muted">Use a different GitHub App</summary>
+              <summary className="muted">Edit the GitHub App details</summary>
               <p className="muted">
-                Replaces the stored registration — the App ID, key and OAuth pair below take effect immediately, and win over
-                anything set in the environment.
+                Rotate the private key or a secret, correct the App ID, or point this Console at a different App entirely.
+                Changes take effect immediately — no restart — and win over anything set in the environment.
               </p>
               <AppCredentialsForm status={s} onSaved={() => status.refetch()} />
             </details>

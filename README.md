@@ -84,8 +84,15 @@ There are **no repo or org IDs in any config file.** When you open the Console:
    manifest handshake needs GitHub to redirect back to you)? Both the setup screen
    and Onboarding → Step 0 have an **"Already have a GitHub App?"** form: paste the
    App ID, private key, OAuth pair and webhook secret. Same encrypted storage, and
-   the PKCS#1 key GitHub gives you is converted for you. Use the same form later
-   ("Use a different GitHub App") to point the Console at another App.
+   the PKCS#1 key GitHub gives you is converted for you. The same form edits the
+   registration later — `/setup` → **"Edit the GitHub App details"**, linked from
+   the sign-in screen too. It prefills the App ID, slug and client id; secrets stay
+   blank and keep their stored value, so rotating a client secret is one field.
+   Changing the App is authenticated once someone owns the Console; before that
+   (a fresh install where nobody has signed in yet) it is open, so a wrong OAuth
+   pair cannot lock the fix behind the sign-in it breaks. If you are locked out of
+   an established Console, pin the credentials in `.env` (the "Advanced" block) or
+   start it with `DEV_FAKE_LOGIN=1` and repair the registration from the UI.
 2. **Install the App** on the org you want (button on the confirmation screen).
 3. **Onboarding → Connect an estate** lists the installations *your GitHub identity
    can see*, you tick the repositories to watch, and the Console syncs them

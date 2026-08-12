@@ -21,16 +21,24 @@ import {
 } from "@console/db";
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
+import { requireAuth, resolveSession, type AppDeps, type RequestCtx } from "../context.js";
 import { renderMarkdown } from "../render.js";
 
 /** Read surface. Every query is scoped to the caller's orgs at the data layer. */
 export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
+  /**
+   * Who the caller is. Deliberately not behind requireAuth's membership check:
+   * "signed in, member of nothing" is a true answer, and it is the state every
+   * first user of a Console is in — membership is granted by connecting an
+   * estate, which is a screen the shell can only offer once it knows who it is
+   * talking to. Answering 403 here made that a dead end. The org scope still
+   * guards every route that returns estate data.
+   */
   app.get("/api/me", async (req, reply) => {
-    const ctx = await requireAuth(deps, req, reply);
-    if (!ctx) return;
+    const ctx = await resolveSession(db, deps.cfg, req);
+    if (!ctx) return reply.code(401).send({ error: "not signed in" });
     const user = (await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1))[0]!;
     const orgRows = await db
       .select({ id: orgs.id, name: orgs.name, role: memberships.role })
