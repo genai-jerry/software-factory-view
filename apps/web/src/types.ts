@@ -4,6 +4,8 @@ export interface SetupStatus {
   configured: boolean;
   source: "database" | "environment" | null;
   appSlug: string | null;
+  /** The registered App's numeric id, shown so an operator can confirm which App is in use. */
+  appId: string | null;
   hasMasterKey: boolean;
   /** Set when a stored registration exists but cannot be decrypted. */
   credentialError: string | null;

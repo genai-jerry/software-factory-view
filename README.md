@@ -80,6 +80,12 @@ There are **no repo or org IDs in any config file.** When you open the Console:
    from a manifest and hands back the app id, private key, webhook secret and OAuth
    pair in one exchange — nothing to copy, no PKCS#1→PKCS#8 conversion. The
    credentials are stored encrypted in the database.
+   Already have an App, or is your Console not reachable from github.com (the
+   manifest handshake needs GitHub to redirect back to you)? Both the setup screen
+   and Onboarding → Step 0 have an **"Already have a GitHub App?"** form: paste the
+   App ID, private key, OAuth pair and webhook secret. Same encrypted storage, and
+   the PKCS#1 key GitHub gives you is converted for you. Use the same form later
+   ("Use a different GitHub App") to point the Console at another App.
 2. **Install the App** on the org you want (button on the confirmation screen).
 3. **Onboarding → Connect an estate** lists the installations *your GitHub identity
    can see*, you tick the repositories to watch, and the Console syncs them
