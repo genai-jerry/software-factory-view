@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
+import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
 export function OnboardingPage() {
@@ -63,9 +64,14 @@ function ConnectEstate({ onConnected }: { onConnected: () => void }) {
       <div className="card">
         <h3>Step 0 · Register the Console's GitHub App</h3>
         <p className="muted">This Console has no GitHub App yet — that is what lets it read your repos and sign you in.</p>
+        {setup.data.credentialError && <div className="banner error">{setup.data.credentialError}</div>}
         <a href="/setup">
-          <button className="primary">Go to setup →</button>
+          <button className="primary">Create one on GitHub →</button>
         </a>
+        <details style={{ marginTop: "0.75rem" }}>
+          <summary className="muted">Already have a GitHub App? Enter its App ID and keys here</summary>
+          <AppCredentialsForm status={setup.data} onSaved={() => setup.refetch()} />
+        </details>
       </div>
     );
   }

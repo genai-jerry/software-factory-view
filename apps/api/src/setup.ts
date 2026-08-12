@@ -24,6 +24,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       configured: creds !== null,
       source: creds?.source ?? null,
       appSlug: creds?.slug ?? null,
+      appId: creds?.appId ?? null,
       hasMasterKey,
       credentialError: deps.credentials.credentialError,
       publicOrigin: deps.cfg.PUBLIC_ORIGIN,
@@ -147,6 +148,79 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
   });
 
+  /**
+   * Manual registration: paste the five credentials of a GitHub App you
+   * already have. The manifest flow above is the easy path, but it needs the
+   * Console to be reachable from github.com — a laptop behind NAT, an
+   * air-gapped install, or an App that predates this Console all land here
+   * instead. Same storage, same encryption; the private key is converted to
+   * PKCS#8 for you rather than left as a documented openssl incantation.
+   */
+  app.post<{ Body: ManualCredentials }>("/api/setup/credentials", async (req, reply) => {
+    if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
+
+    // Open while unconfigured (first run has no one to sign in as); once an App
+    // exists, replacing it is an authenticated act — same rule as the manifest flow.
+    const already = await deps.credentials.resolve();
+    if (already) {
+      const ctx = await resolveSession(db, deps.cfg, req);
+      if (!ctx) return reply.code(403).send({ error: "sign in to replace the registered GitHub App" });
+    }
+
+    const key = deps.cfg.CONSOLE_MASTER_KEY;
+    if (!key) return reply.code(400).send({ error: "CONSOLE_MASTER_KEY is not set on the API — credentials cannot be stored" });
+
+    const body = req.body ?? ({} as ManualCredentials);
+    const appId = String(body.appId ?? "").trim();
+    const privateKeyPem = String(body.privateKeyPem ?? "").replace(/\\n/g, "\n").trim();
+    const clientId = String(body.clientId ?? "").trim();
+    const clientSecret = String(body.clientSecret ?? "").trim();
+    const webhookSecret = String(body.webhookSecret ?? "").trim();
+    const slug = String(body.slug ?? "").trim();
+
+    const missing = [
+      ["appId", appId],
+      ["privateKeyPem", privateKeyPem],
+      ["clientId", clientId],
+      ["clientSecret", clientSecret],
+    ]
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    if (missing.length > 0) return reply.code(400).send({ error: `missing required field(s): ${missing.join(", ")}` });
+    if (!/^\d+$/.test(appId)) {
+      return reply.code(400).send({ error: "App ID must be the numeric id from the App's settings page, not its name or slug" });
+    }
+
+    let pkcs8: string;
+    try {
+      pkcs8 = await toPkcs8(privateKeyPem);
+    } catch (err) {
+      return reply
+        .code(400)
+        .send({ error: `that private key could not be read (${(err as Error).message}). Paste the whole .pem file, BEGIN/END lines included.` });
+    }
+
+    const ctx = await resolveSession(db, deps.cfg, req);
+    const values = {
+      appId,
+      slug: slug || null,
+      htmlUrl: slug ? `${deps.cfg.GITHUB_WEB_URL}/apps/${slug}` : null,
+      encryptedPrivateKey: encryptSecret(pkcs8, key),
+      encryptedWebhookSecret: encryptSecret(webhookSecret, key),
+      clientId,
+      encryptedClientSecret: encryptSecret(clientSecret, key),
+      configuredBy: ctx?.login ?? null,
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(githubAppConfig)
+      .values({ id: "default", ...values })
+      .onConflictDoUpdate({ target: githubAppConfig.id, set: values });
+    deps.credentials.invalidate();
+
+    return { ok: true, appId, slug: slug || null, webhookVerification: Boolean(webhookSecret) };
+  });
+
   /** Bootstrap the very first user as an owner when no memberships exist yet. */
   app.post("/api/setup/claim-owner", async (req, reply) => {
     const ctx = await resolveSession(db, deps.cfg, req);
@@ -162,6 +236,16 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 }
 
 const manifestStates = new Map<string, number>();
+
+/** The five values GitHub shows on an App's settings page, plus its slug. */
+interface ManualCredentials {
+  appId?: string;
+  privateKeyPem?: string;
+  webhookSecret?: string;
+  clientId?: string;
+  clientSecret?: string;
+  slug?: string;
+}
 
 function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>

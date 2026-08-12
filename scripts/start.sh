@@ -32,8 +32,15 @@ if ! compose ps --quiet api 2>/dev/null | grep -q . && port_open "$api_port"; th
   die "Port $api_port is already in use by another process — stop it, or set API_HOST_PORT in .env to a free port"
 fi
 
+# A stale image serves the SPA bundle from the last build, which looks like
+# "my change did not land" rather than "nothing was rebuilt" — so an argument
+# we do not understand is an error, never a silent no-op.
 build_args=()
-[ "${1:-}" = "--rebuild" ] && build_args+=(--build)
+case "${1:-}" in
+  "") ;;
+  --rebuild|-r|rebuild) build_args+=(--build) ;;
+  *) die "Unknown argument '$1' — usage: ./scripts/start.sh [--rebuild]" ;;
+esac
 
 say "Starting the stack"
 # ${arr[@]+...} guard: bash < 4.4 (macOS's 3.2) treats an empty array as unbound under set -u.

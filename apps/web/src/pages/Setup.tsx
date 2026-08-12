@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
+import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import type { SetupStatus } from "../types.js";
 
 /**
@@ -9,10 +10,27 @@ import type { SetupStatus } from "../types.js";
  * the GitHub App is created from here.
  */
 export function SetupPage() {
-  const status = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
+  const status = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status"), retry: false });
   const [org, setOrg] = useState("");
   const [name, setName] = useState("Factory Console");
 
+  // An unreachable API used to leave this screen on "Loading…" forever, which
+  // reads as "the setup form is gone" rather than "the API is down".
+  if (status.isError) {
+    return (
+      <div className="login-page">
+        <div className="login-card" style={{ maxWidth: "40rem", textAlign: "left" }}>
+          <h2 style={{ textAlign: "center" }}>⚙ Set up Factory Console</h2>
+          <div className="banner error">
+            <strong>The Console API is not answering.</strong> {(status.error as ApiError).message}
+          </div>
+          <p className="muted">
+            Check it with <code>./scripts/logs.sh api</code>, then reload this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (!status.data) return <div className="main">Loading…</div>;
   const s = status.data;
 
@@ -38,7 +56,8 @@ export function SetupPage() {
         {s.configured ? (
           <>
             <div className="banner info">
-              GitHub App <strong>{s.appSlug ?? "(configured)"}</strong> is registered — credentials loaded from {s.source}.
+              GitHub App <strong>{s.appSlug ?? "(configured)"}</strong>
+              {s.appId && <> — App ID <code>{s.appId}</code></>} is registered; credentials loaded from {s.source}.
             </div>
             <p className="muted">
               Next: install the App on the org whose repositories you want, then connect the estate from the Onboarding page.
@@ -48,6 +67,14 @@ export function SetupPage() {
                 <button className="primary">Go to the Console</button>
               </a>
             </p>
+            <details>
+              <summary className="muted">Use a different GitHub App</summary>
+              <p className="muted">
+                Replaces the stored registration — the App ID, key and OAuth pair below take effect immediately, and win over
+                anything set in the environment.
+              </p>
+              <AppCredentialsForm status={s} onSaved={() => status.refetch()} />
+            </details>
           </>
         ) : (
           <>
@@ -94,6 +121,10 @@ export function SetupPage() {
                 run), the Console still works — connect the estate manually on the Onboarding page and reconcile; webhooks only
                 make updates faster.
               </p>
+            </details>
+            <details>
+              <summary className="muted">Already have a GitHub App? Enter its credentials instead</summary>
+              <AppCredentialsForm status={s} onSaved={() => status.refetch()} />
             </details>
             {s.devLogin && (
               <p className="muted">
