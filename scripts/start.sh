@@ -29,7 +29,8 @@ build_args=()
 [ "${1:-}" = "--rebuild" ] && build_args+=(--build)
 
 say "Starting the stack"
-compose up -d "${build_args[@]}" || die "docker compose failed"
+# ${arr[@]+...} guard: bash < 4.4 (macOS's 3.2) treats an empty array as unbound under set -u.
+compose up -d ${build_args[@]+"${build_args[@]}"} || die "docker compose failed"
 
 wait_for_port 8080 web 90 || warn "web has not opened :8080 yet — check ./scripts/logs.sh web"
 
