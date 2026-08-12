@@ -178,7 +178,34 @@ doing nothing.
 | **P-4** | Does the Console offer a manual editor too (the original F-C8 scope)? | **Later.** The generated-then-reviewed path covers the case; a form that edits a file the Console cannot verify against the code is a worse version of editing it in GitHub |
 | **P-5** | Should the profiler run automatically at the end of onboarding? | **No — one button.** The first run costs real tokens against the user's own key, and an agent that starts reading the whole repo unasked is a surprise |
 
-## 7. Risks
+## 7. Risks (superseded by §9 below where they differ)
+
+## 8. What shipped, where it differs
+
+Built as planned, with two simplifications the implementation argued for:
+
+- **One idempotent role, not a draft mode and a verify mode.** The Profiler
+  always reads the existing profile first and opens a PR only where a verified
+  fact disagrees, so "draft" and "re-check" are the same code path: with no
+  profile it writes one, with a stale one it corrects it, with an accurate one
+  it comments and stops. The mode branch had nothing left to do.
+- **The profile issue is a singleton per repo.** The push trigger carries no
+  issue number and the agent job's matrix cannot be empty, so a drift run has to
+  find or file one — and once it does, reusing it for every draft and every
+  check puts the whole history of what the factory believes about a repo in one
+  thread. The router does the same find-or-create the release tracker does.
+
+Both trigger paths route through `factory:profile`: the label on `opened` (so
+the Console files the issue and starts the role in one API call — labels set at
+creation emit no `labeled` event of their own), the label on `labeled` for a
+re-run, and a default-branch `push` matching the stub's `paths:` filter for
+drift. Router scenarios cover all three in `scripts/test-router.js`.
+
+Decisions as recommended: `factory:profile` (P-1), drift in v1 (P-2), no cron
+backstop (P-3), no manual editor (P-4), one button rather than an automatic run
+at the end of onboarding (P-5).
+
+## 9. Risks
 
 | Risk | Mitigation |
 |---|---|
