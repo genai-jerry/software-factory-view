@@ -29,6 +29,12 @@ export function SetupPage() {
           </div>
         )}
 
+        {s.credentialError && (
+          <div className="banner error">
+            <strong>Stored credentials could not be opened.</strong> {s.credentialError}
+          </div>
+        )}
+
         {s.configured ? (
           <>
             <div className="banner info">

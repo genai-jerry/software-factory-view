@@ -5,6 +5,8 @@ export interface SetupStatus {
   source: "database" | "environment" | null;
   appSlug: string | null;
   hasMasterKey: boolean;
+  /** Set when a stored registration exists but cannot be decrypted. */
+  credentialError: string | null;
   publicOrigin: string;
   insightEnabled: boolean;
   devLogin: boolean;
