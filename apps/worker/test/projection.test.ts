@@ -102,4 +102,24 @@ describe("projection pipeline", () => {
     // History dedupes on (issue, sourceEventId): duplicates add nothing.
     expect(got.historyCount).toBe(expected.historyCount);
   });
+
+  // Regression: the last-writer-wins guards used to interpolate a raw Date into
+  // a `sql` template, which skips drizzle's column encoding. PGlite serialises a
+  // Date happily; postgres.js — whose timestamp serialisers drizzle replaces with
+  // pass-throughs — put the object straight on the wire and every ingest job died
+  // with `The "string" argument must be of type string ... Received an instance
+  // of Date`. Params reaching the driver must already be scalars.
+  it("hands the driver only scalar parameters (a raw Date breaks postgres.js)", async () => {
+    const { db, params } = await testDb();
+    for (const job of fixtureDeliveries()) {
+      await ledgerInsert(db, job);
+      await processWebhook(db, cfg, auth, job);
+    }
+    // Replay once more so the conflict paths — where the guards live — run too.
+    for (const job of fixtureDeliveries()) await processWebhook(db, cfg, auth, job);
+
+    expect(params.length).toBeGreaterThan(0);
+    const unserialisable = params.filter((p) => p !== null && typeof p === "object");
+    expect(unserialisable).toEqual([]);
+  });
 });

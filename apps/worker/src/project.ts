@@ -25,13 +25,32 @@ import {
   orgs,
   type Db,
 } from "@console/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 
 /**
  * Projection functions. Every write is an idempotent upsert keyed by the
  * GitHub node_id with a gh_updated_at last-writer-wins guard, so duplicate
  * and out-of-order deliveries converge on the same state (spec 01 §2.2).
  */
+
+/**
+ * The last-writer-wins guard on an upsert: apply the update only when the row
+ * we already hold is no newer than the delivery in hand.
+ *
+ * The timestamp is bound with `sql.param` against its own column so drizzle
+ * encodes it exactly the way it encodes that column in `values()`. A bare
+ * `${date}` interpolation skips column mapping, and drizzle replaces
+ * postgres.js's timestamp serialisers with pass-throughs (it expects to have
+ * done the mapping itself) — so a raw Date reaches the wire encoder and every
+ * upsert dies with `The "string" argument must be of type string or an
+ * instance of Buffer or ArrayBuffer. Received an instance of Date`. PGlite,
+ * which the projection tests run on, serialises Dates itself, so this only
+ * ever surfaced against a real server.
+ */
+function notNewerThan(column: PgColumn, ts: Date): SQL {
+  return sql`${column} <= ${sql.param(ts, column)}`;
+}
 
 export interface RepoRef {
   id: string;
@@ -150,7 +169,7 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
         ghUpdatedAt,
         closedAt: gh.closed_at ? new Date(gh.closed_at) : null,
       },
-      setWhere: sql`${issues.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: notNewerThan(issues.ghUpdatedAt, ghUpdatedAt),
     });
 
   const row = (await db.select({ id: issues.id, kind: issues.kind }).from(issues).where(eq(issues.ghNodeId, gh.node_id)).limit(1))[0]!;
@@ -229,7 +248,7 @@ export async function projectComment(
     .onConflictDoUpdate({
       target: comments.ghNodeId,
       set: { body: gh.body, consoleMarkers: markers, ghUpdatedAt },
-      setWhere: sql`${comments.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: notNewerThan(comments.ghUpdatedAt, ghUpdatedAt),
     });
 
   const commentRow = (await db.select({ id: comments.id }).from(comments).where(eq(comments.ghNodeId, gh.node_id)).limit(1))[0]!;
@@ -316,7 +335,7 @@ export async function projectPull(db: Db, repo: RepoRef, gh: GhPull): Promise<vo
         mergeCommitSha: gh.merge_commit_sha,
         ghUpdatedAt,
       },
-      setWhere: sql`${pullRequests.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: notNewerThan(pullRequests.ghUpdatedAt, ghUpdatedAt),
     });
 }
 
@@ -345,7 +364,7 @@ export async function projectRun(db: Db, repo: RepoRef, gh: GhWorkflowRun): Prom
     .onConflictDoUpdate({
       target: runs.ghNodeId,
       set: { status: gh.status, conclusion: gh.conclusion, ghUpdatedAt },
-      setWhere: sql`${runs.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: notNewerThan(runs.ghUpdatedAt, ghUpdatedAt),
     });
 
   // CI rollup: a completed run on a PR head branch updates that PR's ci_status.
