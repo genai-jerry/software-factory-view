@@ -321,3 +321,21 @@ textarea { min-height: 5rem; resize: vertical; }
 .dep-node.done { opacity: 0.55; }
 
 .theme-toggle { width: 100%; margin-top: 0.5rem; font-size: 0.8rem; }
+
+/* ---- Flow tree (plan 07 §7) ---- */
+
+.tree-node { margin-bottom: 0.15rem; }
+.tree-node.indent { margin-left: 1.25rem; }
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.tree-row:hover { background: var(--bg-raised); }
+.tree-row.indent { margin-left: 1.25rem; }
+.tree-caret { width: 1rem; color: var(--text-dim); cursor: pointer; user-select: none; flex-shrink: 0; }
+.tree-row .muted { font-size: 0.8rem; }

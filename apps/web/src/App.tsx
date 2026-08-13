@@ -5,6 +5,7 @@ import { api, ApiError } from "./api.js";
 import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "./theme.js";
 import type { Me, SetupStatus } from "./types.js";
 import { MissionControl } from "./pages/MissionControl.js";
+import { FlowPage } from "./pages/Flow.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
@@ -56,6 +57,7 @@ export function App() {
           <NavLink to="/" end>
             Mission control
           </NavLink>
+          <NavLink to="/flow">Flow</NavLink>
           <NavLink to="/blocked">Blocked</NavLink>
           <NavLink to="/decisions">Decisions</NavLink>
           <NavLink to="/onboarding">Onboarding</NavLink>
@@ -80,6 +82,7 @@ export function App() {
       <main className="main">
         <Routes>
           <Route path="/" element={<MissionControl />} />
+          <Route path="/flow" element={<FlowPage />} />
           <Route path="/epics/:id" element={<EpicWorkspacePage me={me.data} />} />
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />

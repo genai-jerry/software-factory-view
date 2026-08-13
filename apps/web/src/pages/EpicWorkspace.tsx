@@ -115,7 +115,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           {tab === "decisions" && <DecisionsTab epicId={data.epic.id} />}
         </div>
         <div className="context-rail">
-          <QaPanel epicId={data.epic.id} />
+          <QaPanel scope={{ kind: "epic", id: data.epic.id }} />
           <TimelineRail epicId={data.epic.id} />
         </div>
       </div>

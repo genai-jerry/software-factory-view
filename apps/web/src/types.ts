@@ -118,6 +118,40 @@ export interface MyWork {
   waitingOn: WaitingRow[];
 }
 
+export interface FlowData {
+  estates: Array<{ id: string; name: string; milestones: FlowMilestone[] }>;
+}
+
+export interface FlowMilestone {
+  title: string;
+  trackerState: string | null;
+  epics: FlowEpic[];
+}
+
+export interface FlowEpic {
+  epicId: string;
+  number: number;
+  title: string;
+  repo: string;
+  state: string | null;
+  phase: Phase;
+  daysInState: number;
+  rollup: TaskRollup;
+  blockedCount: number;
+  gate: { gate: string; label: string; approvers: string[] } | null;
+  tasks: Array<{
+    issueId: string;
+    number: number;
+    title: string;
+    state: string | null;
+    phase: Phase;
+    open: boolean;
+    assignees: string[];
+    ageDays: number;
+    blockedBy: number[];
+  }>;
+}
+
 export interface IssuePeekData {
   issue: {
     id: string;

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { QaPanel } from "../pages/QaPanel.js";
 import type { DepNode, IssuePeekData } from "../types.js";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -104,6 +105,10 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
         <a href={issue.htmlUrl} target="_blank" rel="noreferrer" className="raw-link">
           ≡ raw
         </a>
+      </div>
+
+      <div style={{ marginTop: "1rem" }}>
+        <QaPanel scope={{ kind: "issue", id: issue.id }} />
       </div>
     </div>
   );
