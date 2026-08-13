@@ -3,7 +3,7 @@ import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@cons
 import { githubAppConfig, memberships, orgs, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -45,9 +45,9 @@ const post = (payload: unknown, headers: Record<string, string> = {}) =>
 
 beforeEach(async () => {
   const pg = new PGlite();
-  const migrations = dirname(fileURLToPath(import.meta.url));
-  for (const file of ["0000_init.sql", "0001_app_config.sql"]) {
-    const sql = await readFile(join(migrations, "../../../packages/db/migrations", file), "utf8");
+  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../packages/db/migrations");
+  for (const file of (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(migrationsDir, file), "utf8");
     for (const stmt of sql.split("--> statement-breakpoint")) if (stmt.trim()) await pg.exec(stmt.trim());
   }
   const db = drizzle(pg);

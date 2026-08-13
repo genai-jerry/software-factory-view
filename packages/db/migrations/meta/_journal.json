@@ -15,6 +15,55 @@
       "when": 1786246808852,
       "tag": "0001_app_config",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0002_assignees",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786300000001,
+      "tag": "0003_task_dependencies",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786300000002,
+      "tag": "0004_qa_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786300000003,
+      "tag": "0005_milestones",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786300000004,
+      "tag": "0006_org_insight",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786300000005,
+      "tag": "0007_insight_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786300000006,
+      "tag": "0008_projects",
+      "breakpoints": true
     }
   ]
 }

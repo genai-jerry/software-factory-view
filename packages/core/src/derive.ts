@@ -44,6 +44,24 @@ export function derivePrKind(headRef: string, baseRef: string): { kind: PrKind; 
   return { kind: "task", issueNumber };
 }
 
+/**
+ * Same-repo blocker numbers from dependency markers in an issue body — the
+ * fallback dependency source when the native relations API is absent. One
+ * marker per line, case-insensitive: "blocked by #12", "depends on #12, #13",
+ * "after #12". Deliberately line-anchored so prose mentioning a dependency in
+ * passing ("this was blocked by #12 last week") does not create an edge.
+ */
+export function blockerNumbersFromBody(body: string | null): number[] {
+  if (!body) return [];
+  const out = new Set<number>();
+  for (const line of body.split("\n")) {
+    const m = line.match(/^\s*(?:[-*]\s*)?(?:blocked by|depends on|after)\s*:?\s*((?:#\d+[,\s]*)+)$/i);
+    if (!m) continue;
+    for (const ref of m[1]!.matchAll(/#(\d+)/g)) out.add(Number(ref[1]));
+  }
+  return [...out];
+}
+
 /** Change-folder slug from a spec-PR file path, e.g. openspec/changes/16-payment-reminders/proposal.md */
 export function parseChangePath(path: string): { slug: string; epicNumber: number; artifact: ArtifactKind | null } | null {
   const m = path.match(/^openspec\/changes\/((\d+)-[a-z0-9-]+)\/(.+)$/i);

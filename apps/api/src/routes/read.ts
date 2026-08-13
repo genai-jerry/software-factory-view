@@ -15,12 +15,14 @@ import {
   pullRequests,
   repos,
   runs,
+  taskDependencies,
   threadEntries,
   threads,
   users,
 } from "@console/db";
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { buildAttention } from "../attention.js";
 import { requireAuth, resolveSession, type AppDeps, type RequestCtx } from "../context.js";
 import { renderMarkdown } from "../render.js";
 
@@ -75,124 +77,35 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /**
-   * The attention queue — a query, not a table (spec 02 §3). Four sources,
-   * each with a one-line "why you", ordered by age. This is the home page.
+   * The attention queue — a query, not a table (spec 02 §3), with ownership
+   * routing and ranks so an agent halted on *you* outranks broadcast noise.
+   * The full derivation lives in ../attention.ts, shared with /api/my-work.
    */
-  app.get("/api/attention", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/attention", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
-    const entries: Array<{
-      kind: "gate" | "blocked" | "task-start" | "merge";
-      whyYou: string;
-      epicId: string;
-      title: string;
-      repo: string;
-      state: string | null;
-      ageDays: number;
-      link: string;
-    }> = [];
-
-    const myAssignments = await db.select().from(gateAssignments).where(eq(gateAssignments.login, ctx.login));
-    const assignedGates = new Map<string, Set<string>>(); // `${estateId}:${repoId}` -> gates
-    for (const a of myAssignments) {
-      const key = `${a.estateId}:${a.repoId ?? "*"}`;
-      if (!assignedGates.has(key)) assignedGates.set(key, new Set());
-      assignedGates.get(key)!.add(a.gate);
-    }
-
-    const openFactoryIssues = await db
-      .select({
-        issue: issues,
-        repoFullName: repos.fullName,
-        estateId: repos.estateId,
-        repoId: repos.id,
-      })
-      .from(issues)
-      .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.state, "open"), isNotNull(issues.factoryState)));
-
-    const now = Date.now();
-    for (const row of openFactoryIssues) {
-      const { issue } = row;
-      const state = issue.factoryState!;
-      const ageDays = Math.floor((now - issue.ghUpdatedAt.getTime()) / 86_400_000);
-      const gateInfo = GATE_STATES[state];
-
-      if (state === "factory:blocked") {
-        entries.push({
-          kind: "blocked",
-          whyYou: "blocked issue in your estate — any member may reply to resume it",
-          epicId: issue.parentIssueId ?? issue.id,
-          title: `#${issue.number} ${issue.title}`,
-          repo: row.repoFullName,
-          state,
-          ageDays,
-          link: `/epics/${issue.parentIssueId ?? issue.id}`,
-        });
-        continue;
-      }
-      if (!gateInfo) continue;
-
-      const perRepo = assignedGates.get(`${row.estateId}:${row.repoId}`);
-      const estateWide = assignedGates.get(`${row.estateId}:*`);
-      const allForRepo = await db
-        .select()
-        .from(gateAssignments)
-        .where(and(eq(gateAssignments.estateId, row.estateId), eq(gateAssignments.gate, gateInfo.gate)));
-      const listEmpty = allForRepo.length === 0;
-      const mine = perRepo?.has(gateInfo.gate) || estateWide?.has(gateInfo.gate) || listEmpty;
-      if (!mine) continue;
-
-      const whyBase = listEmpty ? "approver list is empty — any collaborator may act" : `you are on the ${gateInfo.gate} approver list`;
-      if (issue.kind === "epic" && (state === "factory:spec-ready" || state === "factory:design-ready")) {
-        entries.push({
-          kind: "gate",
-          whyYou: `${gateInfo.label} awaits approval — ${whyBase}`,
-          epicId: issue.id,
-          title: `#${issue.number} ${issue.title}`,
-          repo: row.repoFullName,
-          state,
-          ageDays,
-          link: `/epics/${issue.id}?tab=gate`,
-        });
-      } else if (issue.kind === "task" && state === "factory:ready") {
-        entries.push({
-          kind: "task-start",
-          whyYou: `task awaits an implementation start — ${whyBase}`,
-          epicId: issue.parentIssueId ?? issue.id,
-          title: `#${issue.number} ${issue.title}`,
-          repo: row.repoFullName,
-          state,
-          ageDays,
-          link: `/epics/${issue.parentIssueId ?? issue.id}?tab=tasks`,
-        });
-      } else if (issue.kind === "epic" && state === "factory:ready-to-ship") {
-        entries.push({
-          kind: "merge",
-          whyYou: `release train awaits merges — ${whyBase}`,
-          epicId: issue.id,
-          title: `#${issue.number} ${issue.title}`,
-          repo: row.repoFullName,
-          state,
-          ageDays,
-          link: `/epics/${issue.id}?tab=gate`,
-        });
-      }
-    }
-
-    entries.sort((a, b) => b.ageDays - a.ageDays);
-    return { entries };
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { entries: [] };
+    return { entries: await buildAttention(deps, ctx, repoFilter ?? undefined) };
   });
 
   /** Pipeline board: epics as cards in state-machine columns, one lane per estate. */
-  app.get("/api/board", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/board", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { columns: PIPELINE_ORDER, cards: [] };
     const epicRows = await db
       .select({ issue: issues, repoFullName: repos.fullName, estateId: repos.estateId })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.kind, "epic")));
+      .where(
+        and(
+          inArray(issues.orgId, ctx.orgIds),
+          eq(issues.kind, "epic"),
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+        ),
+      );
 
     const cards = [];
     for (const row of epicRows) {
@@ -236,6 +149,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       .from(issues)
       .where(eq(issues.parentIssueId, epic.id))
       .orderBy(issues.number);
+    const deps_ = await loadDependencies(
+      deps,
+      taskRows.map((t) => t.id),
+    );
 
     const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epic.id)).limit(1))[0];
     const artifacts = change
@@ -296,6 +213,8 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         state: t.factoryState,
         open: t.state === "open",
         htmlUrl: t.htmlUrl,
+        blockedBy: deps_.get(t.id)?.blockedBy ?? [],
+        blocks: deps_.get(t.id)?.blocks ?? [],
       })),
       rollup,
       blockedSubIssues: blockedSubs.map((t) => ({ id: t.id, number: t.number, title: t.title, htmlUrl: t.htmlUrl })),
@@ -469,14 +388,23 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /** Blocked inbox. */
-  app.get("/api/blocked", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/blocked", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { issues: [] };
     const rows = await db
       .select({ issue: issues, repoFullName: repos.fullName })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.factoryState, "factory:blocked"), eq(issues.state, "open")));
+      .where(
+        and(
+          inArray(issues.orgId, ctx.orgIds),
+          eq(issues.factoryState, "factory:blocked"),
+          eq(issues.state, "open"),
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+        ),
+      );
     return {
       issues: rows.map((r) => ({
         id: r.issue.id,
@@ -516,6 +444,36 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
 
 /* ------------------------------- shared helpers ------------------------------- */
 
+export interface RepoFilterQuery {
+  repo?: string;
+  project?: string;
+}
+
+/**
+ * Resolve the ?repo= / ?project= focus filter to a set of repo ids.
+ * Returns null for "no filter" (show everything); an array otherwise —
+ * possibly empty, which callers must treat as "match nothing" rather than
+ * passing an empty inArray() to SQL. A repo filter wins over a project one.
+ */
+export async function resolveRepoFilter(deps: AppDeps, ctx: RequestCtx, query: RepoFilterQuery): Promise<string[] | null> {
+  const { db } = deps.dbh;
+  if (query.repo) {
+    const rows = await db
+      .select({ id: repos.id })
+      .from(repos)
+      .where(and(eq(repos.id, query.repo), inArray(repos.orgId, ctx.orgIds)));
+    return rows.map((r) => r.id);
+  }
+  if (query.project) {
+    const rows = await db
+      .select({ id: repos.id })
+      .from(repos)
+      .where(and(eq(repos.projectId, query.project), inArray(repos.orgId, ctx.orgIds)));
+    return rows.map((r) => r.id);
+  }
+  return null;
+}
+
 export async function loadEpic(
   deps: AppDeps,
   ctx: RequestCtx,
@@ -531,22 +489,96 @@ export async function loadEpic(
   return rows[0] ?? null;
 }
 
+/** Any issue in the caller's orgs, with its repo — loadEpic without the epic assumption. */
+export async function loadIssue(
+  deps: AppDeps,
+  ctx: RequestCtx,
+  issueId: string,
+): Promise<{ issue: typeof issues.$inferSelect; repo: typeof repos.$inferSelect } | null> {
+  const { db } = deps.dbh;
+  const rows = await db
+    .select({ issue: issues, repo: repos })
+    .from(issues)
+    .innerJoin(repos, eq(repos.id, issues.repoId))
+    .where(and(eq(issues.id, issueId), inArray(issues.orgId, ctx.orgIds)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export interface DepNode {
+  id: string;
+  number: number;
+  title: string;
+  state: string | null;
+  open: boolean;
+  htmlUrl: string;
+}
+
+/** Both directions of the dependency graph for a set of issues, two batched queries. */
+export async function loadDependencies(
+  deps: AppDeps,
+  issueIds: string[],
+): Promise<Map<string, { blockedBy: DepNode[]; blocks: DepNode[] }>> {
+  const { db } = deps.dbh;
+  const out = new Map<string, { blockedBy: DepNode[]; blocks: DepNode[] }>();
+  if (issueIds.length === 0) return out;
+  const entry = (id: string) => {
+    if (!out.has(id)) out.set(id, { blockedBy: [], blocks: [] });
+    return out.get(id)!;
+  };
+  const node = (i: typeof issues.$inferSelect): DepNode => ({
+    id: i.id,
+    number: i.number,
+    title: i.title,
+    state: i.factoryState,
+    open: i.state === "open",
+    htmlUrl: i.htmlUrl,
+  });
+  const blockedByRows = await db
+    .select({ dep: taskDependencies, other: issues })
+    .from(taskDependencies)
+    .innerJoin(issues, eq(issues.id, taskDependencies.blockerIssueId))
+    .where(inArray(taskDependencies.blockedIssueId, issueIds));
+  for (const r of blockedByRows) entry(r.dep.blockedIssueId).blockedBy.push(node(r.other));
+  const blocksRows = await db
+    .select({ dep: taskDependencies, other: issues })
+    .from(taskDependencies)
+    .innerJoin(issues, eq(issues.id, taskDependencies.blockedIssueId))
+    .where(inArray(taskDependencies.blockerIssueId, issueIds));
+  for (const r of blocksRows) entry(r.dep.blockerIssueId).blocks.push(node(r.other));
+  for (const v of out.values()) {
+    v.blockedBy.sort((a, b) => a.number - b.number);
+    v.blocks.sort((a, b) => a.number - b.number);
+  }
+  return out;
+}
+
 export async function taskRollup(
   deps: AppDeps,
   epicIssueId: string,
-): Promise<{ total: number; ready: number; inReview: number; inTest: number; done: number; blocked: number }> {
+): Promise<{ total: number; ready: number; inReview: number; inTest: number; done: number; blocked: number; waiting: number }> {
   const { db } = deps.dbh;
   const tasks = await db
-    .select({ factoryState: issues.factoryState, state: issues.state })
+    .select({ id: issues.id, factoryState: issues.factoryState, state: issues.state })
     .from(issues)
     .where(eq(issues.parentIssueId, epicIssueId));
-  const rollup = { total: tasks.length, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0 };
+  const rollup = { total: tasks.length, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0, waiting: 0 };
+  const openIds: string[] = [];
   for (const t of tasks) {
+    if (t.state === "open") openIds.push(t.id);
     if (t.state === "closed" || t.factoryState === "factory:deployed") rollup.done++;
     else if (t.factoryState === "factory:ready") rollup.ready++;
     else if (t.factoryState === "factory:in-review") rollup.inReview++;
     else if (t.factoryState === "factory:in-test") rollup.inTest++;
     else if (t.factoryState === "factory:blocked") rollup.blocked++;
+  }
+  if (openIds.length > 0) {
+    const waiting = await db
+      .selectDistinct({ blocked: taskDependencies.blockedIssueId })
+      .from(taskDependencies)
+      .innerJoin(issues, eq(issues.id, taskDependencies.blockerIssueId))
+      .where(and(inArray(taskDependencies.blockedIssueId, openIds), eq(issues.state, "open")));
+    rollup.waiting = waiting.length;
   }
   return rollup;
 }

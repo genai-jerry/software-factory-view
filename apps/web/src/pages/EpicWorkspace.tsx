@@ -115,7 +115,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           {tab === "decisions" && <DecisionsTab epicId={data.epic.id} />}
         </div>
         <div className="context-rail">
-          <QaPanel epicId={data.epic.id} />
+          <QaPanel scope={{ kind: "epic", id: data.epic.id }} />
           <TimelineRail epicId={data.epic.id} />
         </div>
       </div>
@@ -443,6 +443,16 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
               <div className={`board-card${t.state === "factory:blocked" ? " blocked" : ""}`} key={t.id}>
                 #{t.number} {t.title.replace(/^task\([^)]*\):?\s*/i, "")}
                 <div className="meta">
+                  {t.blockedBy.filter((d) => d.open).length > 0 && (
+                    <span title={t.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>
+                      ⛓ after {t.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
+                    </span>
+                  )}
+                  {t.blocks.length > 0 && (
+                    <span title={t.blocks.map((d) => `#${d.number} ${d.title}`).join("\n")}>
+                      unblocks {t.blocks.map((d) => `#${d.number}`).join(", ")}
+                    </span>
+                  )}
                   <a href={t.htmlUrl} target="_blank" rel="noreferrer" className="raw-link">
                     ≡ raw
                   </a>

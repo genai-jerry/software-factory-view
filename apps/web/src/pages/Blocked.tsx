@@ -2,11 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { FilterBar } from "../components/FilterBar.js";
+import { RepoChip } from "../components/RepoChip.js";
+import { useFocus } from "../lib/filter.js";
 import type { BlockedIssue } from "../types.js";
 
 export function BlockedPage() {
   const qc = useQueryClient();
-  const blocked = useQuery({ queryKey: ["blocked"], queryFn: () => api.get<{ issues: BlockedIssue[] }>("/api/blocked") });
+  const focus = useFocus();
+  const blocked = useQuery({
+    queryKey: ["blocked", focus.key],
+    queryFn: () => api.get<{ issues: BlockedIssue[] }>(`/api/blocked${focus.qs}`),
+  });
   const [replyFor, setReplyFor] = useState<string | null>(null);
   const [body, setBody] = useState("");
 
@@ -22,6 +29,7 @@ export function BlockedPage() {
   return (
     <div>
       <h1>Blocked issues</h1>
+      <FilterBar />
       <p className="muted">
         A reply here is an ordinary GitHub comment under your identity — the factory's own comment trigger clears the blocked
         state and re-runs the stage with the whole thread in context.
@@ -36,7 +44,7 @@ export function BlockedPage() {
                 <Link to={`/epics/${i.epicId}`}>
                   #{i.number} {i.title}
                 </Link>{" "}
-                <span className="muted">{i.repo}</span>
+                <RepoChip fullName={i.repo} />
                 <a className="raw-link" href={i.htmlUrl} target="_blank" rel="noreferrer">
                   ≡ raw
                 </a>

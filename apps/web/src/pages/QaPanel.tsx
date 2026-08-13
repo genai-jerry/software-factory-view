@@ -3,26 +3,39 @@ import { useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { Citation, QaData } from "../types.js";
 
-const CANNED = [
-  "Summarise this epic for a stakeholder.",
-  "What are the riskiest parts of this design?",
-  "Which WHEN/THEN scenarios lack a mapped test?",
-  "What changed since the spec was approved?",
-];
+/** One panel, two scopes (plan 07 §5): the epic workspace's context rail and
+ * the peek drawer's issue scope share everything but corpus and prompts. */
+export type QaScope = { kind: "epic"; id: string } | { kind: "issue"; id: string };
 
-export function QaPanel({ epicId }: { epicId: string }) {
+const CANNED: Record<QaScope["kind"], string[]> = {
+  epic: [
+    "Summarise this epic for a stakeholder.",
+    "What are the riskiest parts of this design?",
+    "Which WHEN/THEN scenarios lack a mapped test?",
+    "What changed since the spec was approved?",
+  ],
+  issue: [
+    "Why is this blocked?",
+    "What has to happen before this moves?",
+    "Summarise the blocker's current state.",
+    "Who is expected to act next?",
+  ],
+};
+
+export function QaPanel({ scope }: { scope: QaScope }) {
   const qc = useQueryClient();
-  const qa = useQuery({ queryKey: ["qa", epicId], queryFn: () => api.get<QaData>(`/api/epics/${epicId}/qa`) });
+  const base = scope.kind === "epic" ? `/api/epics/${scope.id}/qa` : `/api/issues/${scope.id}/qa`;
+  const queryKey = ["qa", scope.kind, scope.id];
+  const qa = useQuery({ queryKey, queryFn: () => api.get<QaData>(base) });
   const [question, setQuestion] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   const ask = useMutation({
-    mutationFn: (q: string) =>
-      api.post<{ conversationId: string }>(`/api/epics/${epicId}/qa`, { question: q, conversationId: conversationId ?? undefined }),
+    mutationFn: (q: string) => api.post<{ conversationId: string }>(base, { question: q, conversationId: conversationId ?? undefined }),
     onSuccess: (r) => {
       setConversationId(r.conversationId);
       setQuestion("");
-      void qc.invalidateQueries({ queryKey: ["qa", epicId] });
+      void qc.invalidateQueries({ queryKey });
     },
   });
 
@@ -32,11 +45,14 @@ export function QaPanel({ epicId }: { epicId: string }) {
     <div className="card">
       <h3>Ask the Factory</h3>
       {qa.data && !qa.data.enabled && (
-        <p className="muted">Insight service not configured — set ANTHROPIC_API_KEY on the API to enable Q&A.</p>
+        <p className="muted">
+          Not configured — set this org's model and API key in <a href="/settings">Settings</a> (or ANTHROPIC_API_KEY on the API).
+        </p>
       )}
       {qa.data?.budget && (
         <p className="muted">
           org budget: {Math.round((qa.data.budget.used / Math.max(qa.data.budget.total, 1)) * 100)}% used
+          {qa.data.enabled && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
         </p>
       )}
       {conv && (
@@ -60,7 +76,7 @@ export function QaPanel({ epicId }: { epicId: string }) {
       {qa.data?.enabled && (
         <>
           <div style={{ marginBottom: "0.4rem" }}>
-            {CANNED.map((c) => (
+            {CANNED[scope.kind].map((c) => (
               <button key={c} className="chip" style={{ cursor: "pointer" }} disabled={ask.isPending} onClick={() => ask.mutate(c)}>
                 {c}
               </button>
@@ -69,7 +85,11 @@ export function QaPanel({ epicId }: { epicId: string }) {
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Grounded in this epic's artifacts, threads, PRs and runs — cited, private by default."
+            placeholder={
+              scope.kind === "epic"
+                ? "Grounded in this epic's artifacts, threads, PRs and runs — cited, private by default."
+                : "Grounded in this issue, its blockers and dependents, and the epic's plan — cited, private by default."
+            }
             style={{ minHeight: "3.5rem" }}
           />
           {ask.isError && <div className="banner error">{(ask.error as ApiError).message}</div>}

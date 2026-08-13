@@ -1,3 +1,10 @@
+/*
+ * Theming: the Console is dark-first — bare :root carries the dark palette.
+ * Light redefines the same tokens twice: once for the explicit toggle
+ * ([data-theme="light"]) and once for the system default (prefers-color-scheme
+ * guarded so an explicit dark choice still wins). Components only ever use
+ * tokens; no literal colors below this block.
+ */
 :root {
   --bg: #0f1418;
   --bg-panel: #161d23;
@@ -6,11 +13,77 @@
   --text: #d7dee5;
   --text-dim: #8a98a5;
   --accent: #4a90d9;
+  --on-accent: #ffffff;
+  --accent-soft: #1c2c3d;
+  --accent-glow: rgba(74, 144, 217, 0.25);
   --green: #2e9e5b;
   --amber: #d4a017;
   --red: #c4524e;
   --purple: #8e6bbf;
+  --purple-glow: rgba(142, 107, 191, 0.3);
+  --warn-bg: #3a2f16;
+  --warn-fg: #e8c66a;
+  --error-bg: #3a1c1c;
+  --error-fg: #e89a97;
+  --info-bg: #16283a;
+  --info-fg: #9ec7ef;
+  --overlay: rgba(0, 0, 0, 0.55);
   font-size: 15px;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f6f8;
+  --bg-panel: #ffffff;
+  --bg-raised: #eceff2;
+  --border: #d4dbe1;
+  --text: #23303a;
+  --text-dim: #64748b;
+  --accent: #2f6cb3;
+  --on-accent: #ffffff;
+  --accent-soft: #dbe9f8;
+  --accent-glow: rgba(47, 108, 179, 0.2);
+  --green: #1e7a44;
+  --amber: #9c7410;
+  --red: #b23c38;
+  --purple: #6f4fa3;
+  --purple-glow: rgba(111, 79, 163, 0.22);
+  --warn-bg: #fdf3d7;
+  --warn-fg: #7a5c0a;
+  --error-bg: #fbe4e3;
+  --error-fg: #8f2f2b;
+  --info-bg: #e2eefb;
+  --info-fg: #24537f;
+  --overlay: rgba(15, 20, 24, 0.35);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f6f8;
+    --bg-panel: #ffffff;
+    --bg-raised: #eceff2;
+    --border: #d4dbe1;
+    --text: #23303a;
+    --text-dim: #64748b;
+    --accent: #2f6cb3;
+    --on-accent: #ffffff;
+    --accent-soft: #dbe9f8;
+    --accent-glow: rgba(47, 108, 179, 0.2);
+    --green: #1e7a44;
+    --amber: #9c7410;
+    --red: #b23c38;
+    --purple: #6f4fa3;
+    --purple-glow: rgba(111, 79, 163, 0.22);
+    --warn-bg: #fdf3d7;
+    --warn-fg: #7a5c0a;
+    --error-bg: #fbe4e3;
+    --error-fg: #8f2f2b;
+    --info-bg: #e2eefb;
+    --info-fg: #24537f;
+    --overlay: rgba(15, 20, 24, 0.35);
+    color-scheme: light;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -40,9 +113,9 @@ button {
 }
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 button.danger { border-color: var(--red); color: var(--red); }
-button.approve { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+button.approve { background: var(--green); border-color: var(--green); color: var(--on-accent); font-weight: 600; }
 
 input, textarea, select {
   background: var(--bg-raised);
@@ -69,9 +142,9 @@ textarea { min-height: 5rem; resize: vertical; }
 .main { flex: 1; padding: 1.5rem 2rem; max-width: 1500px; min-width: 0; }
 
 .banner { padding: 0.5rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; }
-.banner.stale { background: #3a2f16; border: 1px solid var(--amber); color: #e8c66a; }
-.banner.error { background: #3a1c1c; border: 1px solid var(--red); color: #e89a97; }
-.banner.info { background: #16283a; border: 1px solid var(--accent); color: #9ec7ef; }
+.banner.stale { background: var(--warn-bg); border: 1px solid var(--amber); color: var(--warn-fg); }
+.banner.error { background: var(--error-bg); border: 1px solid var(--red); color: var(--error-fg); }
+.banner.info { background: var(--info-bg); border: 1px solid var(--accent); color: var(--info-fg); }
 
 .card {
   background: var(--bg-panel);
@@ -130,8 +203,8 @@ textarea { min-height: 5rem; resize: vertical; }
   background: var(--bg-raised); border: 2px solid var(--border);
 }
 .stage.past .dot { background: var(--green); border-color: var(--green); }
-.stage.current .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px rgba(74, 144, 217, 0.25); }
-.stage.attention .dot { background: var(--purple); border-color: var(--purple); box-shadow: 0 0 0 4px rgba(142, 107, 191, 0.3); }
+.stage.current .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-glow); }
+.stage.attention .dot { background: var(--purple); border-color: var(--purple); box-shadow: 0 0 0 4px var(--purple-glow); }
 .stage .lbl { font-size: 0.72rem; color: var(--text-dim); margin: 0 0.5rem 0 0.35rem; white-space: nowrap; }
 .stage.current .lbl, .stage.attention .lbl { color: var(--text); font-weight: 600; }
 .stage .bar { width: 18px; height: 2px; background: var(--border); margin-right: 0.35rem; }
@@ -173,7 +246,7 @@ textarea { min-height: 5rem; resize: vertical; }
   font-size: 0.9rem;
   white-space: pre-wrap;
 }
-.qa-message.user .bubble { background: #1c2c3d; border-color: var(--accent); }
+.qa-message.user .bubble { background: var(--accent-soft); border-color: var(--accent); }
 .chip {
   display: inline-block;
   background: var(--bg-raised);
@@ -202,3 +275,123 @@ textarea { min-height: 5rem; resize: vertical; }
 .muted { color: var(--text-dim); font-size: 0.88rem; }
 .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+
+/* ---- My work / peek drawer (plan 07 §4) ---- */
+
+.attention-entry.rank-1 { border-left: 3px solid var(--red); padding-left: 0.6rem; }
+.attention-entry.rank-4 { opacity: 0.6; }
+.attention-entry .question { color: var(--text); font-size: 0.85rem; font-style: italic; margin-top: 0.15rem; }
+.attention-entry.quiet .why a { color: var(--text-dim); text-decoration: underline dotted; }
+.attention-entry.held-row { border-left: 3px solid var(--red); padding-left: 0.6rem; }
+
+.phase-head {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.75rem 0 0.15rem;
+}
+
+.board-card.clickable { cursor: pointer; }
+.board-card.clickable:hover { border-color: var(--accent); }
+
+.peek-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 40;
+}
+.peek {
+  width: min(480px, 92vw);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  padding: 1.25rem 1.5rem;
+  box-shadow: -8px 0 24px var(--overlay);
+}
+
+.dep-node {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 10px;
+}
+.dep-node.done { opacity: 0.55; }
+
+.theme-toggle { width: 100%; margin-top: 0.5rem; font-size: 0.8rem; }
+
+/* ---- Flow tree (plan 07 §7) ---- */
+
+.tree-node { margin-bottom: 0.15rem; }
+.tree-node.indent { margin-left: 1.25rem; }
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.tree-row:hover { background: var(--bg-raised); }
+.tree-row.indent { margin-left: 1.25rem; }
+.tree-caret { width: 1rem; color: var(--text-dim); cursor: pointer; user-select: none; flex-shrink: 0; }
+.tree-row .muted { font-size: 0.8rem; }
+
+/* ---- Repo indicators and the focus filter ---- */
+
+.repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.repo-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.badge.focus-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.focus-clear {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  padding: 0 0 0 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+.focus-clear:hover { color: var(--text); border-color: transparent; }
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.project-row:last-child { border-bottom: none; }

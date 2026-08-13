@@ -3,7 +3,7 @@ import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { memberships, orgs, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -21,9 +21,11 @@ let sessionCookie: string;
 
 beforeAll(async () => {
   const pg = new PGlite();
-  const migrationPath = join(dirname(fileURLToPath(import.meta.url)), "../../../packages/db/migrations/0000_init.sql");
-  for (const stmt of (await readFile(migrationPath, "utf8")).split("--> statement-breakpoint")) {
-    if (stmt.trim()) await pg.exec(stmt.trim());
+  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../packages/db/migrations");
+  for (const file of (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort()) {
+    for (const stmt of (await readFile(join(migrationsDir, file), "utf8")).split("--> statement-breakpoint")) {
+      if (stmt.trim()) await pg.exec(stmt.trim());
+    }
   }
   const db = drizzle(pg) as never;
 

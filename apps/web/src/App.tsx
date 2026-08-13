@@ -1,12 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api.js";
+import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "./theme.js";
 import type { Me, SetupStatus } from "./types.js";
 import { MissionControl } from "./pages/MissionControl.js";
+import { FlowPage } from "./pages/Flow.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
 import { ConnectEstate, OnboardingPage } from "./pages/Onboarding.js";
+import { SettingsPage } from "./pages/Settings.js";
 import { SetupPage } from "./pages/Setup.js";
 
 export function App() {
@@ -54,9 +58,11 @@ export function App() {
           <NavLink to="/" end>
             Mission control
           </NavLink>
+          <NavLink to="/flow">Flow</NavLink>
           <NavLink to="/blocked">Blocked</NavLink>
           <NavLink to="/decisions">Decisions</NavLink>
           <NavLink to="/onboarding">Onboarding</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div style={{ marginTop: "2rem" }} className="muted">
           {me.data.avatarUrl && (
@@ -72,19 +78,41 @@ export function App() {
               Sign out
             </button>
           </div>
+          <ThemeToggle />
         </div>
       </aside>
       <main className="main">
         <Routes>
           <Route path="/" element={<MissionControl />} />
+          <Route path="/flow" element={<FlowPage />} />
           <Route path="/epics/:id" element={<EpicWorkspacePage me={me.data} />} />
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/settings" element={<SettingsPage me={me.data} />} />
           <Route path="/setup" element={<SetupPage />} />
         </Routes>
       </main>
     </div>
+  );
+}
+
+/** System → light → dark → system. 'System' follows the OS via prefers-color-scheme. */
+function ThemeToggle() {
+  const [pref, setPref] = useState<ThemePref>(getThemePref());
+  const icons: Record<ThemePref, string> = { system: "◐", light: "☀", dark: "☾" };
+  return (
+    <button
+      className="theme-toggle"
+      title="Cycle color theme"
+      onClick={() => {
+        const next = cycleTheme(pref);
+        applyTheme(next);
+        setPref(next);
+      }}
+    >
+      {icons[pref]} Theme: {pref}
+    </button>
   );
 }
 
