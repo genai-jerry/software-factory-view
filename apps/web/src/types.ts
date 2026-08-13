@@ -326,7 +326,8 @@ export interface QaData {
     messages: Array<{ role: string; body: string; citations: Citation[]; createdAt: string }>;
   }>;
   enabled: boolean;
-  /** The model this org's questions run on (org override or instance default). */
+  /** The provider/model this org's questions run on (org override or instance default). */
+  provider?: string;
   model?: string;
   budget: { used: number; total: number } | null;
 }
@@ -336,10 +337,12 @@ export interface OrgSettings {
   name: string;
   role: string;
   insight: {
+    provider: string;
     model: string | null;
     hasKey: boolean;
     defaultModel: string;
     globalKeyConfigured: boolean;
+    providers: string[];
   };
   allowedSecrets: string[];
 }

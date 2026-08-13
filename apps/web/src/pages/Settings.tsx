@@ -3,7 +3,26 @@ import { useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { Me, OrgSettings, SecretWriteResult } from "../types.js";
 
-const MODEL_SUGGESTIONS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001"];
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  grok: "Grok (xAI)",
+  openrouter: "OpenRouter",
+};
+
+const MODEL_SUGGESTIONS: Record<string, string[]> = {
+  anthropic: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001"],
+  openai: ["gpt-5.1", "gpt-5", "gpt-4.1-mini"],
+  grok: ["grok-4", "grok-4-fast"],
+  openrouter: ["anthropic/claude-sonnet-4.5", "openai/gpt-5.1", "x-ai/grok-4"],
+};
+
+const KEY_PLACEHOLDERS: Record<string, string> = {
+  anthropic: "sk-ant-api…",
+  openai: "sk-…",
+  grok: "xai-…",
+  openrouter: "sk-or-…",
+};
 
 /**
  * Org settings: each org names its own Ask-the-Factory model and API key,
@@ -53,10 +72,11 @@ function InsightSection({
   canEdit: boolean;
   onSaved: () => void;
 }) {
+  const [provider, setProvider] = useState(s.insight.provider);
   const [model, setModel] = useState(s.insight.model ?? "");
   const [apiKey, setApiKey] = useState("");
   const save = useMutation({
-    mutationFn: (body: { model?: string | null; apiKey?: string | null }) =>
+    mutationFn: (body: { provider?: string; model?: string | null; apiKey?: string | null }) =>
       api.post(`/api/orgs/${orgId}/settings/insight`, body),
     onSuccess: () => {
       setApiKey("");
@@ -68,23 +88,33 @@ function InsightSection({
     <div style={{ marginBottom: "1.25rem" }}>
       <h3>Ask the Factory</h3>
       <p className="muted">
-        The model and Anthropic <strong>API key</strong> this org's Q&A runs on. The key must be an API key from
-        platform.claude.com (<code>sk-ant-api…</code>) — a Claude Code OAuth token authenticates the factory's agents, not
-        direct API calls, and will be rejected.
-        {s.insight.globalKeyConfigured && " Without an org key, the Console's instance-wide key is used."}
+        The provider, model and <strong>API key</strong> this org's Q&A runs on. The key must be a direct API credential for
+        the chosen provider — for Anthropic, a Claude Code OAuth token authenticates the factory's agents, not API calls, and
+        will be rejected.
+        {s.insight.globalKeyConfigured && " Without an org key, the Console's instance-wide Anthropic key is used."}
       </p>
       <div className="row">
+        <label style={{ minWidth: "4.5rem" }}>Provider</label>
+        <select value={provider} onChange={(e) => setProvider(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
+          {s.insight.providers.map((p) => (
+            <option value={p} key={p}>
+              {PROVIDER_LABELS[p] ?? p}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row" style={{ marginTop: "0.4rem" }}>
         <label style={{ minWidth: "4.5rem" }}>Model</label>
         <input
-          list={`models-${orgId}`}
+          list={`models-${orgId}-${provider}`}
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          placeholder={`default: ${s.insight.defaultModel}`}
+          placeholder={provider === "anthropic" ? `default: ${s.insight.defaultModel}` : "model id (required)"}
           disabled={!canEdit}
           style={{ width: "18rem" }}
         />
-        <datalist id={`models-${orgId}`}>
-          {MODEL_SUGGESTIONS.map((m) => (
+        <datalist id={`models-${orgId}-${provider}`}>
+          {(MODEL_SUGGESTIONS[provider] ?? []).map((m) => (
             <option value={m} key={m} />
           ))}
         </datalist>
@@ -95,7 +125,7 @@ function InsightSection({
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={s.insight.hasKey ? "key is set — enter a new one to replace it" : "sk-ant-api…"}
+          placeholder={s.insight.hasKey ? "key is set — enter a new one to replace it" : (KEY_PLACEHOLDERS[provider] ?? "api key")}
           disabled={!canEdit}
           style={{ width: "18rem" }}
         />
@@ -106,8 +136,8 @@ function InsightSection({
         <div className="row" style={{ marginTop: "0.6rem" }}>
           <button
             className="primary"
-            disabled={save.isPending}
-            onClick={() => save.mutate({ model: model || null, ...(apiKey ? { apiKey } : {}) })}
+            disabled={save.isPending || (provider !== "anthropic" && !model)}
+            onClick={() => save.mutate({ provider, model: model || null, ...(apiKey ? { apiKey } : {}) })}
           >
             {save.isPending ? "Saving…" : "Save"}
           </button>
@@ -116,6 +146,7 @@ function InsightSection({
               Clear key
             </button>
           )}
+          {provider !== "anthropic" && !model && <span className="muted">a model id is required for this provider</span>}
         </div>
       )}
     </div>

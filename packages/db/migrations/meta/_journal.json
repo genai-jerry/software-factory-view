@@ -50,6 +50,13 @@
       "when": 1786300000004,
       "tag": "0006_org_insight",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786300000005,
+      "tag": "0007_insight_provider",
+      "breakpoints": true
     }
   ]
 }

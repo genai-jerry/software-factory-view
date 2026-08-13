@@ -1,5 +1,5 @@
 import { decryptSecret } from "@console/core";
-import { askInsight, type InsightSource } from "@console/insight";
+import { askInsight, type InsightProvider, type InsightSource } from "@console/insight";
 import {
   artifactCache,
   changeArtifacts,
@@ -83,16 +83,30 @@ export function registerQaRoutes(app: FastifyInstance, deps: AppDeps): void {
 }
 
 /**
- * Per-org insight credentials (plan: each org names its model and API key;
- * the instance-wide ANTHROPIC_API_KEY / INSIGHT_DEEP_MODEL are the fallback).
- * The org key is stored encrypted and decrypted only at call time.
+ * Per-org insight credentials: each org names its provider, model and API key
+ * (key encrypted, decrypted only at call time). With no org key, the fallback
+ * is the instance-wide ANTHROPIC_API_KEY / INSIGHT_DEEP_MODEL — Anthropic
+ * only, so the org's provider choice never sends its model name to the wrong
+ * vendor's endpoint.
  */
-function resolveInsight(deps: AppDeps, org: typeof orgs.$inferSelect | undefined): { apiKey: string; model: string } {
-  let apiKey = deps.cfg.ANTHROPIC_API_KEY;
+function resolveInsight(
+  deps: AppDeps,
+  org: typeof orgs.$inferSelect | undefined,
+): { provider: InsightProvider; apiKey: string; model: string } {
   if (org?.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
-    apiKey = decryptSecret(org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY);
+    const provider = (org.insightProvider ?? "anthropic") as InsightProvider;
+    return {
+      provider,
+      apiKey: decryptSecret(org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY),
+      model: org.insightModel || deps.cfg.INSIGHT_DEEP_MODEL,
+    };
   }
-  return { apiKey, model: org?.insightModel || deps.cfg.INSIGHT_DEEP_MODEL };
+  const orgModelIsAnthropic = (org?.insightProvider ?? "anthropic") === "anthropic";
+  return {
+    provider: "anthropic",
+    apiKey: deps.cfg.ANTHROPIC_API_KEY,
+    model: (orgModelIsAnthropic && org?.insightModel) || deps.cfg.INSIGHT_DEEP_MODEL,
+  };
 }
 
 async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnType<typeof eq> | ReturnType<typeof and>) {
@@ -116,6 +130,7 @@ async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnTy
   return {
     conversations: out,
     enabled: Boolean(insight.apiKey),
+    provider: insight.provider,
     model: insight.model,
     budget: org ? { used: org.insightUsedTokens, total: org.insightBudgetTokens } : null,
   };
@@ -181,7 +196,12 @@ async function runAsk(
     )[0]!.id;
   }
 
-  const result = await askInsight({ apiKey: insight.apiKey, model: insight.model }, opts.sources, history, question);
+  const result = await askInsight(
+    { provider: insight.provider, apiKey: insight.apiKey, model: insight.model },
+    opts.sources,
+    history,
+    question,
+  );
 
   await db.insert(qaMessages).values({ orgId: opts.orgId, conversationId, role: "user", body: question });
   await db.insert(qaMessages).values({

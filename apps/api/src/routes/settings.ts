@@ -1,4 +1,5 @@
 import { encryptSecret, InstallationClient } from "@console/core";
+import { INSIGHT_PROVIDERS, isInsightProvider } from "@console/insight";
 import { auditLog, estates, memberships, onboardingRuns, orgs, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -29,22 +30,26 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
       name: found.org.name,
       role: found.membership.role,
       insight: {
+        provider: found.org.insightProvider ?? "anthropic",
         model: found.org.insightModel,
         hasKey: Boolean(found.org.encryptedInsightApiKey),
         defaultModel: deps.cfg.INSIGHT_DEEP_MODEL,
         globalKeyConfigured: Boolean(deps.cfg.ANTHROPIC_API_KEY),
+        providers: INSIGHT_PROVIDERS,
       },
       allowedSecrets: ALLOWED_SECRETS,
     };
   });
 
   /**
-   * Set the org's insight model and/or API key. The key must be an Anthropic
-   * *API* key (x-api-key auth) — Claude Code OAuth tokens are a Claude Code
-   * credential and do not work against the Messages API, so they are rejected
-   * with an explanation rather than stored to fail later.
+   * Set the org's insight provider, model and/or API key. The key must be a
+   * direct API credential for the chosen provider — for Anthropic, a Claude
+   * Code OAuth token is rejected with an explanation (it authenticates the
+   * factory's agents, not the Messages API) rather than stored to fail later.
+   * Non-Anthropic providers have no instance-wide default model, so a model
+   * is required whenever the provider isn't anthropic.
    */
-  app.post<{ Params: { id: string }; Body: { model?: string | null; apiKey?: string | null } }>(
+  app.post<{ Params: { id: string }; Body: { provider?: string; model?: string | null; apiKey?: string | null } }>(
     "/api/orgs/:id/settings/insight",
     async (req, reply) => {
       const ctx = await requireAuth(deps, req, reply);
@@ -53,16 +58,29 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
       if (!found) return;
 
       const set: Partial<typeof orgs.$inferInsert> = {};
+      if (req.body && "provider" in req.body) {
+        const provider = req.body.provider?.trim();
+        if (!provider || !isInsightProvider(provider)) {
+          return reply.code(400).send({ error: `provider must be one of ${INSIGHT_PROVIDERS.join(", ")}` });
+        }
+        set.insightProvider = provider;
+      }
       if (req.body && "model" in req.body) {
         const model = req.body.model?.trim();
         set.insightModel = model ? model : null;
+      }
+      const effectiveProvider =
+        ("insightProvider" in set ? set.insightProvider : found.org.insightProvider) ?? "anthropic";
+      const effectiveModel = "insightModel" in set ? set.insightModel : found.org.insightModel;
+      if (effectiveProvider !== "anthropic" && !effectiveModel) {
+        return reply.code(400).send({ error: `a model is required for ${effectiveProvider} — there is no instance-wide default for it` });
       }
       if (req.body && "apiKey" in req.body) {
         const apiKey = req.body.apiKey?.trim();
         if (!apiKey) {
           set.encryptedInsightApiKey = null;
         } else {
-          if (apiKey.startsWith("sk-ant-oat")) {
+          if (effectiveProvider === "anthropic" && apiKey.startsWith("sk-ant-oat")) {
             return reply.code(400).send({
               error:
                 "that is a Claude Code OAuth token, not an API key — it authenticates Claude Code (the factory's agents), not direct API calls. Create an API key at platform.claude.com and use that here.",
@@ -74,7 +92,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
           set.encryptedInsightApiKey = encryptSecret(apiKey, deps.cfg.CONSOLE_MASTER_KEY);
         }
       }
-      if (Object.keys(set).length === 0) return reply.code(400).send({ error: "nothing to update — pass model and/or apiKey" });
+      if (Object.keys(set).length === 0) return reply.code(400).send({ error: "nothing to update — pass provider, model and/or apiKey" });
 
       await db.update(orgs).set(set).where(eq(orgs.id, found.org.id));
       await db.insert(auditLog).values({
@@ -83,12 +101,18 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
         action: "settings.insight",
         target: found.org.name,
         payload: {
+          provider: "insightProvider" in set ? set.insightProvider : undefined,
           model: "insightModel" in set ? set.insightModel : undefined,
           keyChanged: "encryptedInsightApiKey" in set ? (set.encryptedInsightApiKey ? "set" : "cleared") : undefined,
         },
       });
       const fresh = (await db.select().from(orgs).where(eq(orgs.id, found.org.id)).limit(1))[0]!;
-      return { ok: true, model: fresh.insightModel, hasKey: Boolean(fresh.encryptedInsightApiKey) };
+      return {
+        ok: true,
+        provider: fresh.insightProvider ?? "anthropic",
+        model: fresh.insightModel,
+        hasKey: Boolean(fresh.encryptedInsightApiKey),
+      };
     },
   );
 

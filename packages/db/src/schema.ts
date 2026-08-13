@@ -49,7 +49,9 @@ export const orgs = pgTable("orgs", {
   plan: text("plan").notNull().default("solo"),
   insightBudgetTokens: bigint("insight_budget_tokens", { mode: "number" }).notNull().default(5_000_000),
   insightUsedTokens: bigint("insight_used_tokens", { mode: "number" }).notNull().default(0),
-  /** Per-org Ask-the-Factory model; null falls back to INSIGHT_DEEP_MODEL. */
+  /** Per-org Ask-the-Factory provider: anthropic | openai | grok | openrouter; null = anthropic. */
+  insightProvider: text("insight_provider"),
+  /** Per-org Ask-the-Factory model; null falls back to INSIGHT_DEEP_MODEL (anthropic only). */
   insightModel: text("insight_model"),
   /** Per-org Anthropic API key (AES-GCM under CONSOLE_MASTER_KEY); null falls back to ANTHROPIC_API_KEY. */
   encryptedInsightApiKey: text("encrypted_insight_api_key"),

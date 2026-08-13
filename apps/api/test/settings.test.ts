@@ -154,6 +154,61 @@ describe("org insight settings", () => {
   });
 });
 
+describe("provider selection", () => {
+  it("rejects unknown providers and non-anthropic providers without a model", async () => {
+    const bad = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "gemini" },
+    });
+    expect(bad.statusCode).toBe(400);
+    const noModel = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openrouter", model: null },
+    });
+    expect(noModel.statusCode).toBe(400);
+    expect((noModel.json() as { error: string }).error).toContain("model is required");
+  });
+
+  it("stores an OpenAI-compatible provider config and surfaces it on the QA panel", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openrouter", model: "x-ai/grok-4", apiKey: "sk-or-v1-abc" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, provider: "openrouter", model: "x-ai/grok-4", hasKey: true });
+
+    const settings = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect((settings.json() as { insight: { provider: string } }).insight.provider).toBe("openrouter");
+
+    const qa = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/qa`, headers: { cookie: ownerCookie } });
+    expect(qa.json()).toMatchObject({ enabled: true, provider: "openrouter", model: "x-ai/grok-4" });
+
+    // The Claude Code OAuth-token guard is Anthropic-specific — an OpenRouter
+    // key that happens to share the prefix is not second-guessed.
+    const oat = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { apiKey: "sk-ant-oat01-whatever" },
+    });
+    expect(oat.statusCode).toBe(200);
+
+    // Reset to a cleared state for the secret tests below.
+    await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "anthropic", model: null, apiKey: null },
+    });
+  });
+});
+
 describe("org secret write-through", () => {
   it("rejects unknown secret names and non-admins", async () => {
     const bad = await app.inject({

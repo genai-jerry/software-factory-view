@@ -52,7 +52,7 @@ export function QaPanel({ scope }: { scope: QaScope }) {
       {qa.data?.budget && (
         <p className="muted">
           org budget: {Math.round((qa.data.budget.used / Math.max(qa.data.budget.total, 1)) * 100)}% used
-          {qa.data.enabled && qa.data.model && ` · ${qa.data.model}`}
+          {qa.data.enabled && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
         </p>
       )}
       {conv && (
