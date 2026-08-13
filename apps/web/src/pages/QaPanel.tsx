@@ -45,11 +45,14 @@ export function QaPanel({ scope }: { scope: QaScope }) {
     <div className="card">
       <h3>Ask the Factory</h3>
       {qa.data && !qa.data.enabled && (
-        <p className="muted">Insight service not configured — set ANTHROPIC_API_KEY on the API to enable Q&A.</p>
+        <p className="muted">
+          Not configured — set this org's model and API key in <a href="/settings">Settings</a> (or ANTHROPIC_API_KEY on the API).
+        </p>
       )}
       {qa.data?.budget && (
         <p className="muted">
           org budget: {Math.round((qa.data.budget.used / Math.max(qa.data.budget.total, 1)) * 100)}% used
+          {qa.data.enabled && qa.data.model && ` · ${qa.data.model}`}
         </p>
       )}
       {conv && (

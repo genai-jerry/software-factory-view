@@ -326,7 +326,27 @@ export interface QaData {
     messages: Array<{ role: string; body: string; citations: Citation[]; createdAt: string }>;
   }>;
   enabled: boolean;
+  /** The model this org's questions run on (org override or instance default). */
+  model?: string;
   budget: { used: number; total: number } | null;
+}
+
+export interface OrgSettings {
+  id: string;
+  name: string;
+  role: string;
+  insight: {
+    model: string | null;
+    hasKey: boolean;
+    defaultModel: string;
+    globalKeyConfigured: boolean;
+  };
+  allowedSecrets: string[];
+}
+
+export interface SecretWriteResult {
+  name: string;
+  results: Array<{ repo: string; ok: boolean; error?: string }>;
 }
 
 export interface Citation {

@@ -82,6 +82,19 @@ export function registerQaRoutes(app: FastifyInstance, deps: AppDeps): void {
   );
 }
 
+/**
+ * Per-org insight credentials (plan: each org names its model and API key;
+ * the instance-wide ANTHROPIC_API_KEY / INSIGHT_DEEP_MODEL are the fallback).
+ * The org key is stored encrypted and decrypted only at call time.
+ */
+function resolveInsight(deps: AppDeps, org: typeof orgs.$inferSelect | undefined): { apiKey: string; model: string } {
+  let apiKey = deps.cfg.ANTHROPIC_API_KEY;
+  if (org?.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
+    apiKey = decryptSecret(org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY);
+  }
+  return { apiKey, model: org?.insightModel || deps.cfg.INSIGHT_DEEP_MODEL };
+}
+
 async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnType<typeof eq> | ReturnType<typeof and>) {
   const { db } = deps.dbh;
   const convs = await db
@@ -99,9 +112,11 @@ async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnTy
     });
   }
   const org = (await db.select().from(orgs).where(inArray(orgs.id, ctx.orgIds)).limit(1))[0];
+  const insight = resolveInsight(deps, org);
   return {
     conversations: out,
-    enabled: Boolean(deps.cfg.ANTHROPIC_API_KEY),
+    enabled: Boolean(insight.apiKey),
+    model: insight.model,
     budget: org ? { used: org.insightUsedTokens, total: org.insightBudgetTokens } : null,
   };
 }
@@ -121,14 +136,17 @@ async function runAsk(
   },
 ) {
   const { db } = deps.dbh;
-  if (!deps.cfg.ANTHROPIC_API_KEY) {
-    return reply.code(503).send({ error: "insight service is not configured (ANTHROPIC_API_KEY missing)" });
-  }
   const question = opts.question?.trim();
   if (!question) return reply.code(400).send({ error: "question required" });
 
   // Per-org budget: a paid product shows its costs (spec 01 §5).
   const org = (await db.select().from(orgs).where(eq(orgs.id, opts.orgId)).limit(1))[0]!;
+  const insight = resolveInsight(deps, org);
+  if (!insight.apiKey) {
+    return reply
+      .code(503)
+      .send({ error: "insight service is not configured — set the org's model and API key in Settings, or ANTHROPIC_API_KEY on the API" });
+  }
   if (org.insightUsedTokens >= org.insightBudgetTokens) {
     return reply
       .code(429)
@@ -163,12 +181,7 @@ async function runAsk(
     )[0]!.id;
   }
 
-  const result = await askInsight(
-    { apiKey: deps.cfg.ANTHROPIC_API_KEY, model: deps.cfg.INSIGHT_DEEP_MODEL },
-    opts.sources,
-    history,
-    question,
-  );
+  const result = await askInsight({ apiKey: insight.apiKey, model: insight.model }, opts.sources, history, question);
 
   await db.insert(qaMessages).values({ orgId: opts.orgId, conversationId, role: "user", body: question });
   await db.insert(qaMessages).values({

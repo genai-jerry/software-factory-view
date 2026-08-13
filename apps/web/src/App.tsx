@@ -10,6 +10,7 @@ import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
 import { ConnectEstate, OnboardingPage } from "./pages/Onboarding.js";
+import { SettingsPage } from "./pages/Settings.js";
 import { SetupPage } from "./pages/Setup.js";
 
 export function App() {
@@ -61,6 +62,7 @@ export function App() {
           <NavLink to="/blocked">Blocked</NavLink>
           <NavLink to="/decisions">Decisions</NavLink>
           <NavLink to="/onboarding">Onboarding</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div style={{ marginTop: "2rem" }} className="muted">
           {me.data.avatarUrl && (
@@ -87,6 +89,7 @@ export function App() {
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/settings" element={<SettingsPage me={me.data} />} />
           <Route path="/setup" element={<SetupPage />} />
         </Routes>
       </main>
