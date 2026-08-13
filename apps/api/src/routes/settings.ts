@@ -1,5 +1,5 @@
-import { encryptSecret, InstallationClient } from "@console/core";
-import { INSIGHT_PROVIDERS, isInsightProvider } from "@console/insight";
+import { decryptSecret, encryptSecret, InstallationClient } from "@console/core";
+import { INSIGHT_PROVIDERS, isInsightProvider, listModels } from "@console/insight";
 import { auditLog, estates, memberships, onboardingRuns, orgs, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -113,6 +113,49 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
         model: fresh.insightModel,
         hasKey: Boolean(fresh.encryptedInsightApiKey),
       };
+    },
+  );
+
+  /**
+   * List the models a key can use, fetched live from the chosen provider —
+   * key-first configuration: enter the key, load the models it unlocks, pick
+   * one. The key may come from the request (not yet saved) or fall back to
+   * the org's stored key, then the instance Anthropic key. Doubles as key
+   * validation: a bad key returns the provider's own error as a 502.
+   */
+  app.post<{ Params: { id: string }; Body: { provider?: string; apiKey?: string } }>(
+    "/api/orgs/:id/settings/insight/models",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: true });
+      if (!found) return;
+
+      const provider = req.body?.provider?.trim() || found.org.insightProvider || "anthropic";
+      if (!isInsightProvider(provider)) {
+        return reply.code(400).send({ error: `provider must be one of ${INSIGHT_PROVIDERS.join(", ")}` });
+      }
+      let apiKey = req.body?.apiKey?.trim() || "";
+      if (!apiKey && found.org.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
+        // Only reuse the stored key for the provider it was saved for.
+        if ((found.org.insightProvider ?? "anthropic") === provider) {
+          apiKey = decryptSecret(found.org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY);
+        }
+      }
+      if (!apiKey && provider === "anthropic") apiKey = deps.cfg.ANTHROPIC_API_KEY;
+      if (!apiKey) return reply.code(400).send({ error: "enter an API key first — models are listed with the key that will use them" });
+      if (provider === "anthropic" && apiKey.startsWith("sk-ant-oat")) {
+        return reply.code(400).send({
+          error:
+            "that is a Claude Code OAuth token, not an API key — it authenticates Claude Code (the factory's agents), not direct API calls. Create an API key at platform.claude.com and use that here.",
+        });
+      }
+      try {
+        const models = await listModels(provider, apiKey);
+        return { provider, models };
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message });
+      }
     },
   );
 

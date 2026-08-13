@@ -75,6 +75,21 @@ function InsightSection({
   const [provider, setProvider] = useState(s.insight.provider);
   const [model, setModel] = useState(s.insight.model ?? "");
   const [apiKey, setApiKey] = useState("");
+  const [models, setModels] = useState<string[] | null>(null);
+  const [manual, setManual] = useState(false);
+
+  const loadModels = useMutation({
+    mutationFn: () =>
+      api.post<{ provider: string; models: string[] }>(`/api/orgs/${orgId}/settings/insight/models`, {
+        provider,
+        ...(apiKey ? { apiKey } : {}),
+      }),
+    onSuccess: (r) => {
+      setModels(r.models);
+      setManual(false);
+      if (model && !r.models.includes(model)) setModel("");
+    },
+  });
   const save = useMutation({
     mutationFn: (body: { provider?: string; model?: string | null; apiKey?: string | null }) =>
       api.post(`/api/orgs/${orgId}/settings/insight`, body),
@@ -84,18 +99,30 @@ function InsightSection({
     },
   });
 
+  const pickProvider = (p: string) => {
+    setProvider(p);
+    setModels(null);
+    setManual(false);
+    setModel(p === s.insight.provider ? (s.insight.model ?? "") : "");
+    loadModels.reset();
+  };
+  // A key to list with exists when one is typed, the stored key matches this
+  // provider, or (anthropic only) the instance-wide key can stand in.
+  const canLoad =
+    canEdit &&
+    Boolean(apiKey || (s.insight.hasKey && provider === s.insight.provider) || (provider === "anthropic" && s.insight.globalKeyConfigured));
+
   return (
     <div style={{ marginBottom: "1.25rem" }}>
       <h3>Ask the Factory</h3>
       <p className="muted">
-        The provider, model and <strong>API key</strong> this org's Q&A runs on. The key must be a direct API credential for
-        the chosen provider — for Anthropic, a Claude Code OAuth token authenticates the factory's agents, not API calls, and
-        will be rejected.
+        Pick the provider, enter its <strong>API key</strong>, then load the models that key can use and choose one. For
+        Anthropic, a Claude Code OAuth token authenticates the factory's agents, not API calls, and will be rejected.
         {s.insight.globalKeyConfigured && " Without an org key, the Console's instance-wide Anthropic key is used."}
       </p>
       <div className="row">
         <label style={{ minWidth: "4.5rem" }}>Provider</label>
-        <select value={provider} onChange={(e) => setProvider(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
+        <select value={provider} onChange={(e) => pickProvider(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
           {s.insight.providers.map((p) => (
             <option value={p} key={p}>
               {PROVIDER_LABELS[p] ?? p}
@@ -104,32 +131,69 @@ function InsightSection({
         </select>
       </div>
       <div className="row" style={{ marginTop: "0.4rem" }}>
-        <label style={{ minWidth: "4.5rem" }}>Model</label>
-        <input
-          list={`models-${orgId}-${provider}`}
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder={provider === "anthropic" ? `default: ${s.insight.defaultModel}` : "model id (required)"}
-          disabled={!canEdit}
-          style={{ width: "18rem" }}
-        />
-        <datalist id={`models-${orgId}-${provider}`}>
-          {(MODEL_SUGGESTIONS[provider] ?? []).map((m) => (
-            <option value={m} key={m} />
-          ))}
-        </datalist>
-      </div>
-      <div className="row" style={{ marginTop: "0.4rem" }}>
         <label style={{ minWidth: "4.5rem" }}>API key</label>
         <input
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={s.insight.hasKey ? "key is set — enter a new one to replace it" : (KEY_PLACEHOLDERS[provider] ?? "api key")}
+          placeholder={
+            s.insight.hasKey && provider === s.insight.provider
+              ? "key is set — enter a new one to replace it"
+              : (KEY_PLACEHOLDERS[provider] ?? "api key")
+          }
           disabled={!canEdit}
           style={{ width: "18rem" }}
         />
+        <button disabled={!canLoad || loadModels.isPending} onClick={() => loadModels.mutate()}>
+          {loadModels.isPending ? "Loading…" : "Load models"}
+        </button>
         <span className="badge">{s.insight.hasKey ? "key set" : s.insight.globalKeyConfigured ? "using instance key" : "no key"}</span>
+      </div>
+      {loadModels.isError && (
+        <div className="banner error" style={{ marginTop: "0.5rem" }}>
+          {(loadModels.error as ApiError).message}
+        </div>
+      )}
+      {models && (
+        <p className="muted" style={{ margin: "0.4rem 0 0" }}>
+          Key accepted — {models.length} model{models.length === 1 ? "" : "s"} available.
+        </p>
+      )}
+      <div className="row" style={{ marginTop: "0.4rem" }}>
+        <label style={{ minWidth: "4.5rem" }}>Model</label>
+        {models && !manual ? (
+          <select
+            value={models.includes(model) ? model : ""}
+            onChange={(e) => (e.target.value === "__manual" ? setManual(true) : setModel(e.target.value))}
+            disabled={!canEdit}
+            style={{ width: "18rem" }}
+          >
+            <option value="">— select a model —</option>
+            {models.map((m) => (
+              <option value={m} key={m}>
+                {m}
+              </option>
+            ))}
+            <option value="__manual">Other (enter manually)…</option>
+          </select>
+        ) : (
+          <input
+            list={`models-${orgId}-${provider}`}
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={provider === "anthropic" ? `default: ${s.insight.defaultModel}` : "model id (required)"}
+            disabled={!canEdit}
+            style={{ width: "18rem" }}
+          />
+        )}
+        <datalist id={`models-${orgId}-${provider}`}>
+          {(MODEL_SUGGESTIONS[provider] ?? []).map((m) => (
+            <option value={m} key={m} />
+          ))}
+        </datalist>
+        {models && manual && (
+          <button onClick={() => setManual(false)}>Back to list</button>
+        )}
       </div>
       {save.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(save.error as ApiError).message}</div>}
       {canEdit && (

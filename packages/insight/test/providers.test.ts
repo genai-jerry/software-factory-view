@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askInsight, isInsightProvider, type InsightSource } from "../src/index.js";
+import { askInsight, isInsightProvider, listModels, type InsightSource } from "../src/index.js";
 
 /** OpenAI-compatible transport: request shape per provider, parsing, citations. */
 
@@ -77,5 +77,55 @@ describe("OpenAI-compatible providers", () => {
     await expect(askInsight({ provider: "openai", apiKey: "bad", model: "gpt-5.1" }, SOURCES, [], "q")).rejects.toThrow(
       /openai 401/,
     );
+  });
+});
+
+describe("listModels", () => {
+  it("lists Anthropic models with x-api-key auth", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return new Response(JSON.stringify({ data: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-4-5-20251001" }] }), {
+          status: 200,
+        });
+      }),
+    );
+    const models = await listModels("anthropic", "sk-ant-api-x");
+    expect(calls[0]!.url).toContain("api.anthropic.com/v1/models");
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-ant-api-x");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(models).toEqual(["claude-haiku-4-5-20251001", "claude-sonnet-5"]); // sorted
+  });
+
+  it("filters non-chat model families and sorts the OpenAI listing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "gpt-5.1" },
+                { id: "text-embedding-3-large" },
+                { id: "whisper-1" },
+                { id: "dall-e-3" },
+                { id: "gpt-4.1-mini" },
+                { id: "tts-1" },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const models = await listModels("openai", "sk-x");
+    expect(models).toEqual(["gpt-4.1-mini", "gpt-5.1"]);
+  });
+
+  it("surfaces the provider's error for a bad key", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unauthorized", { status: 401 })));
+    await expect(listModels("grok", "bad")).rejects.toThrow(/grok 401/);
   });
 });

@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 
@@ -200,6 +200,95 @@ describe("provider selection", () => {
     expect(oat.statusCode).toBe(200);
 
     // Reset to a cleared state for the secret tests below.
+    await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "anthropic", model: null, apiKey: null },
+    });
+  });
+});
+
+describe("model listing (key-first configuration)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists models with a request-supplied key before anything is saved", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return new Response(JSON.stringify({ data: [{ id: "grok-4" }, { id: "grok-4-fast" }] }), { status: 200 });
+      }),
+    );
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "grok", apiKey: "xai-typed-not-saved" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ provider: "grok", models: ["grok-4", "grok-4-fast"] });
+    expect(calls[0]!.url).toContain("api.x.ai");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer xai-typed-not-saved");
+  });
+
+  it("400s without any usable key, and rejects OAuth tokens for anthropic", async () => {
+    const noKey = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openai" },
+    });
+    expect(noKey.statusCode).toBe(400);
+    const oat = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "anthropic", apiKey: "sk-ant-oat01-x" },
+    });
+    expect(oat.statusCode).toBe(400);
+    expect((oat.json() as { error: string }).error).toContain("OAuth token");
+  });
+
+  it("passes the provider's error through as a 502 (bad key)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unauthorized", { status: 401 })));
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openai", apiKey: "sk-bad" },
+    });
+    expect(res.statusCode).toBe(502);
+    expect((res.json() as { error: string }).error).toContain("openai 401");
+  });
+
+  it("falls back to the stored org key for the matching provider", async () => {
+    // Store an OpenRouter key first.
+    await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openrouter", model: "x-ai/grok-4", apiKey: "sk-or-stored" },
+    });
+    const calls: Array<{ init: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push({ init });
+        return new Response(JSON.stringify({ data: [{ id: "x-ai/grok-4" }] }), { status: 200 });
+      }),
+    );
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openrouter" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer sk-or-stored");
+
+    // Reset for the secret tests below.
     await app.inject({
       method: "POST",
       url: `/api/orgs/${id.org}/settings/insight`,

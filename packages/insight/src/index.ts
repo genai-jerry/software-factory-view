@@ -179,3 +179,48 @@ async function askOpenAICompatible(
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}\n…[truncated]`;
 }
+
+/**
+ * Non-chat model families every provider's /models listing mixes in
+ * (embeddings, speech, image, moderation) — noise in a picker whose only
+ * purpose is choosing a chat model for Q&A.
+ */
+const NON_CHAT_FRAGMENTS = [
+  "embedding",
+  "whisper",
+  "tts",
+  "dall-e",
+  "moderation",
+  "image",
+  "audio",
+  "realtime",
+  "transcribe",
+];
+
+/**
+ * List the chat models the given key can use, straight from the provider —
+ * this doubles as key validation: a bad key surfaces the provider's own
+ * error. Every provider exposes a models listing: Anthropic natively, the
+ * rest via the shared OpenAI-compatible GET /models.
+ */
+export async function listModels(provider: InsightProvider, apiKey: string): Promise<string[]> {
+  let ids: string[];
+  if (provider === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/models?limit=1000", {
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`anthropic ${res.status}: ${body.slice(0, 300)}`);
+    const json = JSON.parse(body) as { data?: Array<{ id?: string }> };
+    ids = (json.data ?? []).map((m) => m.id ?? "").filter(Boolean);
+  } else {
+    const res = await fetch(`${OPENAI_COMPATIBLE_BASE[provider]}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`${provider} ${res.status}: ${body.slice(0, 300)}`);
+    const json = JSON.parse(body) as { data?: Array<{ id?: string }> };
+    ids = (json.data ?? []).map((m) => m.id ?? "").filter(Boolean);
+  }
+  return ids.filter((id) => !NON_CHAT_FRAGMENTS.some((f) => id.toLowerCase().includes(f))).sort();
+}
