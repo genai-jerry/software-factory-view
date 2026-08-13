@@ -103,13 +103,33 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # Local and cloud default to :8080. Never set WEB_HOST_PORT=80 on this VPS
+    # — Traefik already owns 80/443. Public HTTPS is the Traefik Host rule.
     ports:
-      # Hostinger Docker Manager: set WEB_HOST_PORT=80 (or 8080 if 80 is taken).
-      # Local docker: defaults to 8080 so it does not need root.
       - "${WEB_HOST_PORT:-8080}:80"
+    labels:
+      - traefik.enable=${TRAEFIK_ENABLE:-false}
+      - traefik.docker.network=lighthouse-network
+      - traefik.http.routers.factory-console.rule=Host(`${CONSOLE_HOST:-localhost}`)
+      - traefik.http.routers.factory-console.entrypoints=websecure
+      - traefik.http.routers.factory-console.tls=true
+      - traefik.http.routers.factory-console.tls.certresolver=letsencrypt
+      - traefik.http.services.factory-console.loadbalancer.server.port=80
+      - traefik.http.routers.factory-console-http.rule=Host(`${CONSOLE_HOST:-localhost}`)
+      - traefik.http.routers.factory-console-http.entrypoints=web
+      - traefik.http.routers.factory-console-http.middlewares=factory-console-https
+      - traefik.http.middlewares.factory-console-https.redirectscheme.scheme=https
+    networks:
+      - default
+      - lighthouse-network
 
 volumes:
   software-factory-pgdata:
     name: software-factory-pgdata
   software-factory-redisdata:
     name: software-factory-redisdata
+
+networks:
+  lighthouse-network:
+    name: lighthouse-network
+    external: true

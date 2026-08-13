@@ -123,22 +123,22 @@ Create the environment, then set. GitHub forbids secret names that start with
 **Variables**
 
 - `HOSTINGER_VM_ID` — `1659755` (optional; the workflow defaults to this VPS)
-- `PUBLIC_ORIGIN` — the URL browsers will use, e.g. `https://console.example.com` or `https://srv1659755.hstgr.cloud`
+- `PUBLIC_ORIGIN` — the HTTPS URL browsers will use, e.g. `https://factory.example.com`. Traefik terminates TLS and routes that hostname to nginx. Do not use `:80` — Traefik already binds 80/443 on this VPS.
 
 Private repository: add an SSH deploy key from the VPS to this GitHub repo
-([Hostinger private-repo docs](https://www.hostinger.com/support/how-to-deploy-from-private-github-repository-on-hostinger-docker-manager/)).
+([Hostinger private-repo docs](https://www.hostinger.com/support/how-to-deploy-from-private-github-repository-on-hostinger-docker-manager/)). Docker Manager clones over that key; the workflow cannot use a public blob URL.
 
 Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_FAKE_LOGIN=1`.
 
 ### First deploy
 
-1. Set the secrets and variables above.
-2. Push to `main`. CI still runs on every branch; only `main` deploys.
-3. In Docker Manager, confirm project `factory-console` is running.
-4. Point a domain at the VPS (or use the `*.hstgr.cloud` hostname) and enable SSL in hPanel so `PUBLIC_ORIGIN` is `https://…`. GitHub App webhooks and OAuth need that public URL.
+1. Set the secrets and variables above. `PUBLIC_ORIGIN` must be an `https://` hostname whose DNS A record points at `187.127.165.119` (this VPS).
+2. Add the VPS deploy key to this repository (required — the repo is private).
+3. Push to `main`. CI still runs on every branch; only `main` deploys.
+4. In Docker Manager, confirm project `factory-console` is running. nginx is not published on :80; Traefik on `lighthouse-network` fronts it.
 5. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. Set the App's webhook URL to `{PUBLIC_ORIGIN}/webhooks/github` and its OAuth callback to `{PUBLIC_ORIGIN}/auth/github/callback`.
 
-To deploy from the panel instead of Actions: Docker Manager → **Compose** → **Compose from URL** → this repository. Set the same environment variables on the project, including `GITHUB_APP_*`, `CONSOLE_MASTER_KEY`, `PUBLIC_ORIGIN`, `DB_PASSWORD`, `WEB_HOST_PORT=80`.
+To deploy from the panel instead of Actions: Docker Manager → **Compose** → **Compose from URL** → this repository. Set the same environment variables on the project, including `GITHUB_APP_*`, `CONSOLE_MASTER_KEY`, `PUBLIC_ORIGIN`, `DB_PASSWORD`, `TRAEFIK_ENABLE=true`, `CONSOLE_HOST` (hostname only). Do not set `WEB_HOST_PORT=80`.
 
 ### Adopt your existing factory estate
 

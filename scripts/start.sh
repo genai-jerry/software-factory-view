@@ -31,6 +31,13 @@ if ! compose ps --quiet web 2>/dev/null | grep -q . && port_open "$web_port"; th
   die "Port $web_port is already in use — stop it, or set WEB_HOST_PORT in .env to a free port"
 fi
 
+# Production joins the VPS Traefik network (external: true). Create it locally
+# so `docker compose up` does not fail when that network is absent.
+if ! docker network inspect lighthouse-network >/dev/null 2>&1; then
+  docker network create lighthouse-network >/dev/null
+  ok "Created docker network lighthouse-network"
+fi
+
 # A stale image serves the SPA bundle from the last build, which looks like
 # "my change did not land" rather than "nothing was rebuilt" — so an argument
 # we do not understand is an error, never a silent no-op.
