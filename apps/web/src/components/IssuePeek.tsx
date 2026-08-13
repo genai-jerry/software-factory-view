@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { QaPanel } from "../pages/QaPanel.js";
+import { RepoChip } from "./RepoChip.js";
 import type { DepNode, IssuePeekData } from "../types.js";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       <div className="row" style={{ margin: "0.5rem 0" }}>
         <span className="badge state">{issue.state?.replace("factory:", "") ?? "no state"}</span>
         <span className="badge">{PHASE_LABELS[issue.phase]}</span>
-        <span className="muted">{issue.repo}</span>
+        <RepoChip fullName={issue.repo} />
         {issue.assignees.map((a) => (
           <span className="chip" key={a}>
             @{a}

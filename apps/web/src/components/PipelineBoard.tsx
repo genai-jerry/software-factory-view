@@ -1,4 +1,5 @@
 import type { BoardCard } from "../types.js";
+import { RepoChip } from "./RepoChip.js";
 import { HELD_COLUMN, partitionCards } from "../lib/board.js";
 
 const STATE_SHORT: Record<string, string> = {
@@ -44,7 +45,7 @@ export function PipelineBoard({ columns, cards, onPeek }: { columns: string[]; c
                 #{c.number} {c.title}
               </div>
               <div className="meta">
-                <span>{c.repo.split("/")[1]}</span>
+                <RepoChip fullName={c.repo} />
                 <span>{c.daysInState}d in state</span>
                 {c.tasks.total > 0 && (
                   <span>

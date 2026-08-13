@@ -34,9 +34,10 @@ export interface AttentionEntryDto {
 
 const DAY_MS = 86_400_000;
 
-export async function buildAttention(deps: AppDeps, ctx: RequestCtx): Promise<AttentionEntryDto[]> {
+export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?: string[]): Promise<AttentionEntryDto[]> {
   const { db } = deps.dbh;
   const entries: AttentionEntryDto[] = [];
+  if (repoFilter && repoFilter.length === 0) return entries;
 
   // All gate assignments across the caller's estates, loaded once (the old
   // per-issue query was an N+1). Two views of the same rows: membership
@@ -63,7 +64,14 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx): Promise<At
     .select({ issue: issues, repoFullName: repos.fullName, estateId: repos.estateId, repoId: repos.id })
     .from(issues)
     .innerJoin(repos, eq(repos.id, issues.repoId))
-    .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.state, "open"), isNotNull(issues.factoryState)));
+    .where(
+      and(
+        inArray(issues.orgId, ctx.orgIds),
+        eq(issues.state, "open"),
+        isNotNull(issues.factoryState),
+        ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+      ),
+    );
 
   // Blocked metadata, batched: when each issue was labelled blocked, the state
   // it halted in, and the agent's stuck question.

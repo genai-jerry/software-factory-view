@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
-import type { Me, OrgSettings, SecretWriteResult } from "../types.js";
+import { RepoChip } from "../components/RepoChip.js";
+import type { Me, OrgSettings, ProjectsData, SecretWriteResult } from "../types.js";
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -56,7 +57,99 @@ function OrgSettingsCard({ orgId }: { orgId: string }) {
       <h2>{s.name}</h2>
       {!canEdit && <p className="muted">You have the {s.role} role here — settings are read-only for you.</p>}
       <InsightSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
+      <ProjectsSection orgId={orgId} canEdit={canEdit} />
       <SecretsSection orgId={orgId} settings={s} canEdit={canEdit} />
+    </div>
+  );
+}
+
+/** Group repos into projects so every view can be focused to one at a time. */
+function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const [newName, setNewName] = useState("");
+  const data = useQuery({ queryKey: ["projects"], queryFn: () => api.get<ProjectsData>("/api/projects") });
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["projects"] });
+
+  const create = useMutation({
+    mutationFn: () => api.post("/api/projects", { orgId, name: newName }),
+    onSuccess: () => {
+      setNewName("");
+      refresh();
+    },
+  });
+  const assign = useMutation({
+    mutationFn: (v: { repoId: string; projectId: string | null }) =>
+      api.post(`/api/repos/${v.repoId}/project`, { projectId: v.projectId }),
+    onSuccess: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: (projectId: string) => api.del(`/api/projects/${projectId}`),
+    onSuccess: refresh,
+  });
+
+  if (!data.data) return null;
+  const projects = data.data.projects.filter((p) => p.orgId === orgId);
+  const repos = [
+    ...projects.flatMap((p) => p.repos.map((r) => ({ ...r, projectId: p.id }))),
+    ...data.data.unassigned.filter((r) => r.orgId === orgId).map((r) => ({ ...r, projectId: null as string | null })),
+  ].sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+  return (
+    <div style={{ marginBottom: "1.25rem" }}>
+      <h3>Projects</h3>
+      <p className="muted">
+        Group the repos that ship together. Every view — My work, the board, Flow, Blocked — can then be focused to one
+        project or one repo from the bar at the top of the page.
+      </p>
+      {repos.map((r) => (
+        <div className="project-row" key={r.id}>
+          <RepoChip fullName={r.fullName} />
+          <span style={{ flex: 1 }} className="muted">
+            {r.fullName}
+          </span>
+          <select
+            value={r.projectId ?? ""}
+            disabled={!canEdit}
+            onChange={(e) => assign.mutate({ repoId: r.id, projectId: e.target.value || null })}
+            style={{ width: "auto" }}
+          >
+            <option value="">— no project —</option>
+            {projects.map((p) => (
+              <option value={p.id} key={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
+      {repos.length === 0 && <p className="muted">No repos connected in this org yet.</p>}
+
+      {canEdit && (
+        <>
+          <div className="row" style={{ marginTop: "0.75rem" }}>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="new project name"
+              style={{ width: "14rem" }}
+            />
+            <button disabled={!newName.trim() || create.isPending} onClick={() => create.mutate()}>
+              Add project
+            </button>
+          </div>
+          {create.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(create.error as ApiError).message}</div>}
+          {projects.length > 0 && (
+            <div className="row" style={{ marginTop: "0.5rem" }}>
+              <span className="muted">Delete:</span>
+              {projects.map((p) => (
+                <button key={p.id} className="danger" disabled={remove.isPending} onClick={() => remove.mutate(p.id)}>
+                  {p.name} ✕
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

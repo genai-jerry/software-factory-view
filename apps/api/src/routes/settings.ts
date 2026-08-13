@@ -209,7 +209,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
   );
 }
 
-async function loadOrg(
+export async function loadOrg(
   deps: AppDeps,
   ctx: RequestCtx,
   orgId: string,

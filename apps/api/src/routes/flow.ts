@@ -1,8 +1,9 @@
 import { GATE_STATES, phaseOfState } from "@console/core";
 import { estates, gateAssignments, issues, issueStateHistory, repos, taskDependencies } from "@console/db";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
+import { resolveRepoFilter, type RepoFilterQuery } from "./read.js";
 
 /**
  * The manager / scrum-master lens (plan 07 §7): the whole estate as a
@@ -19,10 +20,12 @@ const NO_RELEASE = "No release";
 export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
-  app.get("/api/flow", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/flow", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const now = Date.now();
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { estates: [] };
 
     const estateRows = await db.select().from(estates).where(inArray(estates.orgId, ctx.orgIds));
     const estateIds = estateRows.map((e) => e.id);
@@ -34,7 +37,7 @@ export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
       .select({ issue: issues, repoFullName: repos.fullName, estateId: repos.estateId })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(inArray(issues.orgId, ctx.orgIds));
+      .where(and(inArray(issues.orgId, ctx.orgIds), ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : [])));
 
     // Query 2: newest state transition per issue (freshness / days-in-state).
     const historyRows = await db

@@ -81,21 +81,31 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
    * routing and ranks so an agent halted on *you* outranks broadcast noise.
    * The full derivation lives in ../attention.ts, shared with /api/my-work.
    */
-  app.get("/api/attention", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/attention", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
-    return { entries: await buildAttention(deps, ctx) };
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { entries: [] };
+    return { entries: await buildAttention(deps, ctx, repoFilter ?? undefined) };
   });
 
   /** Pipeline board: epics as cards in state-machine columns, one lane per estate. */
-  app.get("/api/board", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/board", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { columns: PIPELINE_ORDER, cards: [] };
     const epicRows = await db
       .select({ issue: issues, repoFullName: repos.fullName, estateId: repos.estateId })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.kind, "epic")));
+      .where(
+        and(
+          inArray(issues.orgId, ctx.orgIds),
+          eq(issues.kind, "epic"),
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+        ),
+      );
 
     const cards = [];
     for (const row of epicRows) {
@@ -378,14 +388,23 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /** Blocked inbox. */
-  app.get("/api/blocked", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/blocked", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { issues: [] };
     const rows = await db
       .select({ issue: issues, repoFullName: repos.fullName })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
-      .where(and(inArray(issues.orgId, ctx.orgIds), eq(issues.factoryState, "factory:blocked"), eq(issues.state, "open")));
+      .where(
+        and(
+          inArray(issues.orgId, ctx.orgIds),
+          eq(issues.factoryState, "factory:blocked"),
+          eq(issues.state, "open"),
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+        ),
+      );
     return {
       issues: rows.map((r) => ({
         id: r.issue.id,
@@ -424,6 +443,36 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
 }
 
 /* ------------------------------- shared helpers ------------------------------- */
+
+export interface RepoFilterQuery {
+  repo?: string;
+  project?: string;
+}
+
+/**
+ * Resolve the ?repo= / ?project= focus filter to a set of repo ids.
+ * Returns null for "no filter" (show everything); an array otherwise —
+ * possibly empty, which callers must treat as "match nothing" rather than
+ * passing an empty inArray() to SQL. A repo filter wins over a project one.
+ */
+export async function resolveRepoFilter(deps: AppDeps, ctx: RequestCtx, query: RepoFilterQuery): Promise<string[] | null> {
+  const { db } = deps.dbh;
+  if (query.repo) {
+    const rows = await db
+      .select({ id: repos.id })
+      .from(repos)
+      .where(and(eq(repos.id, query.repo), inArray(repos.orgId, ctx.orgIds)));
+    return rows.map((r) => r.id);
+  }
+  if (query.project) {
+    const rows = await db
+      .select({ id: repos.id })
+      .from(repos)
+      .where(and(eq(repos.projectId, query.project), inArray(repos.orgId, ctx.orgIds)));
+    return rows.map((r) => r.id);
+  }
+  return null;
+}
 
 export async function loadEpic(
   deps: AppDeps,

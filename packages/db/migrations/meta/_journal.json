@@ -57,6 +57,13 @@
       "when": 1786300000005,
       "tag": "0007_insight_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786300000006,
+      "tag": "0008_projects",
+      "breakpoints": true
     }
   ]
 }

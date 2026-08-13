@@ -347,6 +347,11 @@ export interface OrgSettings {
   allowedSecrets: string[];
 }
 
+export interface ProjectsData {
+  projects: Array<{ id: string; orgId: string; name: string; repos: Array<{ id: string; fullName: string }> }>;
+  unassigned: Array<{ id: string; orgId: string; fullName: string }>;
+}
+
 export interface SecretWriteResult {
   name: string;
   results: Array<{ repo: string; ok: boolean; error?: string }>;

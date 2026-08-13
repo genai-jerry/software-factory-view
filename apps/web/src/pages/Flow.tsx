@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api.js";
+import { FilterBar } from "../components/FilterBar.js";
 import { IssuePeek } from "../components/IssuePeek.js";
+import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
+import { useFocus } from "../lib/filter.js";
 import type { BoardCard, FlowData, FlowEpic, FlowMilestone } from "../types.js";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -22,16 +25,18 @@ const PHASE_LABELS: Record<string, string> = {
 export function FlowPage() {
   const [lens, setLens] = useState<"tree" | "board">("tree");
   const [peekId, setPeekId] = useState<string | null>(null);
-  const flow = useQuery({ queryKey: ["flow"], queryFn: () => api.get<FlowData>("/api/flow") });
+  const focus = useFocus();
+  const flow = useQuery({ queryKey: ["flow", focus.key], queryFn: () => api.get<FlowData>(`/api/flow${focus.qs}`) });
   const board = useQuery({
-    queryKey: ["board"],
-    queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>("/api/board"),
+    queryKey: ["board", focus.key],
+    queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>(`/api/board${focus.qs}`),
     enabled: lens === "board",
   });
 
   return (
     <div>
       <h1>Flow</h1>
+      <FilterBar />
       <div className="tabs">
         <button className={lens === "tree" ? "active" : ""} onClick={() => setLens("tree")}>
           Tree
@@ -106,8 +111,9 @@ function EpicNode({ epic: e, onPeek }: { epic: FlowEpic; onPeek: (id: string) =>
           #{e.number} {e.title}
         </a>
         <span className="badge">{PHASE_LABELS[e.phase]}</span>
+        <RepoChip fullName={e.repo} />
         <span className="muted">
-          {e.repo.split("/")[1]} · {e.daysInState}d in state
+          {e.daysInState}d in state
           {e.rollup.total > 0 && ` · ${e.rollup.done}/${e.rollup.total} tasks`}
           {e.rollup.waiting > 0 && ` · ${e.rollup.waiting} waiting`}
           {waits && ` · waits on ${waits}`}

@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNotNull, or, sql as dsql } from "drizzle-orm"
 import type { FastifyInstance } from "fastify";
 import { buildAttention, loadBlockedMeta } from "../attention.js";
 import { requireAuth, type AppDeps } from "../context.js";
-import { loadDependencies, loadIssue, taskRollup } from "./read.js";
+import { loadDependencies, loadIssue, resolveRepoFilter, taskRollup, type RepoFilterQuery } from "./read.js";
 
 /**
  * The individual view (plan 07 §4): one round trip answering, in order,
@@ -19,11 +19,13 @@ const DAY_MS = 86_400_000;
 export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
-  app.get("/api/my-work", async (req, reply) => {
+  app.get<{ Querystring: RepoFilterQuery }>("/api/my-work", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { needsYou: [], mine: [], waitingOn: [] };
 
-    const needsYou = await buildAttention(deps, ctx);
+    const needsYou = await buildAttention(deps, ctx, repoFilter ?? undefined);
 
     // §4.2 Yours, in flight — everything open you are assignee or author of.
     const mineRows = await db
@@ -36,6 +38,7 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
           eq(issues.state, "open"),
           isNotNull(issues.factoryState),
           or(dsql`${issues.assignees} @> ${JSON.stringify([ctx.login])}::jsonb`, eq(issues.author, ctx.login)),
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
         ),
       );
 
@@ -82,7 +85,13 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
         .select({ issue: issues, repoFullName: repos.fullName })
         .from(issues)
         .innerJoin(repos, eq(repos.id, issues.repoId))
-        .where(and(inArray(issues.parentIssueId, myEpicIds), eq(issues.state, "open")));
+        .where(
+          and(
+            inArray(issues.parentIssueId, myEpicIds),
+            eq(issues.state, "open"),
+            ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+          ),
+        );
       for (const r of epicTasks) if (!candidates.has(r.issue.id)) candidates.set(r.issue.id, { issue: r.issue, repo: r.repoFullName });
     }
     const depMap = await loadDependencies(deps, [...candidates.keys()]);

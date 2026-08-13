@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api.js";
+import { FilterBar } from "../components/FilterBar.js";
 import { IssuePeek } from "../components/IssuePeek.js";
+import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
+import { useFocus } from "../lib/filter.js";
 import type { AttentionEntry, BoardCard, EstateSummary, MineRow, MyWork, Phase, WaitingRow } from "../types.js";
 
 const PHASE_ORDER: Phase[] = ["held", "specifying", "planning", "building", "shipping"];
@@ -29,6 +32,7 @@ export function MissionControl() {
   return (
     <div>
       <h1>Mission control</h1>
+      <FilterBar />
       {anyStale && (
         <div className="banner stale">
           Some estates have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
@@ -52,7 +56,8 @@ export function MissionControl() {
 }
 
 function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
-  const myWork = useQuery({ queryKey: ["my-work"], queryFn: () => api.get<MyWork>("/api/my-work") });
+  const focus = useFocus();
+  const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
   if (myWork.isLoading) return <p className="muted">Loading…</p>;
   if (!myWork.data) return <p className="muted">Could not load your work.</p>;
   const { needsYou, mine, waitingOn } = myWork.data;
@@ -107,7 +112,7 @@ function AttentionRow({ entry: e, onPeek }: { entry: AttentionEntry; onPeek: (id
           {e.title}
         </a>
         <div className="why">
-          {e.repo} — {e.whyYou}
+          <RepoChip fullName={e.repo} /> {e.whyYou}
         </div>
         {e.question && <div className="question">“{e.question}”</div>}
       </span>
@@ -130,7 +135,8 @@ function MineRowView({ row: m, onPeek }: { row: MineRow; onPeek: (id: string) =>
           #{m.number} {m.title}
         </a>
         <div className="why">
-          {m.repo} · {m.state?.replace("factory:", "") ?? "no state"} · {m.whyMine === "assigned" ? "assigned to you" : "you filed it"}
+          <RepoChip fullName={m.repo} /> {m.state?.replace("factory:", "") ?? "no state"} ·{" "}
+          {m.whyMine === "assigned" ? "assigned to you" : "you filed it"}
           {m.rollup && m.rollup.total > 0 && ` · ${m.rollup.done}/${m.rollup.total} tasks`}
         </div>
       </span>
@@ -154,7 +160,7 @@ function WaitingRowView({ row: w, onPeek }: { row: WaitingRow; onPeek: (id: stri
           #{w.number} {w.title}
         </a>
         <div className="why">
-          blocked by{" "}
+          <RepoChip fullName={w.repo} /> blocked by{" "}
           <a
             href="#peek"
             onClick={(ev) => {
@@ -174,7 +180,11 @@ function WaitingRowView({ row: w, onPeek }: { row: WaitingRow; onPeek: (id: stri
 }
 
 function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined; onPeek: (id: string) => void }) {
-  const board = useQuery({ queryKey: ["board"], queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>("/api/board") });
+  const focus = useFocus();
+  const board = useQuery({
+    queryKey: ["board", focus.key],
+    queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>(`/api/board${focus.qs}`),
+  });
   return (
     <div>
       <div className="card">

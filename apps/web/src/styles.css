@@ -339,3 +339,59 @@ textarea { min-height: 5rem; resize: vertical; }
 .tree-row.indent { margin-left: 1.25rem; }
 .tree-caret { width: 1rem; color: var(--text-dim); cursor: pointer; user-select: none; flex-shrink: 0; }
 .tree-row .muted { font-size: 0.8rem; }
+
+/* ---- Repo indicators and the focus filter ---- */
+
+.repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.repo-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.badge.focus-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.focus-clear {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  padding: 0 0 0 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+.focus-clear:hover { color: var(--text); border-color: transparent; }
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.project-row:last-child { border-bottom: none; }

@@ -107,6 +107,22 @@ export const gateAssignments = pgTable(
   (t) => [uniqueIndex("gate_assignments_unique").on(t.estateId, t.repoId, t.gate, t.login)],
 );
 
+/**
+ * Console-native grouping: a project collects repos that ship together, so
+ * every view can be focused to one project (or one repo) at a time. A repo
+ * belongs to at most one project; deleting a project releases its repos.
+ */
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("projects_org_name").on(t.orgId, t.name)],
+);
+
 /* ------------------------------- projections: estate/repo ------------------------------- */
 
 export const estates = pgTable("estates", {
@@ -131,9 +147,14 @@ export const repos = pgTable(
     stagingBranch: text("staging_branch"),
     factoryEnabled: boolean("factory_enabled").notNull().default(false),
     profileSha: text("profile_sha"),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("repos_node_id").on(t.ghNodeId), index("repos_estate").on(t.estateId)],
+  (t) => [
+    uniqueIndex("repos_node_id").on(t.ghNodeId),
+    index("repos_estate").on(t.estateId),
+    index("repos_project").on(t.projectId),
+  ],
 );
 
 /* ------------------------------- projections: pipeline ------------------------------- */
