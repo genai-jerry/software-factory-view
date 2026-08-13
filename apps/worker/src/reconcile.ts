@@ -2,7 +2,7 @@ import { InstallationClient, type AppAuth, type ConsoleConfig } from "@console/c
 import { estates, issues, repos, type Db } from "@console/db";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { projectComment, projectIssue, projectPull, projectRun, type RepoRef } from "./project.js";
-import { importGateAssignments, refreshEpicArtifacts, refreshRepoProfile, repairSubIssueLinks } from "./artifacts.js";
+import { importGateAssignments, refreshEpicArtifacts, refreshRepoProfile, repairDependencies, repairSubIssueLinks } from "./artifacts.js";
 
 /**
  * The reconciler (spec 01 §2.2): walk the GitHub API per estate and repair any
@@ -80,6 +80,7 @@ export async function reconcileEstate(db: Db, cfg: ConsoleConfig, auth: AppAuth,
       for (const run of workflow_runs) await projectRun(db, repoRef, run);
 
       await repairSubIssueLinks(db, repoRef, client);
+      await repairDependencies(db, repoRef, client);
       await refreshRepoProfile(db, repoRef, client);
       await importGateAssignments(db, repoRef, client);
 

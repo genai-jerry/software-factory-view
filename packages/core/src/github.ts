@@ -146,6 +146,7 @@ export interface GhIssue {
   state: string;
   body: string | null;
   user: { login: string } | null;
+  assignees?: Array<{ login: string }> | null;
   labels: Array<{ name: string } | string>;
   updated_at: string;
   created_at: string;
@@ -314,6 +315,21 @@ export class RepoReader {
       return (await this.req("GET", `/repos/${owner}/${repo}/issues/${num}/sub_issues?per_page=100`)) as GhIssue[];
     } catch (e) {
       if (e instanceof GitHubHttpError && (e.status === 404 || e.status === 410)) return [];
+      throw e;
+    }
+  }
+
+  /**
+   * Native issue-dependency relations (issues this one is blocked by) — the
+   * authoritative dependency source when the plan/API version offers it.
+   * Absence (404/410) and lack of entitlement (403) degrade to an empty list,
+   * leaving body-marker parsing as the only source for that estate.
+   */
+  async listBlockedBy(owner: string, repo: string, num: number): Promise<GhIssue[]> {
+    try {
+      return (await this.req("GET", `/repos/${owner}/${repo}/issues/${num}/dependencies/blocked_by?per_page=100`)) as GhIssue[];
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 403 || e.status === 404 || e.status === 410)) return [];
       throw e;
     }
   }

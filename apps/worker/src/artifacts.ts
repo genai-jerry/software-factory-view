@@ -8,9 +8,10 @@ import {
   onboardingRuns,
   pullRequests,
   repos,
+  taskDependencies,
   type Db,
 } from "@console/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import type { RepoRef } from "./project.js";
 
 /**
@@ -205,6 +206,45 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
         target: [onboardingRuns.repoId, onboardingRuns.step],
         set: { status: "ok", detail: { sha: profile.sha }, updatedAt: new Date() },
       });
+  }
+}
+
+/**
+ * Repair `source='github'` dependency edges from the native issue-dependency
+ * relations, delete-then-insert per issue so removed dependencies disappear.
+ * Runs before projectIssue's body pass would matter: github rows own the
+ * (blocked, blocker) pair, body rows only fill gaps. Blockers resolve by
+ * node_id, so cross-repo dependencies work whenever both sides are projected;
+ * a blocker in a repo not yet walked is skipped and converges next reconcile.
+ */
+export async function repairDependencies(db: Db, repo: RepoRef, reader: RepoReader): Promise<void> {
+  const [owner, name] = repo.fullName.split("/") as [string, string];
+  const factoryIssues = await db
+    .select({ id: issues.id, number: issues.number })
+    .from(issues)
+    .where(and(eq(issues.repoId, repo.id), isNotNull(issues.factoryState)));
+  for (const issue of factoryIssues) {
+    const blockedBy = await reader.listBlockedBy(owner, name, issue.number);
+    await db
+      .delete(taskDependencies)
+      .where(and(eq(taskDependencies.blockedIssueId, issue.id), eq(taskDependencies.source, "github")));
+    for (const gh of blockedBy) {
+      const blocker = (await db.select({ id: issues.id }).from(issues).where(eq(issues.ghNodeId, gh.node_id)).limit(1))[0];
+      if (!blocker || blocker.id === issue.id) continue;
+      await db
+        .delete(taskDependencies)
+        .where(
+          and(
+            eq(taskDependencies.blockedIssueId, issue.id),
+            eq(taskDependencies.blockerIssueId, blocker.id),
+            eq(taskDependencies.source, "body"),
+          ),
+        );
+      await db
+        .insert(taskDependencies)
+        .values({ orgId: repo.orgId, blockedIssueId: issue.id, blockerIssueId: blocker.id, source: "github" })
+        .onConflictDoNothing({ target: [taskDependencies.blockedIssueId, taskDependencies.blockerIssueId] });
+    }
   }
 }
 

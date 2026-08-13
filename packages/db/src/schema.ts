@@ -148,6 +148,7 @@ export const issues = pgTable(
     parentIssueId: uuid("parent_issue_id"),
     factoryState: text("factory_state"), // current factory:* label or null
     labels: jsonb("labels").$type<string[]>().notNull().default([]),
+    assignees: jsonb("assignees").$type<string[]>().notNull().default([]),
     htmlUrl: text("html_url").notNull().default(""),
     ghCreatedAt: timestamp("gh_created_at", { withTimezone: true }),
     ghUpdatedAt: timestamp("gh_updated_at", { withTimezone: true }).notNull(),
@@ -158,6 +159,31 @@ export const issues = pgTable(
     index("issues_repo_number").on(t.repoId, t.number),
     index("issues_org_state").on(t.orgId, t.factoryState),
     index("issues_parent").on(t.parentIssueId),
+  ],
+);
+
+/**
+ * Blocked-by edges between issues (task ordering, cross-repo merge order).
+ * Two sources with a precedence: 'github' rows mirror the native issue-
+ * dependency relations and win; 'body' rows are parsed from "blocked by #n"
+ * markers in issue bodies and only fill gaps. Repaired delete-then-insert by
+ * the reconciler (github) and by projectIssue (body), so the table is fully
+ * rebuildable like every projection.
+ */
+export const taskDependencies = pgTable(
+  "task_dependencies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    blockedIssueId: uuid("blocked_issue_id").notNull().references(() => issues.id, { onDelete: "cascade" }),
+    blockerIssueId: uuid("blocker_issue_id").notNull().references(() => issues.id, { onDelete: "cascade" }),
+    source: text("source").notNull(), // github | body
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("task_deps_pair").on(t.blockedIssueId, t.blockerIssueId),
+    index("task_deps_blocker").on(t.blockerIssueId),
+    index("task_deps_org").on(t.orgId),
   ],
 );
 

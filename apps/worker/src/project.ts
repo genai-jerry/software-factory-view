@@ -1,4 +1,5 @@
 import {
+  blockerNumbersFromBody,
   deriveFactoryState,
   deriveIssueKind,
   derivePrKind,
@@ -18,6 +19,7 @@ import {
   pullRequests,
   repos,
   runs,
+  taskDependencies,
   threads,
   threadEntries,
   decisions,
@@ -25,7 +27,7 @@ import {
   orgs,
   type Db,
 } from "@console/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 /**
  * Projection functions. Every write is an idempotent upsert keyed by the
@@ -111,7 +113,7 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
   const ghUpdatedAt = new Date(gh.updated_at);
 
   const prev = await db
-    .select({ id: issues.id, factoryState: issues.factoryState })
+    .select({ id: issues.id, factoryState: issues.factoryState, ghUpdatedAt: issues.ghUpdatedAt })
     .from(issues)
     .where(eq(issues.ghNodeId, gh.node_id))
     .limit(1);
@@ -127,6 +129,7 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
       body: gh.body,
       state: gh.state,
       author: gh.user?.login ?? null,
+      assignees: gh.assignees?.map((a) => a.login) ?? [],
       kind,
       parentIssueId,
       factoryState,
@@ -142,6 +145,7 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
         title: gh.title,
         body: gh.body,
         state: gh.state,
+        assignees: gh.assignees?.map((a) => a.login) ?? [],
         kind,
         ...(parentIssueId ? { parentIssueId } : {}),
         factoryState,
@@ -156,8 +160,40 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
   const row = (await db.select({ id: issues.id, kind: issues.kind }).from(issues).where(eq(issues.ghNodeId, gh.node_id)).limit(1))[0]!;
   const stateChanged = (prev[0]?.factoryState ?? null) !== factoryState;
 
+  // Body-sourced dependency edges, under the same LWW discipline as the row
+  // itself: a stale delivery must not rewrite edges a fresher body produced.
+  if (!prev[0] || prev[0].ghUpdatedAt <= ghUpdatedAt) {
+    await refreshBodyDependencies(db, repo, row.id, gh.body);
+  }
+
   if (row.kind === "epic") await ensureEpicThreads(db, repo.orgId, row.id);
   return { issueId: row.id, stateChanged };
+}
+
+/**
+ * Refresh this issue's `source='body'` dependency edges from its markers
+ * (delete-then-insert, the gate-assignments discipline). Numbers resolve
+ * same-repo; a marker naming an issue not yet projected is skipped and
+ * converges on the next delivery or reconcile. `onConflictDoNothing` on the
+ * (blocked, blocker) pair keeps github-sourced rows authoritative.
+ */
+async function refreshBodyDependencies(db: Db, repo: RepoRef, issueId: string, body: string | null): Promise<void> {
+  const numbers = blockerNumbersFromBody(body);
+  await db
+    .delete(taskDependencies)
+    .where(and(eq(taskDependencies.blockedIssueId, issueId), eq(taskDependencies.source, "body")));
+  if (numbers.length === 0) return;
+  const blockers = await db
+    .select({ id: issues.id })
+    .from(issues)
+    .where(and(eq(issues.repoId, repo.id), inArray(issues.number, numbers)));
+  for (const blocker of blockers) {
+    if (blocker.id === issueId) continue;
+    await db
+      .insert(taskDependencies)
+      .values({ orgId: repo.orgId, blockedIssueId: issueId, blockerIssueId: blocker.id, source: "body" })
+      .onConflictDoNothing({ target: [taskDependencies.blockedIssueId, taskDependencies.blockerIssueId] });
+  }
 }
 
 /** Record a labeled/unlabeled event into the append-only state history. */

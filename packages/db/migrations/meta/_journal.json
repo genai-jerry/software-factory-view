@@ -15,6 +15,20 @@
       "when": 1786246808852,
       "tag": "0001_app_config",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0002_assignees",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786300000001,
+      "tag": "0003_task_dependencies",
+      "breakpoints": true
     }
   ]
 }
