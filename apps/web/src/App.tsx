@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api.js";
+import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "./theme.js";
 import type { Me, SetupStatus } from "./types.js";
 import { MissionControl } from "./pages/MissionControl.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
@@ -72,6 +74,7 @@ export function App() {
               Sign out
             </button>
           </div>
+          <ThemeToggle />
         </div>
       </aside>
       <main className="main">
@@ -85,6 +88,25 @@ export function App() {
         </Routes>
       </main>
     </div>
+  );
+}
+
+/** System → light → dark → system. 'System' follows the OS via prefers-color-scheme. */
+function ThemeToggle() {
+  const [pref, setPref] = useState<ThemePref>(getThemePref());
+  const icons: Record<ThemePref, string> = { system: "◐", light: "☀", dark: "☾" };
+  return (
+    <button
+      className="theme-toggle"
+      title="Cycle color theme"
+      onClick={() => {
+        const next = cycleTheme(pref);
+        applyTheme(next);
+        setPref(next);
+      }}
+    >
+      {icons[pref]} Theme: {pref}
+    </button>
   );
 }
 
