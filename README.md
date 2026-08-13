@@ -100,8 +100,7 @@ your mode; OAuth callbacks and the App's webhook URL are derived from it.
 The Console runs as one Docker Compose project on the VPS behind
 [Docker Manager](https://hpanel.hostinger.com/vps/1659755/docker-manager)
 (VM `1659755`). Postgres and Redis are in the same compose file. The GitHub
-workflow `.github/workflows/deploy.yml` deploys on push to `main` and on
-`workflow_dispatch`.
+workflow `.github/workflows/deploy.yml` deploys only on push to `main`.
 
 ### GitHub Environment `production`
 
@@ -132,7 +131,7 @@ Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_
 ### First deploy
 
 1. Set the secrets and variables above.
-2. Push to `main`, or run **Deploy** from the Actions tab.
+2. Push to `main`. CI still runs on every branch; only `main` deploys.
 3. In Docker Manager, confirm project `factory-console` is running.
 4. Point a domain at the VPS (or use the `*.hstgr.cloud` hostname) and enable SSL in hPanel so `PUBLIC_ORIGIN` is `https://…`. GitHub App webhooks and OAuth need that public URL.
 5. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. Set the App's webhook URL to `{PUBLIC_ORIGIN}/webhooks/github` and its OAuth callback to `{PUBLIC_ORIGIN}/auth/github/callback`.
