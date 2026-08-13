@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-console}
       POSTGRES_DB: console
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - software-factory-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U console"]
       interval: 5s
@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - redisdata:/data
+      - software-factory-redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -109,5 +109,7 @@ services:
       - "${WEB_HOST_PORT:-8080}:80"
 
 volumes:
-  pgdata:
-  redisdata:
+  software-factory-pgdata:
+    name: software-factory-pgdata
+  software-factory-redisdata:
+    name: software-factory-redisdata

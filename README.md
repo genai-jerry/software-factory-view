@@ -104,18 +104,20 @@ workflow `.github/workflows/deploy.yml` deploys only on push to `main`.
 
 ### GitHub Environment `production`
 
-Create the environment, then set:
+Create the environment, then set. GitHub forbids secret names that start with
+`GITHUB_`, so the App credentials use `GH_*` here; the workflow maps them to
+`GITHUB_APP_*` / `GITHUB_OAUTH_*` on the VPS.
 
 **Secrets**
 
 - `HOSTINGER_API_KEY` — hPanel → [API settings](https://hpanel.hostinger.com/profile/api)
 - `CONSOLE_MASTER_KEY` — `openssl rand -base64 32` (back this up)
 - `DB_PASSWORD` — password for the in-compose Postgres
-- `GITHUB_APP_ID` — the SaaS GitHub App's numeric id
-- `GITHUB_APP_PRIVATE_KEY` — the App's PEM (newlines can be stored as `\n`)
-- `GITHUB_APP_WEBHOOK_SECRET`
-- `GITHUB_OAUTH_CLIENT_ID`
-- `GITHUB_OAUTH_CLIENT_SECRET`
+- `GH_APP_ID` — the SaaS GitHub App's numeric id
+- `GH_APP_PRIVATE_KEY` — the App's PEM (newlines can be stored as `\n`)
+- `GH_APP_WEBHOOK_SECRET`
+- `GH_OAUTH_CLIENT_ID`
+- `GH_OAUTH_CLIENT_SECRET`
 - `ANTHROPIC_API_KEY` — optional, Ask the Factory
 
 **Variables**
