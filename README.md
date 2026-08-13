@@ -154,3 +154,4 @@ pnpm build
 | [04-delivery-plan](docs/plan/04-delivery-plan.md) | Phases → epics → tasks |
 | [05-decisions-and-risks](docs/plan/05-decisions-and-risks.md) | Decisions, risks, open questions |
 | [07-pipeline-view-state-display](docs/plan/07-pipeline-view-state-display.md) | Individual-first "My work" view, peek disclosure, dependency Q&A, manager tree view |
+| [08-pipeline-view-implementation](docs/plan/08-pipeline-view-implementation.md) | Implementation plan for 07: work packages, migrations (assignees, task dependencies, QA scope, milestones), per-file changes, tests |
