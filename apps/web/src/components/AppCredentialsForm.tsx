@@ -78,10 +78,9 @@ export function AppCredentialsForm({ status, onSaved }: { status: SetupStatus; o
       )}
       {!status.canEditApp && (
         <div className="banner error">
-          <strong>Sign in to save changes.</strong> If the stored OAuth pair is what is stopping you from signing in, set{" "}
+          <strong>Only a factory admin can save these.</strong> Pin{" "}
           <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_PRIVATE_KEY</code>, <code>GITHUB_OAUTH_CLIENT_ID</code> and{" "}
-          <code>GITHUB_OAUTH_CLIENT_SECRET</code> in <code>.env</code> and restart the API — or start it with{" "}
-          <code>DEV_FAKE_LOGIN=1</code> to get back in and fix the registration here.
+          <code>GITHUB_OAUTH_CLIENT_SECRET</code> as host secrets if sign-in itself is broken.
         </div>
       )}
       <p>

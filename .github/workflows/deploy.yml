@@ -1,0 +1,114 @@
+# Deploy the Factory Console to the Hostinger VPS Docker Manager.
+#
+# VPS: https://hpanel.hostinger.com/vps/1659755/docker-manager
+# Checklist: infra/cloud.env.example
+#
+# GitHub Environment "production"
+#   HOSTINGER_API_KEY      secret     hPanel → profile → API
+#   HOSTINGER_VM_ID        variable   default 1659755 (from the VPS URL)
+#   PUBLIC_ORIGIN          variable   https://your-domain  (or http://VPS_IP:80)
+#   CONSOLE_MASTER_KEY     secret     openssl rand -base64 32
+#   DB_PASSWORD            secret     postgres password for this VPS
+#   GITHUB_APP_ID          secret     required   platform GitHub App
+#   GITHUB_APP_PRIVATE_KEY secret     required   PEM; store with \n for newlines
+#   GITHUB_APP_WEBHOOK_SECRET secret  required
+#   GITHUB_OAUTH_CLIENT_ID secret     required
+#   GITHUB_OAUTH_CLIENT_SECRET secret required
+#
+# Private repo: add an SSH deploy key on the VPS to this GitHub repository
+# (hPanel Docker Manager → docs: deploy from a private GitHub repository).
+# Do not set DEV_FAKE_LOGIN=1.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: typecheck-test-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm -r build
+      - run: pnpm test
+
+  deploy:
+    name: hostinger
+    needs: check
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require Hostinger credentials
+        env:
+          HOSTINGER_API_KEY: ${{ secrets.HOSTINGER_API_KEY }}
+          CONSOLE_MASTER_KEY: ${{ secrets.CONSOLE_MASTER_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_APP_WEBHOOK_SECRET: ${{ secrets.GITHUB_APP_WEBHOOK_SECRET }}
+          GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GITHUB_OAUTH_CLIENT_ID }}
+          GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+        run: |
+          missing=
+          [ -n "$HOSTINGER_API_KEY" ] || missing="$missing HOSTINGER_API_KEY"
+          [ -n "$CONSOLE_MASTER_KEY" ] || missing="$missing CONSOLE_MASTER_KEY"
+          [ -n "$DB_PASSWORD" ] || missing="$missing DB_PASSWORD"
+          [ -n "$PUBLIC_ORIGIN" ] || missing="$missing PUBLIC_ORIGIN"
+          [ -n "$GITHUB_APP_ID" ] || missing="$missing GITHUB_APP_ID"
+          [ -n "$GITHUB_APP_PRIVATE_KEY" ] || missing="$missing GITHUB_APP_PRIVATE_KEY"
+          [ -n "$GITHUB_APP_WEBHOOK_SECRET" ] || missing="$missing GITHUB_APP_WEBHOOK_SECRET"
+          [ -n "$GITHUB_OAUTH_CLIENT_ID" ] || missing="$missing GITHUB_OAUTH_CLIENT_ID"
+          [ -n "$GITHUB_OAUTH_CLIENT_SECRET" ] || missing="$missing GITHUB_OAUTH_CLIENT_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Set these on the GitHub Environment 'production':$missing"
+            echo "HOSTINGER_API_KEY — hPanel → profile → API"
+            echo "CONSOLE_MASTER_KEY — openssl rand -base64 32"
+            echo "DB_PASSWORD — postgres password for this VPS"
+            echo "PUBLIC_ORIGIN — variable, e.g. https://console.example.com"
+            echo "GITHUB_APP_* — the SaaS GitHub App (id, PKCS#8 or PKCS#1 PEM, webhook secret, OAuth pair)"
+            echo "HOSTINGER_VM_ID — variable, this VPS is 1659755"
+            exit 1
+          fi
+      - name: Flatten GitHub App private key
+        id: appkey
+        env:
+          PEM: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+        run: python3 -c 'import os; pem=os.environ["PEM"].replace("\r\n","\n").strip(); flat=pem.replace("\n","\\n"); open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write("pem<<ENDPEM\n"+flat+"\nENDPEM\n")'
+      - name: Deploy to Hostinger VPS
+        uses: hostinger/deploy-on-vps@v2
+        with:
+          api-key: ${{ secrets.HOSTINGER_API_KEY }}
+          virtual-machine: ${{ vars.HOSTINGER_VM_ID || '1659755' }}
+          project-name: factory-console
+          environment-variables: |
+            NODE_ENV=production
+            DEV_FAKE_LOGIN=0
+            WEB_HOST_PORT=80
+            PUBLIC_ORIGIN=${{ vars.PUBLIC_ORIGIN }}
+            CONSOLE_MASTER_KEY=${{ secrets.CONSOLE_MASTER_KEY }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            GITHUB_APP_ID=${{ secrets.GITHUB_APP_ID }}
+            GITHUB_APP_PRIVATE_KEY=${{ steps.appkey.outputs.pem }}
+            GITHUB_APP_WEBHOOK_SECRET=${{ secrets.GITHUB_APP_WEBHOOK_SECRET }}
+            GITHUB_OAUTH_CLIENT_ID=${{ secrets.GITHUB_OAUTH_CLIENT_ID }}
+            GITHUB_OAUTH_CLIENT_SECRET=${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}

@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
-import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
 export function OnboardingPage() {
@@ -42,7 +41,13 @@ export function OnboardingPage() {
  * belongs to nothing yet — connecting is what makes them a member, so it has
  * to be reachable from outside the membership-gated layout.
  */
-export function ConnectEstate({ onConnected }: { onConnected: () => void }) {
+export function ConnectEstate({
+  onConnected,
+  title = "Step 0 · Connect an estate",
+}: {
+  onConnected: () => void;
+  title?: string;
+}) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
   const installations = useQuery({
     queryKey: ["installations"],
@@ -66,16 +71,17 @@ export function ConnectEstate({ onConnected }: { onConnected: () => void }) {
   if (setup.data && !setup.data.configured) {
     return (
       <div className="card">
-        <h3>Step 0 · Register the Console's GitHub App</h3>
-        <p className="muted">This Console has no GitHub App yet — that is what lets it read your repos and sign you in.</p>
+        <h3>Connect an organisation</h3>
+        <p className="muted">
+          The factory GitHub App is not available yet, so installations cannot be listed. A factory admin configures
+          it in Settings after signing in, or pins it with <code>GITHUB_APP_*</code> secrets on the host.
+        </p>
         {setup.data.credentialError && <div className="banner error">{setup.data.credentialError}</div>}
-        <a href="/setup">
-          <button className="primary">Create one on GitHub →</button>
-        </a>
-        <details style={{ marginTop: "0.75rem" }}>
-          <summary className="muted">Already have a GitHub App? Enter its App ID and keys here</summary>
-          <AppCredentialsForm status={setup.data} onSaved={() => setup.refetch()} />
-        </details>
+        {setup.data.canEditApp && (
+          <a href="/settings">
+            <button className="primary">Open Settings</button>
+          </a>
+        )}
       </div>
     );
   }
@@ -83,27 +89,39 @@ export function ConnectEstate({ onConnected }: { onConnected: () => void }) {
   return (
     <div className="card">
       <div className="spread">
-        <h3 style={{ margin: 0 }}>Step 0 · Connect an estate</h3>
+        <h3 style={{ margin: 0 }}>{title}</h3>
         <button onClick={() => installations.refetch()} disabled={installations.isFetching}>
           {installations.isFetching ? "Checking GitHub…" : "Refresh"}
         </button>
       </div>
       <p className="muted">
-        Installations you can see on GitHub. Install the App on another org and refresh to add it here.
+        Organisations and personal accounts where the App is installed, that your GitHub user can see. Tick the
+        repositories the Console should watch — connecting syncs them immediately.
         {setup.data?.appSlug && (
           <>
             {" "}
             <a href={`https://github.com/apps/${setup.data.appSlug}/installations/new`} target="_blank" rel="noreferrer">
-              Install on another org →
+              Install on an organisation →
             </a>
           </>
         )}
       </p>
       {installations.isError && <div className="banner error">{(installations.error as ApiError).message}</div>}
       {installations.data?.installations.length === 0 && (
-        <p className="muted">
-          No installations found. Install the App on your organisation, then hit Refresh.
-        </p>
+        <div className="banner info">
+          The App is not installed anywhere you can see yet.
+          {setup.data?.appSlug ? (
+            <>
+              {" "}
+              <a href={`https://github.com/apps/${setup.data.appSlug}/installations/new`} target="_blank" rel="noreferrer">
+                Install it on an organisation
+              </a>
+              , then come back and hit Refresh. No need to sign in again.
+            </>
+          ) : (
+            <> Install it on your organisation, then hit Refresh.</>
+          )}
+        </div>
       )}
       {installations.data?.installations.map((inst) => (
         <div key={inst.installationId} className="check-row" style={{ display: "block" }}>

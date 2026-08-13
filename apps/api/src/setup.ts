@@ -5,13 +5,11 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { resolveSession, type AppDeps, type RequestCtx } from "./context.js";
 
 /**
- * First-run setup: register the Console's own GitHub App via GitHub's manifest
- * flow. The operator clicks once here and once on GitHub; GitHub creates the
- * App and hands back the app id, private key, webhook secret and OAuth pair,
- * which are stored encrypted. No hand-copied credentials, no PKCS#1→PKCS#8
- * conversion step, no chance of a mistyped webhook secret.
+ * GitHub App credentials for this SaaS Console. The platform App is pinned
+ * with GITHUB_APP_* environment secrets; a factory admin may also set or
+ * rotate it from Settings after signing in.
  *
- * The same screen edits the registration afterwards (see setupAccess for who
+ * The same endpoint edits a stored registration (see setupAccess for who
  * may): rotating a secret or correcting the App ID is a patch over the stored
  * row, not a re-run of the whole handshake.
  */
@@ -49,7 +47,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
    * a proxy — landing on Fastify with nothing to serve. It answered a JSON 404
    * to an operator who was looking for the setup screen. Send it one segment up.
    */
-  app.get("/setup/", async (_req, reply) => reply.redirect("/setup"));
+  app.get("/setup/", async (_req, reply) => reply.redirect("/settings"));
 
   /**
    * Renders the auto-submitting form GitHub's manifest flow requires (the
@@ -61,7 +59,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       return reply
         .code(403)
         .type("text/html")
-        .send(page("Already configured", "<p>This Console already has a GitHub App. Sign in to re-register it.</p>"));
+        .send(page("Not allowed", "<p>Only a factory admin can create or change the GitHub App. Sign in first.</p>"));
     }
 
     const state = randomToken(16);
@@ -179,7 +177,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
 
     const { allowed, ctx } = await setupAccess(deps, req);
-    if (!allowed) return reply.code(403).send({ error: "sign in to change the registered GitHub App" });
+    if (!allowed) return reply.code(403).send({ error: "only a factory admin can change the GitHub App" });
 
     const key = deps.cfg.CONSOLE_MASTER_KEY;
     if (!key) return reply.code(400).send({ error: "CONSOLE_MASTER_KEY is not set on the API — credentials cannot be stored" });
@@ -283,25 +281,25 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 }
 
 /**
- * Who may register or edit the Console's GitHub App.
+ * Who may register or edit the factory's GitHub App.
  *
- * Open while this Console has nothing to protect — no App registered, or no one
- * who owns it — and authenticated once both exist. The membership half matters
- * as much as the credential half: the App's own OAuth pair is what signs people
- * in, so on a Console where the App is registered but nobody has claimed
- * ownership yet, requiring a session would lock the fix behind the sign-in that
- * a wrong client secret breaks. That window is already unguarded — claim-owner
- * hands the first caller an org — so this protects exactly as much as before.
- * Once an owner exists, the environment variables and DEV_FAKE_LOGIN remain the
- * documented ways back in.
+ * Never anonymous. The App is a SaaS platform credential: it is pinned with
+ * GITHUB_APP_* secrets, and only a factory admin may change it after signing
+ * in. Owners and admins of any org qualify; on a fresh Console the first
+ * signed-in user (no memberships yet) may set it so they are not locked out
+ * before connecting an estate.
  */
 async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
   const db = deps.dbh.db;
   const ctx = await resolveSession(db, deps.cfg, req);
-  if (ctx) return { allowed: true, ctx };
-  if (!(await deps.credentials.resolve())) return { allowed: true, ctx: null };
-  const claimed = await db.select({ orgId: memberships.orgId }).from(memberships).limit(1);
-  return { allowed: claimed.length === 0, ctx: null };
+  if (!ctx) return { allowed: false, ctx: null };
+  const mine = await db.select({ role: memberships.role }).from(memberships).where(eq(memberships.userId, ctx.userId));
+  if (mine.some((m) => m.role === "owner" || m.role === "admin")) return { allowed: true, ctx };
+  if (mine.length === 0) {
+    const anyone = await db.select({ orgId: memberships.orgId }).from(memberships).limit(1);
+    return { allowed: anyone.length === 0, ctx };
+  }
+  return { allowed: false, ctx };
 }
 
 const manifestStates = new Map<string, number>();

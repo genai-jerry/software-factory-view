@@ -74,35 +74,70 @@ CONSOLE_MASTER_KEY=...   # 32 random bytes; encrypts stored tokens, the App's
                          # private key, and cached repo content at rest
 ```
 
-There are **no repo or org IDs in any config file.** When you open the Console:
+There are **no repo or org IDs in any config file.** The factory is a SaaS: one
+GitHub App, pinned with `GITHUB_APP_*` secrets (or set later by a factory admin
+in Settings), is installed on every organisation that wants the factory.
 
-1. **Setup screen** creates the Console's own GitHub App for you. GitHub builds it
-   from a manifest and hands back the app id, private key, webhook secret and OAuth
-   pair in one exchange — nothing to copy, no PKCS#1→PKCS#8 conversion. The
-   credentials are stored encrypted in the database.
-   Already have an App, or is your Console not reachable from github.com (the
-   manifest handshake needs GitHub to redirect back to you)? Both the setup screen
-   and Onboarding → Step 0 have an **"Already have a GitHub App?"** form: paste the
-   App ID, private key, OAuth pair and webhook secret. Same encrypted storage, and
-   the PKCS#1 key GitHub gives you is converted for you. The same form edits the
-   registration later — `/setup` → **"Edit the GitHub App details"**, linked from
-   the sign-in screen too. It prefills the App ID, slug and client id; secrets stay
-   blank and keep their stored value, so rotating a client secret is one field.
-   Changing the App is authenticated once someone owns the Console; before that
-   (a fresh install where nobody has signed in yet) it is open, so a wrong OAuth
-   pair cannot lock the fix behind the sign-in it breaks. If you are locked out of
-   an established Console, pin the credentials in `.env` (the "Advanced" block) or
-   start it with `DEV_FAKE_LOGIN=1` and repair the registration from the UI.
-2. **Install the App** on the org you want (button on the confirmation screen).
-3. **Onboarding → Connect an estate** lists the installations *your GitHub identity
-   can see*, you tick the repositories to watch, and the Console syncs them
-   immediately — no waiting on a webhook.
+When you open the Console, the **home page** is a two-station ticket until you
+belong to an estate:
+
+1. **Sign in with GitHub** — that *is* registration; there is no separate account.
+2. **Organisation and repositories** — install the factory App on an org you
+   belong to, tick the repositories to watch, connect. The Console syncs them
+   immediately, no waiting on a webhook. The first person to connect an estate
+   owns it.
+
+After that, `/` is mission control. Repositories that are connected but not yet
+factory-enabled get a banner pointing at **Onboarding** (labels, secrets, stub
+PR, validation). A factory admin rotates the GitHub App from **Settings**.
 
 Set `PUBLIC_ORIGIN` if you reach the Console anywhere other than the default for
 your mode; OAuth callbacks and the App's webhook URL are derived from it.
-`ANTHROPIC_API_KEY` is optional and only enables the Q&A panel. The `.env.example`
-"Advanced" block lets you pin App credentials in the environment instead, for
-immutable deployments — the database registration simply takes precedence when present.
+`ANTHROPIC_API_KEY` is optional and only enables the Q&A panel.
+
+## Cloud deploy (Hostinger VPS)
+
+The Console runs as one Docker Compose project on the VPS behind
+[Docker Manager](https://hpanel.hostinger.com/vps/1659755/docker-manager)
+(VM `1659755`). Postgres and Redis are in the same compose file. The GitHub
+workflow `.github/workflows/deploy.yml` deploys on push to `main` and on
+`workflow_dispatch`.
+
+### GitHub Environment `production`
+
+Create the environment, then set:
+
+**Secrets**
+
+- `HOSTINGER_API_KEY` — hPanel → [API settings](https://hpanel.hostinger.com/profile/api)
+- `CONSOLE_MASTER_KEY` — `openssl rand -base64 32` (back this up)
+- `DB_PASSWORD` — password for the in-compose Postgres
+- `GITHUB_APP_ID` — the SaaS GitHub App's numeric id
+- `GITHUB_APP_PRIVATE_KEY` — the App's PEM (newlines can be stored as `\n`)
+- `GITHUB_APP_WEBHOOK_SECRET`
+- `GITHUB_OAUTH_CLIENT_ID`
+- `GITHUB_OAUTH_CLIENT_SECRET`
+- `ANTHROPIC_API_KEY` — optional, Ask the Factory
+
+**Variables**
+
+- `HOSTINGER_VM_ID` — `1659755` (optional; the workflow defaults to this VPS)
+- `PUBLIC_ORIGIN` — the URL browsers will use, e.g. `https://console.example.com` or `https://srv1659755.hstgr.cloud`
+
+Private repository: add an SSH deploy key from the VPS to this GitHub repo
+([Hostinger private-repo docs](https://www.hostinger.com/support/how-to-deploy-from-private-github-repository-on-hostinger-docker-manager/)).
+
+Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_FAKE_LOGIN=1`.
+
+### First deploy
+
+1. Set the secrets and variables above.
+2. Push to `main`, or run **Deploy** from the Actions tab.
+3. In Docker Manager, confirm project `factory-console` is running.
+4. Point a domain at the VPS (or use the `*.hstgr.cloud` hostname) and enable SSL in hPanel so `PUBLIC_ORIGIN` is `https://…`. GitHub App webhooks and OAuth need that public URL.
+5. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. Set the App's webhook URL to `{PUBLIC_ORIGIN}/webhooks/github` and its OAuth callback to `{PUBLIC_ORIGIN}/auth/github/callback`.
+
+To deploy from the panel instead of Actions: Docker Manager → **Compose** → **Compose from URL** → this repository. Set the same environment variables on the project, including `GITHUB_APP_*`, `CONSOLE_MASTER_KEY`, `PUBLIC_ORIGIN`, `DB_PASSWORD`, `WEB_HOST_PORT=80`.
 
 ### Adopt your existing factory estate
 

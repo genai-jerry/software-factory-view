@@ -4,11 +4,9 @@ import { decryptSecret } from "./crypto.js";
 /**
  * Where the Console's own GitHub App credentials come from.
  *
- * Precedence: the database row (written by the setup screen's App-manifest
- * flow) wins over environment variables. That ordering is deliberate — the
- * environment path stays available for immutable/self-hosted deployments that
- * prefer config-as-code, but nobody has to hand-copy a private key to get
- * started.
+ * Precedence: the database row (written by a factory admin in Settings) wins
+ * over environment variables. Pin GITHUB_APP_* secrets to bootstrap sign-in;
+ * an admin can rotate the App after logging in without a redeploy.
  *
  * CONSOLE_MASTER_KEY is the one credential that must live in the environment:
  * it is what decrypts everything else.
@@ -87,13 +85,13 @@ export class CredentialStore {
         };
         return this.cached;
       } catch (err) {
-        // A row we cannot open must not brick the Console: /setup is the only
-        // place to repair it, and /setup needs the API up. Report unconfigured
-        // — loudly — instead of crash-looping at boot.
+        // A row we cannot open must not brick the Console. Environment secrets
+        // can still sign people in; a factory admin repairs the stored row in
+        // Settings. Report unconfigured — loudly — instead of crash-looping.
         this.lastError =
           `the stored GitHub App registration cannot be decrypted (${(err as Error).message}). ` +
           "CONSOLE_MASTER_KEY has most likely changed since the App was registered. " +
-          "Restore the original key, or re-register the App at /setup — which overwrites the stored row.";
+          "Restore the original key, or set GITHUB_APP_* secrets and overwrite the stored row from Settings.";
       }
     }
 
@@ -135,7 +133,7 @@ export class CredentialStore {
   /** Throwing variant for paths that cannot proceed unconfigured. */
   async requireAuth(): Promise<AppAuth> {
     const auth = await this.auth();
-    if (!auth) throw new Error(this.lastError ?? "no GitHub App registered — complete setup at /setup");
+    if (!auth) throw new Error(this.lastError ?? "no GitHub App registered — set GITHUB_APP_* secrets");
     return auth;
   }
 

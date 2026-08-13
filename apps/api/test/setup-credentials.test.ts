@@ -39,7 +39,7 @@ const post = (payload: unknown, headers: Record<string, string> = {}) =>
   app.inject({
     method: "POST",
     url: "/api/setup/credentials",
-    headers: { "content-type": "application/json", "x-console-csrf": "1", ...headers },
+    headers: { "content-type": "application/json", "x-console-csrf": "1", cookie: sessionCookie, ...headers },
     payload: payload as never,
   });
 
@@ -138,14 +138,16 @@ describe("manual App registration", () => {
     expect(await deps.dbh.db.select().from(githubAppConfig)).toHaveLength(0);
   });
 
-  it("is open while unconfigured but authenticated once an App exists", async () => {
+  it("rejects anonymous writes; a factory admin can register and later edit", async () => {
+    expect((await post(VALID, { cookie: "" })).statusCode).toBe(403);
+
     expect((await post(VALID)).statusCode).toBe(200);
 
-    const anon = await post({ ...VALID, appId: "999" });
+    const anon = await post({ ...VALID, appId: "999" }, { cookie: "" });
     expect(anon.statusCode).toBe(403);
     expect((await deps.credentials.resolve())?.appId).toBe("123456");
 
-    const signedIn = await post({ ...VALID, appId: "999" }, { cookie: sessionCookie });
+    const signedIn = await post({ ...VALID, appId: "999" });
     expect(signedIn.statusCode).toBe(200);
     expect((await deps.credentials.resolve())?.appId).toBe("999");
   });
@@ -157,13 +159,10 @@ describe("manual App registration", () => {
 });
 
 describe("reaching the setup screen", () => {
-  it("redirects the directory form of /setup to the SPA screen", async () => {
-    // The edge gives the api everything under /setup/, so this URL reaches
-    // Fastify rather than index.html — and answered a JSON 404 to someone
-    // looking for the setup screen.
+  it("redirects the directory form of /setup to Settings", async () => {
     const res = await app.inject({ method: "GET", url: "/setup/" });
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe("/setup");
+    expect(res.headers.location).toBe("/settings");
   });
 });
 
@@ -222,15 +221,10 @@ describe("editing a stored registration", () => {
     expect(res.json().error).toMatch(/environment/);
   });
 
-  it("stays open while nobody owns the Console yet", async () => {
-    // The App's own OAuth pair is what signs people in, so gating setup on a
-    // session before anyone can have one would lock the fix behind the break.
+  it("rejects anonymous edits even when nobody owns the Console yet", async () => {
     await deps.dbh.db.delete(memberships);
+    expect((await post(VALID, { cookie: "" })).statusCode).toBe(403);
     expect((await post(VALID)).statusCode).toBe(200);
-
-    const anon = await post({ clientSecret: "rotated" });
-    expect(anon.statusCode).toBe(200);
-    expect((await deps.credentials.resolve())?.clientSecret).toBe("rotated");
   });
 
   it("tells the setup screen what is stored, without the secrets", async () => {

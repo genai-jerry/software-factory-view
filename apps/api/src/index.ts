@@ -8,8 +8,8 @@ import { buildApp } from "./app.js";
 const cfg = loadConfig();
 
 async function main(): Promise<void> {
-  // CONSOLE_MASTER_KEY is the one credential the environment must supply — it
-  // decrypts everything else. GitHub App credentials are registered in-app.
+  // CONSOLE_MASTER_KEY decrypts stored tokens. The GitHub App is pinned with
+  // GITHUB_APP_* secrets (SaaS) or set by a factory admin in Settings.
   if (!cfg.CONSOLE_MASTER_KEY) {
     const message = "CONSOLE_MASTER_KEY is not set. Run ./scripts/setup.sh (or: openssl rand -base64 32).";
     if (cfg.NODE_ENV === "production") throw new Error(message);
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   console.log(
     resolved
       ? `github app: ${resolved.slug ?? resolved.appId} (from ${resolved.source})`
-      : `github app: not registered yet — open ${cfg.PUBLIC_ORIGIN}/setup to create one`,
+      : `github app: not registered yet — set GITHUB_APP_* secrets or configure it in Settings`,
   );
 }
 

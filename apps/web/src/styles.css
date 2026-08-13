@@ -272,6 +272,106 @@ textarea { min-height: 5rem; resize: vertical; }
 .login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
 .login-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; padding: 2.5rem 3rem; text-align: center; max-width: 30rem; }
 
+/* Getting-started home: a job ticket, not a marketing hero. */
+.home {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.home-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.home-mark {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.home-who {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+.home-who img { border-radius: 50%; }
+.home-body {
+  width: min(44rem, 100%);
+  margin: 0 auto;
+  padding: 2.25rem 1.25rem 4rem;
+}
+.home-kicker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 0.5rem;
+}
+.home-lede h1 {
+  font-size: 1.65rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.6rem;
+  line-height: 1.25;
+}
+.ticket {
+  list-style: none;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.ticket-row { border-bottom: 1px solid var(--border); }
+.ticket-row:last-child { border-bottom: none; }
+.ticket-head {
+  display: grid;
+  grid-template-columns: 2.6rem 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.7rem 0.9rem;
+}
+.ticket-n {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.ticket-title { font-weight: 600; }
+.ticket-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+.ticket-row.done .ticket-n,
+.ticket-row.done .ticket-status { color: var(--green); }
+.ticket-row.current {
+  background: var(--accent-soft);
+}
+.ticket-row.current .ticket-n,
+.ticket-row.current .ticket-status { color: var(--accent); }
+.ticket-row.wait { opacity: 0.55; }
+.ticket-body {
+  padding: 0 0.9rem 1rem 3.35rem;
+  border-top: 1px dashed var(--border);
+}
+.ticket-body .card {
+  background: transparent;
+  border: none;
+  padding: 0.75rem 0 0;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .ticket-head { grid-template-columns: 2.2rem 1fr; }
+  .ticket-status { grid-column: 2; text-align: left; }
+  .ticket-body { padding-left: 0.9rem; }
+}
+
 .muted { color: var(--text-dim); font-size: 0.88rem; }
 .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }

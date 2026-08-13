@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
+import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import { RepoChip } from "../components/RepoChip.js";
-import type { Me, OrgSettings, ProjectsData, SecretWriteResult } from "../types.js";
+import type { Me, OrgSettings, ProjectsData, SecretWriteResult, SetupStatus } from "../types.js";
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -31,13 +32,57 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
  * secrets in one pass (the Console never stores that value).
  */
 export function SettingsPage({ me }: { me: Me }) {
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
+  const factoryAdmin = me.orgs.some((o) => o.role === "owner" || o.role === "admin") || Boolean(setup.data?.canEditApp);
+
   return (
     <div>
       <h1>Settings</h1>
+      {factoryAdmin && setup.data && <GitHubAppSection status={setup.data} />}
       {me.orgs.map((o) => (
         <OrgSettingsCard key={o.id} orgId={o.id} />
       ))}
       {me.orgs.length === 0 && <p className="muted">No orgs yet — connect an estate first.</p>}
+    </div>
+  );
+}
+
+function GitHubAppSection({ status }: { status: SetupStatus }) {
+  const qc = useQueryClient();
+  return (
+    <div className="card">
+      <h2>GitHub App</h2>
+      <p className="muted">
+        The factory is a SaaS: one GitHub App signs every customer in and is installed on every organisation that wants
+        the factory. Prefer pinning it with <code>GITHUB_APP_*</code> secrets on the host. This form is for a factory
+        admin to set or rotate it after signing in.
+      </p>
+      {status.configured ? (
+        <div className="banner info">
+          App <strong>{status.appSlug ?? "(configured)"}</strong>
+          {status.appId && (
+            <>
+              {" "}
+              — App ID <code>{status.appId}</code>
+            </>
+          )}{" "}
+          loaded from {status.source}. Webhook URL <code>{status.publicOrigin}/webhooks/github</code>.
+        </div>
+      ) : (
+        <div className="banner stale">No GitHub App is configured. Sign-in will not work until one is.</div>
+      )}
+      {status.credentialError && <div className="banner error">{status.credentialError}</div>}
+      {status.canEditApp ? (
+        <>
+          <p className="muted">
+            Or create one on GitHub from a manifest:{" "}
+            <a href="/setup/github-app">Create the GitHub App</a>.
+          </p>
+          <AppCredentialsForm status={status} onSaved={() => void qc.invalidateQueries({ queryKey: ["setup"] })} />
+        </>
+      ) : (
+        <p className="muted">Only a factory admin can change these credentials.</p>
+      )}
     </div>
   );
 }

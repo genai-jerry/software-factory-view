@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { FilterBar } from "../components/FilterBar.js";
 import { IssuePeek } from "../components/IssuePeek.js";
@@ -37,6 +38,13 @@ export function MissionControl() {
         <div className="banner stale">
           Some estates have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
           that webhooks are reaching the Console.
+        </div>
+      )}
+      {estates.data && estates.data.estates.some((e) => e.repos.some((r) => !r.factoryEnabled)) && (
+        <div className="banner info">
+          Some connected repositories are not factory-enabled yet.{" "}
+          <Link to="/onboarding">Finish setup on Onboarding</Link> — labels, secrets, and the enablement PR — or work from here
+          if the factory was already enabled by hand.
         </div>
       )}
 

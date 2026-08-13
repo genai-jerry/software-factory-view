@@ -1,0 +1,15 @@
+.git
+.github
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+coverage
+.turbo
+.run
+docs
+agent-transcripts

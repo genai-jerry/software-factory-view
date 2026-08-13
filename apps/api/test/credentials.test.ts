@@ -17,7 +17,7 @@ describe("credential resolution", () => {
     const store = new CredentialStore({ masterKey: KEY, apiUrl: "https://api.invalid", load: async () => null, env: EMPTY_ENV });
     expect(await store.isConfigured()).toBe(false);
     expect(await store.auth()).toBeNull();
-    await expect(store.requireAuth()).rejects.toThrow(/setup/);
+    await expect(store.requireAuth()).rejects.toThrow(/GITHUB_APP_/);
   });
 
   it("falls back to environment credentials when no row exists", async () => {
@@ -73,8 +73,8 @@ describe("credential resolution", () => {
   });
 
   it("reports a row it cannot decrypt as unconfigured instead of throwing", async () => {
-    // The Console must stay up: /setup is the only place to repair this, and
-    // crashing at boot would take that screen down with it.
+    // The Console must stay up: environment secrets can still sign people in,
+    // and crashing at boot would take Settings down with it.
     const store = new CredentialStore({
       masterKey: KEY,
       apiUrl: "https://api.invalid",

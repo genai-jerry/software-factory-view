@@ -18,7 +18,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     const creds = await deps.credentials.resolve();
     if (!creds) {
       if (cfg.DEV_FAKE_LOGIN === "1") return reply.redirect("/auth/dev-login");
-      return reply.redirect("/setup");
+      return reply.redirect("/");
     }
     const state = randomToken(16);
     oauthStates.set(state, Date.now() + 10 * 60_000);
@@ -96,7 +96,8 @@ async function createSession(deps: AppDeps, userId: string, reply: { setCookie: 
     path: "/",
     httpOnly: true,
     sameSite: "lax",
-    secure: deps.cfg.NODE_ENV === "production",
+    // Cookie Secure follows PUBLIC_ORIGIN. HTTP on a VPS IP would never send Secure cookies.
+    secure: deps.cfg.PUBLIC_ORIGIN.startsWith("https:"),
     maxAge: SESSION_TTL_DAYS * 86_400,
   });
 }

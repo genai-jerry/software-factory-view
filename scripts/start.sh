@@ -18,18 +18,17 @@ if [ -z "$(env_value CONSOLE_MASTER_KEY)" ]; then
   die "CONSOLE_MASTER_KEY is missing from .env — run ./scripts/setup.sh"
 fi
 
-# The browser reaches the stack on :8080, so OAuth and webhook URLs must agree.
+# The browser reaches the stack on WEB_HOST_PORT (default 8080), so OAuth and
+# webhook URLs must agree.
 origin="$(env_value PUBLIC_ORIGIN)"
 if [ -z "$origin" ]; then
   set_env_value PUBLIC_ORIGIN "http://localhost:8080"
   ok "PUBLIC_ORIGIN defaulted to http://localhost:8080"
 fi
 
-# Preflight: the api container publishes API_HOST_PORT (default 8787) for
-# host-side debugging. If another process owns it, compose fails cryptically.
-api_port="$(env_value API_HOST_PORT)"; api_port="${api_port:-8787}"
-if ! compose ps --quiet api 2>/dev/null | grep -q . && port_open "$api_port"; then
-  die "Port $api_port is already in use by another process — stop it, or set API_HOST_PORT in .env to a free port"
+web_port="$(env_value WEB_HOST_PORT)"; web_port="${web_port:-8080}"
+if ! compose ps --quiet web 2>/dev/null | grep -q . && port_open "$web_port"; then
+  die "Port $web_port is already in use — stop it, or set WEB_HOST_PORT in .env to a free port"
 fi
 
 # A stale image serves the SPA bundle from the last build, which looks like
@@ -46,19 +45,19 @@ say "Starting the stack"
 # ${arr[@]+...} guard: bash < 4.4 (macOS's 3.2) treats an empty array as unbound under set -u.
 compose up -d ${build_args[@]+"${build_args[@]}"} || die "docker compose failed"
 
-wait_for_port 8080 web 90 || warn "web has not opened :8080 yet — check ./scripts/logs.sh web"
+wait_for_port "$web_port" web 90 || warn "web has not opened :$web_port yet — check ./scripts/logs.sh web"
 
 echo
 ok "Factory Console is up."
 cat <<EOF
 
-   UI       http://localhost:8080
-   Setup    http://localhost:8080/setup
-   API      http://localhost:8080/api/health
+   UI       http://localhost:$web_port
+   Setup    http://localhost:$web_port/setup
+   API      http://localhost:$web_port/api/health
    Logs     ./scripts/logs.sh          Stop  ./scripts/stop.sh
 
-First run: open the UI and let the setup screen create the GitHub App, then
-install it on your org and connect repositories from the Onboarding page.
+First run: open the UI. Sign in with GitHub, then connect an organisation
+and tick repositories. The GitHub App is a platform secret, not a user step.
 
 EOF
 
