@@ -149,6 +149,8 @@ export const issues = pgTable(
     factoryState: text("factory_state"), // current factory:* label or null
     labels: jsonb("labels").$type<string[]>().notNull().default([]),
     assignees: jsonb("assignees").$type<string[]>().notNull().default([]),
+    milestoneTitle: text("milestone_title"),
+    milestoneNumber: integer("milestone_number"),
     htmlUrl: text("html_url").notNull().default(""),
     ghCreatedAt: timestamp("gh_created_at", { withTimezone: true }),
     ghUpdatedAt: timestamp("gh_updated_at", { withTimezone: true }).notNull(),
@@ -159,6 +161,7 @@ export const issues = pgTable(
     index("issues_repo_number").on(t.repoId, t.number),
     index("issues_org_state").on(t.orgId, t.factoryState),
     index("issues_parent").on(t.parentIssueId),
+    index("issues_org_milestone").on(t.orgId, t.milestoneTitle),
   ],
 );
 
@@ -380,11 +383,13 @@ export const qaConversations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     epicIssueId: uuid("epic_issue_id").notNull().references(() => issues.id, { onDelete: "cascade" }),
+    /** Set for issue-scoped conversations (peek Q&A); null = the whole epic. */
+    scopeIssueId: uuid("scope_issue_id").references(() => issues.id, { onDelete: "cascade" }),
     userId: uuid("user_id").notNull(),
     visibility: text("visibility").notNull().default("private"), // private | shared
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("qa_conversations_epic").on(t.epicIssueId)],
+  (t) => [index("qa_conversations_epic").on(t.epicIssueId), index("qa_conversations_scope").on(t.scopeIssueId)],
 );
 
 export const qaMessages = pgTable(

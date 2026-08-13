@@ -147,6 +147,7 @@ export interface GhIssue {
   body: string | null;
   user: { login: string } | null;
   assignees?: Array<{ login: string }> | null;
+  milestone?: { number: number; title: string } | null;
   labels: Array<{ name: string } | string>;
   updated_at: string;
   created_at: string;

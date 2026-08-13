@@ -14,6 +14,7 @@ import {
   users,
 } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -122,6 +123,36 @@ beforeAll(async () => {
   const blocker = await mkIssue({ number: 14, title: "their blocker", factoryState: "factory:in-review", assignees: ["sam"] });
   await d.insert(taskDependencies).values({ orgId: org.id, blockedIssueId: waiting.id, blockerIssueId: blocker.id, source: "github" });
 
+  // A milestone-tracked epic (someone else's) plus its release tracker, for /api/flow.
+  const msEpic = await mkIssue({
+    number: 15,
+    title: "billing export",
+    kind: "epic",
+    factoryState: "factory:planned",
+    author: "sam",
+    milestoneTitle: "2026.09",
+    milestoneNumber: 1,
+  });
+  await mkIssue({
+    number: 17,
+    title: "task(api): export endpoint",
+    factoryState: "factory:ready",
+    parentIssueId: msEpic.id,
+    milestoneTitle: "2026.09",
+    milestoneNumber: 1,
+  });
+  await mkIssue({
+    number: 16,
+    title: "release(2026.09)",
+    kind: "plain",
+    factoryState: "factory:release-ready",
+    labels: ["factory:release", "factory:release-ready"],
+    milestoneTitle: "2026.09",
+    milestoneNumber: 1,
+  });
+  // A closed epic that must not appear in the tree.
+  await mkIssue({ number: 18, title: "done epic", kind: "epic", factoryState: "factory:deployed", state: "closed" });
+
   // Foreign org data that must never appear for alice.
   const otherOrg = (await d.insert(orgs).values({ name: "other" }).returning())[0]!;
   const otherEstate = (await d.insert(estates).values({ orgId: otherOrg.id, name: "other", installationId: 2 }).returning())[0]!;
@@ -209,5 +240,83 @@ describe("/api/issues/:id/peek", () => {
   it("404s a foreign-org issue", async () => {
     const res = await app.inject({ method: "GET", url: `/api/issues/${id.foreign}/peek`, headers: { cookie } });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("/api/flow", () => {
+  it("builds the milestone tree with rollups, tracker state and a No release node", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/flow", headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    const { estates: flowEstates } = res.json() as {
+      estates: Array<{ name: string; milestones: Array<Record<string, never>> }>;
+    };
+    expect(flowEstates).toHaveLength(1); // the foreign estate never appears
+    const [estate] = flowEstates;
+    const titles = estate!.milestones.map((m) => m["title"]);
+    expect(titles).toEqual(["2026.09", "No release"]); // named milestones first, No release last
+
+    const ms = estate!.milestones[0]! as unknown as {
+      trackerState: string;
+      epics: Array<{ number: number; tasks: Array<{ number: number }>; rollup: { total: number; ready: number } }>;
+    };
+    expect(ms.trackerState).toBe("factory:release-ready");
+    expect(ms.epics.map((e) => e.number)).toEqual([15]);
+    expect(ms.epics[0]!.rollup).toMatchObject({ total: 1, ready: 1 });
+
+    const noRelease = estate!.milestones[1]! as unknown as {
+      epics: Array<{ number: number; tasks: Array<{ number: number; blockedBy: number[] }> }>;
+    };
+    const epicNumbers = noRelease.epics.map((e) => e.number);
+    expect(epicNumbers).toContain(12);
+    expect(epicNumbers).not.toContain(18); // closed epics stay out of the tree
+    const epic12 = noRelease.epics.find((e) => e.number === 12)!;
+    expect(epic12.tasks.map((t) => t.number)).toEqual([13]);
+    expect(epic12.tasks[0]!.blockedBy).toEqual([14]);
+  });
+});
+
+describe("issue-scoped Q&A", () => {
+  it("lists empty conversations with enabled=false when no key is configured", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/issues/${id.waiting}/qa`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { conversations: unknown[]; enabled: boolean };
+    expect(body.conversations).toEqual([]);
+    expect(body.enabled).toBe(false);
+  });
+
+  it("503s an ask without the insight key, 404s a foreign issue", async () => {
+    const ask = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.waiting}/qa`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { question: "Why is this blocked?" },
+    });
+    expect(ask.statusCode).toBe(503);
+    const foreign = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.foreign}/qa`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { question: "hi" },
+    });
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it("assembles the issue context around the dependency neighbourhood", async () => {
+    const { assembleIssueContext } = await import("../src/routes/qa.js");
+    const d = deps.dbh.db;
+    const issueRow = (await d.select().from(issues).where(eq(issues.id, id.waiting)))[0]!;
+    const ctx = {
+      userId: "u",
+      login: "alice",
+      orgIds: [issueRow.orgId],
+    } as never;
+    const sources = await assembleIssueContext(deps, ctx, issueRow);
+    const refs = sources.map((s) => s.ref);
+    expect(refs).toContain("issue/13"); // the focus issue
+    expect(refs).toContain("issue/14"); // its blocker, one hop out
+    const blockerSource = sources.find((s) => s.ref === "issue/14")!;
+    expect(blockerSource.content).toContain("blocks this issue");
+    expect(blockerSource.content).toContain("@sam");
+    expect(refs).not.toContain("deps/omitted"); // under the neighbour cap
   });
 });

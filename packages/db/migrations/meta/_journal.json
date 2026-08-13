@@ -29,6 +29,20 @@
       "when": 1786300000001,
       "tag": "0003_task_dependencies",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786300000002,
+      "tag": "0004_qa_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786300000003,
+      "tag": "0005_milestones",
+      "breakpoints": true
     }
   ]
 }
