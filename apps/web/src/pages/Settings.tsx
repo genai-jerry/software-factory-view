@@ -362,7 +362,8 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
   const [name, setName] = useState(s.allowedSecrets[1] ?? "CLAUDE_CODE_OAUTH_TOKEN");
   const [value, setValue] = useState("");
   const write = useMutation({
-    mutationFn: () => api.post<SecretWriteResult>(`/api/orgs/${orgId}/settings/secrets`, { name, value }),
+    mutationFn: (vars: { name: string; value: string }) =>
+      api.post<SecretWriteResult>(`/api/orgs/${orgId}/settings/secrets`, vars),
     onSuccess: () => setValue(""),
   });
 
@@ -376,7 +377,9 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
       <div className="row">
         <select value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
           {s.allowedSecrets.map((n) => (
-            <option key={n}>{n}</option>
+            <option key={n} value={n}>
+              {n}
+            </option>
           ))}
         </select>
         <input
@@ -387,7 +390,7 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
           disabled={!canEdit}
           style={{ width: "18rem" }}
         />
-        <button className="primary" disabled={!canEdit || !value || write.isPending} onClick={() => write.mutate()}>
+        <button className="primary" disabled={!canEdit || !value || write.isPending} onClick={() => write.mutate({ name, value })}>
           {write.isPending ? "Writing…" : "Write to all repos"}
         </button>
       </div>

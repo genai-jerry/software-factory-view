@@ -550,7 +550,7 @@ function RepoOnboarding({
   const progress = stepProgress(repo);
   const [open, setOpen] = useState(!setup);
   const [error, setError] = useState<string | null>(null);
-  const [secretName, setSecretName] = useState("ANTHROPIC_API_KEY");
+  const [secretName, setSecretName] = useState("CLAUDE_CODE_OAUTH_TOKEN");
   const [secretValue, setSecretValue] = useState("");
   const [validation, setValidation] = useState<ValidationResult | null>(
     (repo.steps["validate"]?.detail as { checks?: ValidationResult["checks"] } | undefined)?.checks
@@ -572,7 +572,7 @@ function RepoOnboarding({
   });
 
   const putSecret = useMutation({
-    mutationFn: () => api.post(`/api/repos/${repo.repoId}/onboarding/secret`, { name: secretName, value: secretValue }),
+    mutationFn: (vars: { name: string; value: string }) => api.post(`/api/repos/${repo.repoId}/onboarding/secret`, vars),
     onSuccess: () => {
       setSecretValue("");
       setError(null);
@@ -630,12 +630,17 @@ function RepoOnboarding({
 
       <div className="check-row" style={{ alignItems: "center" }}>
         <span style={{ flex: 1 }}>
-          <strong>2 · Secret</strong> — written straight to GitHub Actions; the Console never stores it {stepBadge("secrets")}
+          <strong>2 · Secret</strong> — written straight to GitHub Actions under the name you pick (Claude Code OAuth and
+          the Anthropic API key are different credentials; the factory accepts either). The Console never stores it{" "}
+          {stepBadge("secrets")}
+          {typeof repo.steps["secrets"]?.detail["name"] === "string" && (
+            <span className="muted"> · wrote {String(repo.steps["secrets"]!.detail["name"])}</span>
+          )}
         </span>
         <select value={secretName} onChange={(e) => setSecretName(e.target.value)} style={{ width: "auto" }}>
-          <option>ANTHROPIC_API_KEY</option>
-          <option>CLAUDE_CODE_OAUTH_TOKEN</option>
-          <option>FACTORY_CROSS_REPO_TOKEN</option>
+          <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
+          <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
+          <option value="FACTORY_CROSS_REPO_TOKEN">FACTORY_CROSS_REPO_TOKEN</option>
         </select>
         <input
           type="password"
@@ -644,7 +649,7 @@ function RepoOnboarding({
           onChange={(e) => setSecretValue(e.target.value)}
           style={{ width: "14rem" }}
         />
-        <button onClick={() => putSecret.mutate()} disabled={!secretValue || putSecret.isPending}>
+        <button onClick={() => putSecret.mutate({ name: secretName, value: secretValue })} disabled={!secretValue || putSecret.isPending}>
           Write
         </button>
       </div>
