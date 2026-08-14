@@ -130,6 +130,13 @@ function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
         This creates your Console user from your GitHub identity. After you return, you will connect an organisation
         and tick repositories.
       </p>
+      {setup?.configured && (
+        <p className="muted">
+          If GitHub shows a 404, the factory App is still private or its Callback URL is not exactly{" "}
+          <code>{setup.publicOrigin}/auth/github/callback</code>. Callback URL is under Identifying and authorizing
+          users. To let other GitHub users sign in: left sidebar → Advanced → Danger zone → Make public.
+        </p>
+      )}
       {setup && !setup.configured && !setup.devLogin ? (
         <p className="muted">Sign-in is not available yet. The factory is still being configured.</p>
       ) : (

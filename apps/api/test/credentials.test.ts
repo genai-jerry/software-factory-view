@@ -32,6 +32,32 @@ describe("credential resolution", () => {
     expect(await store.webhookSecret()).toBe("whsec");
   });
 
+  it("returns a stored slug without calling GitHub, and null when env credentials omit one", async () => {
+    const stored = new CredentialStore({
+      masterKey: KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => ({
+        appId: "1",
+        slug: "factory-console",
+        encryptedPrivateKey: encryptSecret("pem", KEY),
+        encryptedWebhookSecret: encryptSecret("s", KEY),
+        clientId: "c",
+        encryptedClientSecret: encryptSecret("cs", KEY),
+      }),
+      env: EMPTY_ENV,
+    });
+    expect(await stored.resolveSlug()).toBe("factory-console");
+
+    const fromEnv = new CredentialStore({
+      masterKey: KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => null,
+      env: { appId: "1", privateKeyPem: "pem", webhookSecret: "whsec", clientId: "cid", clientSecret: "csec" },
+    });
+    // GET /app against api.invalid fails; we must not throw — the install link is just absent.
+    expect(await fromEnv.resolveSlug()).toBeNull();
+  });
+
   it("prefers the stored row over the environment, and decrypts it", async () => {
     const store = new CredentialStore({
       masterKey: KEY,
@@ -178,6 +204,10 @@ describe("App manifest", () => {
     expect((m["hook_attributes"] as unknown as { url: string }).url).toBe("https://console.example.com/webhooks/github");
     expect(m["redirect_url"]).toBe("https://console.example.com/setup/github-app/callback");
     expect(m["callback_urls"]).toEqual(["https://console.example.com/auth/github/callback"]);
+  });
+
+  it("is public so any GitHub user can sign in (private Apps 404 on authorize)", () => {
+    expect(buildAppManifest("https://x.test", "n")["public"]).toBe(true);
   });
 
   it("requests exactly the permissions the Console uses", () => {

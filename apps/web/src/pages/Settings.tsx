@@ -66,7 +66,9 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
               — App ID <code>{status.appId}</code>
             </>
           )}{" "}
-          loaded from {status.source}. Webhook URL <code>{status.publicOrigin}/webhooks/github</code>.
+          loaded from {status.source}. Webhook URL <code>{status.publicOrigin}/webhooks/github</code>. The App must be
+          public (Advanced → Make public) and its Callback URL must be{" "}
+          <code>{status.publicOrigin}/auth/github/callback</code> or Sign in with GitHub 404s.
         </div>
       ) : (
         <div className="banner stale">No GitHub App is configured. Sign-in will not work until one is.</div>

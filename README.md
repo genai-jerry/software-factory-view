@@ -134,7 +134,10 @@ Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_
 1. Set the secrets and variables above. `PUBLIC_ORIGIN` must be an `https://` hostname whose DNS A record points at `187.127.165.119` (this VPS).
 2. Push to `main` (or run the workflow). CI typechecks, tests, builds the images, then deploys.
 3. Confirm five containers are up (`factory-console-api-1` healthy, plus worker, web, postgres, redis). nginx is not published on :80; Traefik fronts it.
-4. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. Set the App's webhook URL to `{PUBLIC_ORIGIN}/webhooks/github` and its OAuth callback to `{PUBLIC_ORIGIN}/auth/github/callback`.
+4. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. On that App's GitHub page:
+   - Webhook URL: `{PUBLIC_ORIGIN}/webhooks/github`
+   - Callback URL (Identifying and authorizing users): `{PUBLIC_ORIGIN}/auth/github/callback`
+   - **Advanced → Danger zone → Make public.** A private App 404s on Sign in with GitHub for anyone who is not the owner. ("Where can this GitHub App be installed?" only appears when creating a new App.)
 
 The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger Docker Manager at it.
 

@@ -22,7 +22,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     return {
       configured: creds !== null,
       source: creds?.source ?? null,
-      appSlug: creds?.slug ?? null,
+      appSlug: await deps.credentials.resolveSlug(),
       appId: creds?.appId ?? null,
       // The OAuth client id is public by construction — it travels in the
       // authorize URL on every sign-in — so it can prefill the edit form. The

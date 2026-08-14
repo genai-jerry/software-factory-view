@@ -88,6 +88,13 @@ export class AppAuth {
     return data.token;
   }
 
+  /** The authenticated App (app JWT). Used to recover the slug when credentials come from the environment. */
+  async appInfo(): Promise<{ id: number; slug: string; name: string; html_url: string; client_id: string }> {
+    const jwt = await this.appJwt();
+    const { json } = await ghFetch(this.cfg.apiUrl, jwt, "GET", "/app");
+    return json as never;
+  }
+
   /** Every installation of this App (app JWT). */
   async listInstallations(): Promise<Array<{ id: number; account: { login: string; type?: string } }>> {
     const jwt = await this.appJwt();

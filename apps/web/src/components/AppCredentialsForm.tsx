@@ -122,8 +122,10 @@ export function AppCredentialsForm({ status, onSaved }: { status: SetupStatus; o
         )}
       </p>
       <p className="muted">
-        Set the App's Webhook URL to <code>{status.publicOrigin}/webhooks/github</code> and its Callback URL to{" "}
-        <code>{status.publicOrigin}/auth/github/callback</code>.
+        On the App&apos;s GitHub page, also set: Webhook URL{" "}
+        <code>{status.publicOrigin}/webhooks/github</code>; Callback URL (Identifying and authorizing users){" "}
+        <code>{status.publicOrigin}/auth/github/callback</code>; and Advanced → Danger zone → Make public so any GitHub
+        user can sign in. A private App 404s on Sign in with GitHub for everyone except its owner.
       </p>
       {save.isError && <div className="banner error">{(save.error as ApiError).message}</div>}
       {save.isSuccess && (

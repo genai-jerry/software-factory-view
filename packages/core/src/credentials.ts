@@ -49,6 +49,8 @@ export interface CredentialStoreOptions {
 export class CredentialStore {
   private cached: ResolvedAppCredentials | null = null;
   private lastError: string | null = null;
+  /** Slug fetched from GitHub when the stored/env credentials omit it. */
+  private fetchedSlug: string | null | undefined = undefined;
 
   constructor(private readonly opts: CredentialStoreOptions) {}
 
@@ -56,6 +58,7 @@ export class CredentialStore {
   invalidate(): void {
     this.cached = null;
     this.lastError = null;
+    this.fetchedSlug = undefined;
   }
 
   /**
@@ -116,6 +119,25 @@ export class CredentialStore {
     return (await this.resolve()) !== null;
   }
 
+  /**
+   * The App's github.com/apps/{slug} name. Environment credentials do not
+   * carry one; we ask GitHub (GET /app) once and cache it so the Console can
+   * still link "Install on an organisation".
+   */
+  async resolveSlug(): Promise<string | null> {
+    const creds = await this.resolve();
+    if (!creds) return null;
+    if (creds.slug) return creds.slug;
+    if (this.fetchedSlug !== undefined) return this.fetchedSlug;
+    try {
+      const auth = await this.auth();
+      this.fetchedSlug = auth ? (await auth.appInfo()).slug : null;
+    } catch {
+      this.fetchedSlug = null;
+    }
+    return this.fetchedSlug;
+  }
+
   /** The App auth handle, or null when the Console has no App registered yet. */
   async auth(): Promise<AppAuth | null> {
     const creds = await this.resolve();
@@ -156,7 +178,10 @@ export function buildAppManifest(publicOrigin: string, name: string): Record<str
     redirect_url: `${publicOrigin}/setup/github-app/callback`,
     callback_urls: [`${publicOrigin}/auth/github/callback`],
     setup_url: `${publicOrigin}/onboarding`,
-    public: false,
+    // SaaS: any GitHub user must be able to sign in and install. Private Apps
+    // 404 on /login/oauth/authorize for anyone who is not the owner (GitHub,
+    // June 2025) — GitHub hides them rather than showing an error.
+    public: true,
     request_oauth_on_install: false,
     default_permissions: {
       issues: "write",
