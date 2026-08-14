@@ -81,6 +81,14 @@ function githubInstallHref(base: string | null, repositoryIds: number[], state?:
 type OnboardingRepo = OnboardingState["repos"][number];
 
 const SETUP_STEPS = ["labels", "secrets", "openspec", "stubs", "profile", "validate"] as const;
+const STEP_TITLES: Record<(typeof SETUP_STEPS)[number], string> = {
+  labels: "Labels",
+  secrets: "Secret",
+  openspec: "OpenSpec",
+  stubs: "Stub files PR",
+  profile: "Repo profile",
+  validate: "Validation suite",
+};
 
 function isRepoSetup(repo: OnboardingRepo): boolean {
   return repo.factoryEnabled;
@@ -89,6 +97,18 @@ function isRepoSetup(repo: OnboardingRepo): boolean {
 function stepProgress(repo: OnboardingRepo): { done: number; total: number } {
   const done = SETUP_STEPS.filter((s) => repo.steps[s]?.status === "ok").length;
   return { done, total: SETUP_STEPS.length };
+}
+
+function collapsedSummary(repo: OnboardingRepo): string {
+  const failed = SETUP_STEPS.find((s) => repo.steps[s]?.status === "failed");
+  if (failed) {
+    const err = repo.steps[failed]?.detail["error"];
+    if (typeof err === "string" && err.trim()) return `${STEP_TITLES[failed]} failed — ${err}`;
+    return `${STEP_TITLES[failed]} failed`;
+  }
+  const next = SETUP_STEPS.find((s) => repo.steps[s]?.status !== "ok");
+  if (!next) return "All steps recorded — merge outstanding PRs or validate.";
+  return repo.steps[next] ? `${STEP_TITLES[next]} in progress` : `Next: ${STEP_TITLES[next]}`;
 }
 
 export function OnboardingPage() {
@@ -534,8 +554,8 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
           </div>
         </>
       )}
-      {incomplete.map((r) => (
-        <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} />
+      {incomplete.map((r, i) => (
+        <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} defaultOpen={i === 0} />
       ))}
       {setup.length > 0 && (
         <>
@@ -567,13 +587,15 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
 function RepoOnboarding({
   repo,
   onChanged,
+  defaultOpen,
 }: {
   repo: OnboardingRepo;
   onChanged: () => void;
+  defaultOpen?: boolean;
 }) {
   const setup = isRepoSetup(repo);
   const progress = stepProgress(repo);
-  const [open, setOpen] = useState(!setup);
+  const [open, setOpen] = useState(defaultOpen ?? !setup);
   const [error, setError] = useState<string | null>(null);
   const [secretName, setSecretName] = useState("CLAUDE_CODE_OAUTH_TOKEN");
   const [secretValue, setSecretValue] = useState("");
@@ -660,19 +682,19 @@ function RepoOnboarding({
           )}
         </h3>
         <span style={{ display: "flex", gap: "0.5rem" }}>
-          {setup && (
-            <button type="button" onClick={() => setOpen((v) => !v)}>
-              {open ? "Hide" : "Correct setup"}
-            </button>
-          )}
+          <button type="button" onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide" : setup ? "Correct setup" : "Show steps"}
+          </button>
           <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
             {reset.isPending ? "Resetting…" : "Reset factory…"}
           </button>
         </span>
       </div>
-      {setup && !open && (
+      {!open && (
         <p className="muted" style={{ margin: "0.4rem 0 0" }}>
-          Factory-enabled. Open Correct setup to fix secrets, stubs, or re-draft <code>.factory/profile.json</code>.
+          {setup
+            ? <>Factory-enabled. Open Correct setup to fix secrets, stubs, or re-draft <code>.factory/profile.json</code>.</>
+            : collapsedSummary(repo)}
         </p>
       )}
       {typeof repo.steps["reset"]?.detail["prUrl"] === "string" && (
