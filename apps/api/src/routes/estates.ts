@@ -1,4 +1,4 @@
-import { githubAppInstallUrl } from "@console/core";
+import { githubAppConfigureUrl, githubAppInstallUrl } from "@console/core";
 import { estates, memberships, orgs, repos, users } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -104,6 +104,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
       estateId: string | null;
       estateName: string | null;
       installUrl: string | null;
+      configureUrl: string | null;
       repos: RepoRow[];
     };
 
@@ -115,7 +116,10 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
         byAccount.set(key, row);
         return existing;
       }
-      if (!existing.installationId && row.installationId) existing.installationId = row.installationId;
+      if (!existing.installationId && row.installationId) {
+        existing.installationId = row.installationId;
+        if (row.configureUrl) existing.configureUrl = row.configureUrl;
+      }
       if (!existing.accountId && row.accountId) existing.accountId = row.accountId;
       if (!existing.avatarUrl && row.avatarUrl) existing.avatarUrl = row.avatarUrl;
       if (!existing.estateId && row.estateId) {
@@ -144,6 +148,10 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
     const installUrlFor = (accountId: number | null) => {
       if (!slug) return null;
       return githubAppInstallUrl({ webUrl: web, slug, accountId });
+    };
+    const configureUrlFor = (installationId: number | null) => {
+      if (!slug || installationId == null) return null;
+      return githubAppConfigureUrl({ webUrl: web, slug, installationId });
     };
 
     const installations = await gh.listMyInstallations();
@@ -177,6 +185,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
         estateId: connected?.id ?? null,
         estateName: connected?.name ?? null,
         installUrl: installUrlFor(accountId),
+        configureUrl: configureUrlFor(inst.id),
         repos: repoList,
       });
     }
@@ -196,6 +205,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
           estateId: null,
           estateName: null,
           installUrl: installUrlFor(account.id || null),
+          configureUrl: null,
           repos: [],
         });
         mergeRepos(
@@ -227,6 +237,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
           estateId: null,
           estateName: null,
           installUrl: installUrlFor(user.ghUserId),
+          configureUrl: null,
           repos: [],
         });
       }
@@ -235,6 +246,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
     for (const row of byAccount.values()) {
       row.repos.sort((a, b) => a.fullName.localeCompare(b.fullName));
       if (!row.installUrl) row.installUrl = installUrlFor(row.accountId);
+      if (!row.configureUrl) row.configureUrl = configureUrlFor(row.installationId);
     }
 
     return { installations: [...byAccount.values()] };

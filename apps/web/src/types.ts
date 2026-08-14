@@ -30,6 +30,8 @@ export interface InstallationSummary {
   estateName: string | null;
   /** GitHub App install/configure URL for this account, when the slug is known. */
   installUrl: string | null;
+  /** Existing installation settings — add/remove repos or fix permissions. */
+  configureUrl: string | null;
   repos: Array<{
     id: number | null;
     nodeId: string;

@@ -257,6 +257,12 @@ export function githubAppInstallUrl(opts: {
   return parts.length ? `${path}?${parts.join("&")}` : path;
 }
 
+/** Deep-link to an existing installation so the user can add/remove repos or fix permissions. */
+export function githubAppConfigureUrl(opts: { webUrl: string; slug: string; installationId: number }): string {
+  const web = opts.webUrl.replace(/\/$/, "");
+  return `${web}/apps/${opts.slug}/installations/${opts.installationId}`;
+}
+
 /** Read + non-authoritative operations, shared by both identities. */
 export class RepoReader {
   constructor(

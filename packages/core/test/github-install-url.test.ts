@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { githubAppInstallUrl } from "../src/github.js";
+import { githubAppConfigureUrl, githubAppInstallUrl } from "../src/github.js";
 
 describe("githubAppInstallUrl", () => {
   it("pre-selects an account with suggested_target_id, not target_id", () => {
@@ -24,6 +24,12 @@ describe("githubAppInstallUrl", () => {
   it("falls back to the account picker when no account is known", () => {
     expect(githubAppInstallUrl({ webUrl: "https://github.com", slug: "factory-console" })).toBe(
       "https://github.com/apps/factory-console/installations/new",
+    );
+  });
+
+  it("deep-links an existing installation to GitHub's configure page", () => {
+    expect(githubAppConfigureUrl({ webUrl: "https://github.com", slug: "factory-console", installationId: 99 })).toBe(
+      "https://github.com/apps/factory-console/installations/99",
     );
   });
 });

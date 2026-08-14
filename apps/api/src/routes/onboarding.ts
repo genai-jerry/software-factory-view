@@ -41,6 +41,17 @@ const PROFILE_ISSUE_BODY = [
   "Filed by the Factory Console.",
 ].join("\n");
 
+async function findProfileIssue(
+  client: InstallationClient,
+  owner: string,
+  name: string,
+): Promise<{ number: number; html_url: string; state: string } | undefined> {
+  const labelled = (await client.listIssuesByLabel(owner, name, PROFILE_LABEL.name))[0];
+  if (labelled) return labelled;
+  const recent = await client.listIssues(owner, name, 1);
+  return recent.find((i) => i.title === PROFILE_ISSUE_TITLE && !i.pull_request);
+}
+
 export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
@@ -259,13 +270,10 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     const { repo, client, owner, name } = target;
 
     try {
-      // Idempotence, like every other step: a profile on the default branch is
-      // the finished state, so re-running verifies instead of filing again.
-      const existing = await client.getFileAtRef(owner, name, ".factory/profile.json");
-      if (existing) {
-        await recordStep(deps, repo, "profile", "ok", { found: true });
-        return { ok: true, found: true, message: "profile already on the default branch — nothing to do" };
-      }
+      // A profile already on the default branch is the *current* draft, not a
+      // finished conversation. Re-running asks the Profiler to re-read the
+      // code and open a correction PR if it disagrees — the way to fix a
+      // stale or wrong profile without the Console ever reading the source.
 
       // Preconditions, checked rather than assumed. Both failures would
       // otherwise land as a red Actions run the Console can see the conclusion
@@ -293,9 +301,11 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       await client.createLabel(owner, name, PROFILE_LABEL);
 
       // The profile issue is a singleton — one per repo, reused — so the
-      // drafts, the drift checks and their evidence read as one thread.
+      // drafts, the drift checks and their evidence read as one thread. The
+      // Profiler drops `factory:profile` when it finishes, so look up by title
+      // when the label is gone.
       const user = userClient(deps, ctx);
-      const found = (await client.listIssuesByLabel(owner, name, PROFILE_LABEL.name))[0];
+      const found = await findProfileIssue(client, owner, name);
       if (found) {
         if (found.state === "closed") await user.reopenIssue(owner, name, found.number);
         // The Profiler drops the label when it finishes, so re-applying is what

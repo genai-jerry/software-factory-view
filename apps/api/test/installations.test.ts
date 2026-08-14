@@ -175,6 +175,7 @@ describe("GET /api/installations", () => {
     const acme = res.json().installations.find((a: { account: string }) => a.account === "acme");
     expect(acme.installationId).toBe(99);
     expect(acme.estateId).toBe(estate.id);
+    expect(acme.configureUrl).toBe("https://github.com/apps/factory-console/installations/99");
     expect(acme.repos).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ fullName: "acme/api", connected: true, nodeId: "R_2" }),

@@ -445,6 +445,11 @@ function AccountRepos({
             >
               {connect.isPending ? "Connecting…" : "Connect selected & sync"}
             </button>
+            {inst.configureUrl && (
+              <a href={inst.configureUrl} target="_blank" rel="noreferrer">
+                Reinstall / change repositories on GitHub →
+              </a>
+            )}
             {href && (
               <a
                 href={href}
@@ -455,7 +460,7 @@ function AccountRepos({
                   onAwaitInstall();
                 }}
               >
-                Choose more on GitHub →
+                Add repositories via install screen →
               </a>
             )}
             <span className="muted">Connecting queues an immediate reconcile — no webhook needed.</span>
@@ -612,10 +617,15 @@ function RepoOnboarding({
         </h3>
         {setup && (
           <button type="button" onClick={() => setOpen((v) => !v)}>
-            {open ? "Hide" : "Edit"}
+            {open ? "Hide" : "Correct setup"}
           </button>
         )}
       </div>
+      {setup && !open && (
+        <p className="muted" style={{ margin: "0.4rem 0 0" }}>
+          Factory-enabled. Open Correct setup to fix secrets, stubs, or re-draft <code>.factory/profile.json</code>.
+        </p>
+      )}
       {error && open && <div className="banner error">{error}</div>}
       {open && (
         <>
@@ -698,16 +708,15 @@ function RepoOnboarding({
       <div className="check-row">
         <span style={{ flex: 1 }}>
           <strong>5 · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
-          authoritative here. The <strong>Profiler</strong> drafts it inside your repository's own Actions: it reads the code,
-          runs your test/build/lint commands to check they work, and opens a PR for you to review. The Console never reads your
-          source. {stepBadge("profile")}
+          authoritative here. Re-run asks the <strong>Profiler</strong> to read the code again and open a correction PR if
+          it disagrees — even when a profile is already merged. The Console never reads your source. {stepBadge("profile")}
         </span>
         <button
           onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/profile`)}
           disabled={run.isPending}
-          title="Files an issue labelled factory:profile, which starts the Profiler role in this repo's Actions"
+          title="Starts the Profiler in this repo's Actions. Re-run is how you correct a stale or wrong profile."
         >
-          {repo.steps["profile"] ? "Re-run" : "Draft it"}
+          {repo.steps["profile"] || setup ? "Re-run" : "Draft it"}
         </button>
       </div>
       {typeof repo.steps["profile"]?.detail["issueUrl"] === "string" && (
@@ -716,7 +725,7 @@ function RepoOnboarding({
           <a href={repo.steps["profile"]!.detail["issueUrl"] as string} target="_blank" rel="noreferrer">
             its profile issue
           </a>
-          . This turns <code>ok</code> once the profile PR is merged — the factory is not enabled here until it is.
+          . Re-run starts another Profiler pass; merge its PR to correct the profile.
         </p>
       )}
 

@@ -139,13 +139,14 @@ describe("the profile step", () => {
     expect(step!.detail).toMatchObject({ issueNumber: 7 });
   });
 
-  it("does nothing when the profile is already on the default branch", async () => {
+  it("re-runs the Profiler when a profile is already on the default branch", async () => {
     reply(".factory/profile.json", { content: Buffer.from("{}").toString("base64"), sha: "p1", encoding: "base64" });
 
     const res = await post();
-    expect(res.json()).toMatchObject({ ok: true, found: true });
-    expect(calls.some((c) => c.includes("/repos/") && c.startsWith("POST"))).toBe(false); // no issue, no label
-    expect(await stepRow()).toMatchObject({ status: "ok" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, issueNumber: 7, rerun: false });
+    expect(calls.find((c) => c.startsWith("POST /repos/acme/api/issues"))).toBeTruthy();
+    expect(await stepRow()).toMatchObject({ status: "pending" });
   });
 
   it("refuses before the enablement PR is merged, and says why", async () => {
@@ -185,5 +186,22 @@ describe("the profile step", () => {
 
     await post();
     expect(calls).toContain("PATCH /repos/acme/api/issues/7");
+  });
+
+  it("reuses the singleton issue by title after the Profiler dropped the label", async () => {
+    reply("/issues?", [
+      {
+        number: 7,
+        html_url: "https://github.com/acme/api/issues/7",
+        state: "open",
+        title: "Factory: repo profile",
+        labels: [],
+      },
+    ]);
+    reply("labels=factory%3Aprofile", []);
+
+    const res = await post();
+    expect(res.json()).toMatchObject({ ok: true, issueNumber: 7, rerun: true });
+    expect(calls.some((c) => c === "POST /repos/acme/api/issues")).toBe(false);
   });
 });
