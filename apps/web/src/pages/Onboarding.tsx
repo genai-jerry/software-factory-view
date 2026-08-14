@@ -596,6 +596,30 @@ function RepoOnboarding({
     onError: (e) => setError((e as ApiError).message),
   });
 
+  const reset = useMutation({
+    mutationFn: () => api.post<Record<string, unknown>>(`/api/repos/${repo.repoId}/onboarding/reset`),
+    onSuccess: () => {
+      setError(null);
+      setOpen(true);
+      onChanged();
+    },
+    onError: (e) => {
+      setError((e as ApiError).message);
+      setOpen(true);
+    },
+  });
+
+  const confirmReset = () => {
+    if (
+      !window.confirm(
+        "Open a PR that removes factory files from this repo? Secrets, labels, and CLAUDE.md stay. Merge the PR, then run setup again.",
+      )
+    ) {
+      return;
+    }
+    reset.mutate();
+  };
+
   const putSecret = useMutation({
     mutationFn: (vars: { name: string; value: string }) => api.post(`/api/repos/${repo.repoId}/onboarding/secret`, vars),
     onSuccess: () => {
@@ -635,15 +659,29 @@ function RepoOnboarding({
             </span>
           )}
         </h3>
-        {setup && (
-          <button type="button" onClick={() => setOpen((v) => !v)}>
-            {open ? "Hide" : "Correct setup"}
+        <span style={{ display: "flex", gap: "0.5rem" }}>
+          {setup && (
+            <button type="button" onClick={() => setOpen((v) => !v)}>
+              {open ? "Hide" : "Correct setup"}
+            </button>
+          )}
+          <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
+            {reset.isPending ? "Resetting…" : "Reset factory…"}
           </button>
-        )}
+        </span>
       </div>
       {setup && !open && (
         <p className="muted" style={{ margin: "0.4rem 0 0" }}>
           Factory-enabled. Open Correct setup to fix secrets, stubs, or re-draft <code>.factory/profile.json</code>.
+        </p>
+      )}
+      {typeof repo.steps["reset"]?.detail["prUrl"] === "string" && (
+        <p className="muted" style={{ margin: "0.4rem 0 0" }}>
+          →{" "}
+          <a href={repo.steps["reset"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">
+            reset PR
+          </a>{" "}
+          — merge it, then run setup again. Secrets and labels stay.
         </p>
       )}
       {error && open && <div className="banner error">{error}</div>}
@@ -778,6 +816,17 @@ function RepoOnboarding({
           <strong>7 · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
           run date") and watch it traverse the pipeline in this workspace; your first gate approval happens there.
         </span>
+      </div>
+
+      <div className="check-row">
+        <span style={{ flex: 1 }}>
+          <strong>Reset</strong> — open a PR that deletes factory workflows, OpenSpec, and{" "}
+          <code>.factory/profile.json</code>. Secrets, labels, and <code>CLAUDE.md</code> stay. Merge it, then run setup
+          again. {stepBadge("reset")}
+        </span>
+        <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
+          {reset.isPending ? "Resetting…" : "Reset factory…"}
+        </button>
       </div>
         </>
       )}

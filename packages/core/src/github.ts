@@ -493,6 +493,19 @@ export class InstallationClient extends RepoReader {
     });
   }
 
+  async deleteFile(
+    owner: string,
+    repo: string,
+    path: string,
+    opts: { message: string; sha: string; branch: string },
+  ): Promise<void> {
+    await this.req("DELETE", `/repos/${owner}/${repo}/contents/${encodePath(path)}`, {
+      message: opts.message,
+      sha: opts.sha,
+      branch: opts.branch,
+    });
+  }
+
   async createPull(
     owner: string,
     repo: string,
