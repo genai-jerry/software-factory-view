@@ -3,6 +3,7 @@ import { githubAppConfig, memberships, orgs, users } from "@console/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { resolveSession, type AppDeps, type RequestCtx } from "./context.js";
+import { connectInstallation } from "./routes/estates.js";
 
 /**
  * GitHub App credentials for this SaaS Console. The platform App is pinned
@@ -48,6 +49,33 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
    * to an operator who was looking for the setup screen. Send it one segment up.
    */
   app.get("/setup/", async (_req, reply) => reply.redirect("/settings"));
+
+  /**
+   * GitHub App Setup URL. After someone installs (or updates) the App, GitHub
+   * redirects the browser here with installation_id. We verify that installation
+   * is one the signed-in user can see, connect it as an estate, and send them
+   * on to the factory-enablement wizard.
+   */
+  app.get<{ Querystring: { installation_id?: string; setup_action?: string; state?: string } }>(
+    "/setup/install",
+    async (req, reply) => {
+      const qs = new URLSearchParams();
+      if (req.query.installation_id) qs.set("installation_id", req.query.installation_id);
+      if (req.query.setup_action) qs.set("setup_action", req.query.setup_action);
+      if (req.query.state) qs.set("state", req.query.state);
+      const here = `/setup/install${qs.size ? `?${qs}` : ""}`;
+
+      const ctx = await resolveSession(db, deps.cfg, req);
+      if (!ctx) return reply.redirect(`/auth/github/login?next=${encodeURIComponent(here)}`);
+
+      const installationId = Number(req.query.installation_id);
+      if (!installationId) return reply.redirect("/onboarding");
+
+      const result = await connectInstallation(deps, ctx, { installationId, allowEmpty: true });
+      if (!result.ok) return reply.redirect(`/onboarding?install_error=${encodeURIComponent(result.error)}`);
+      return reply.redirect("/onboarding");
+    },
+  );
 
   /**
    * Renders the auto-submitting form GitHub's manifest flow requires (the

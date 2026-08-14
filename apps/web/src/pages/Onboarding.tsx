@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
@@ -12,6 +12,14 @@ function rememberInstallSelection(account: string, nodeIds: string[]): void {
     sessionStorage.setItem(INSTALL_SELECTION_KEY, JSON.stringify({ account, nodeIds } satisfies InstallSelection));
   } catch {
     // Private mode / quota — GitHub `state` is the fallback.
+  }
+}
+
+function clearInstallSelection(): void {
+  try {
+    sessionStorage.removeItem(INSTALL_SELECTION_KEY);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -116,11 +124,16 @@ export function ConnectEstate({
   title?: string;
 }) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
+  const [awaitingInstall, setAwaitingInstall] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return Boolean(params.get("installation_id") || params.get("setup_action") || readInstallSelection());
+  });
   const installations = useQuery({
     queryKey: ["installations"],
     queryFn: () => api.get<{ installations: InstallationSummary[] }>("/api/installations"),
     retry: false,
     enabled: setup.data?.configured === true,
+    refetchInterval: awaitingInstall ? 2500 : false,
   });
   const [selected, setSelected] = useState<Record<string, boolean>>(() => {
     const remembered = readInstallSelection();
@@ -131,13 +144,19 @@ export function ConnectEstate({
   });
   const [filter, setFilter] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
+  const autoConnecting = useRef(false);
 
   const connect = useMutation({
     mutationFn: (vars: { installationId: number; repoNodeIds: string[] }) => api.post("/api/estates", vars),
     onSuccess: () => {
+      clearInstallSelection();
+      setAwaitingInstall(false);
       setSelected({});
       onConnected();
       void installations.refetch();
+    },
+    onError: () => {
+      autoConnecting.current = false;
     },
   });
 
@@ -151,9 +170,11 @@ export function ConnectEstate({
         for (const id of fromState.nodeIds) next[id] = true;
         return next;
       });
+      setAwaitingInstall(true);
     }
     const installationId = params.get("installation_id");
     if (!installationId) return;
+    setAwaitingInstall(true);
     void installations.refetch();
     setHighlight(installationId);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -174,6 +195,20 @@ export function ConnectEstate({
     }
     if (Object.keys(next).length) setSelected((prev) => ({ ...next, ...prev }));
   }, [highlight, installations.data]);
+
+  useEffect(() => {
+    if (!awaitingInstall || autoConnecting.current || connect.isPending || !installations.data) return;
+    const remembered = readInstallSelection();
+    if (!remembered?.nodeIds.length) return;
+    const inst = installations.data.installations.find(
+      (i) => i.account.toLowerCase() === remembered.account.toLowerCase() && i.installationId != null,
+    );
+    if (!inst?.installationId) return;
+    const nodeIds = remembered.nodeIds.filter((id) => inst.repos.some((r) => r.nodeId === id));
+    if (!nodeIds.length) return;
+    autoConnecting.current = true;
+    connect.mutate({ installationId: inst.installationId, repoNodeIds: nodeIds });
+  }, [awaitingInstall, installations.data, connect.isPending, connect.mutate]);
 
   if (setup.data && !setup.data.configured) {
     return (
@@ -203,7 +238,7 @@ export function ConnectEstate({
       </div>
       <p className="muted">
         Tick the repositories the factory should watch. If the App is not on that account yet, GitHub will ask you to
-        confirm permissions with those repositories already selected. Connecting syncs immediately.
+        confirm permissions with those repositories already selected, then return you here to continue the wizard.
         {setup.data?.appSlug && (
           <>
             {" "}
@@ -213,6 +248,30 @@ export function ConnectEstate({
           </>
         )}
       </p>
+      {awaitingInstall && (
+        <div className="banner info">
+          {connect.isPending
+            ? "Connecting those repositories to the factory…"
+            : "Confirm the install on GitHub. You will come back here automatically and the wizard will continue."}{" "}
+          <button type="button" onClick={() => void installations.refetch()} disabled={installations.isFetching || connect.isPending}>
+            {installations.isFetching ? "Checking GitHub…" : "I've confirmed — continue"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              clearInstallSelection();
+              setAwaitingInstall(false);
+              autoConnecting.current = false;
+            }}
+            disabled={connect.isPending}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {connect.isError && awaitingInstall && (
+        <div className="banner error">{(connect.error as ApiError).message}</div>
+      )}
       {installations.isError && <div className="banner error">{(installations.error as ApiError).message}</div>}
       {installations.isFetching && !installations.data && <p className="muted">Loading repositories from GitHub…</p>}
       {installations.data && installations.data.installations.length === 0 && (
@@ -250,6 +309,8 @@ export function ConnectEstate({
           selected={selected}
           setSelected={setSelected}
           highlight={highlight !== null && String(inst.installationId) === highlight}
+          awaitingInstall={awaitingInstall}
+          onAwaitInstall={() => setAwaitingInstall(true)}
           connect={connect}
         />
       ))}
@@ -263,6 +324,8 @@ function AccountRepos({
   selected,
   setSelected,
   highlight,
+  awaitingInstall,
+  onAwaitInstall,
   connect,
 }: {
   inst: InstallationSummary;
@@ -270,6 +333,8 @@ function AccountRepos({
   selected: Record<string, boolean>;
   setSelected: (next: Record<string, boolean>) => void;
   highlight: boolean;
+  awaitingInstall: boolean;
+  onAwaitInstall: () => void;
   connect: {
     isPending: boolean;
     isError: boolean;
@@ -296,6 +361,7 @@ function AccountRepos({
   const goInstall = () => {
     if (!href) return;
     rememberInstallSelection(inst.account, pickedNodeIds);
+    onAwaitInstall();
     window.location.assign(href);
   };
 
@@ -368,7 +434,15 @@ function AccountRepos({
               {connect.isPending ? "Connecting…" : "Connect selected & sync"}
             </button>
             {href && (
-              <a href={href} onClick={() => rememberInstallSelection(inst.account, pickedNodeIds)}>
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => {
+                  rememberInstallSelection(inst.account, pickedNodeIds);
+                  onAwaitInstall();
+                }}
+              >
                 Choose more on GitHub →
               </a>
             )}
@@ -376,12 +450,12 @@ function AccountRepos({
           </>
         ) : href ? (
           <>
-            <button type="button" className="primary" onClick={goInstall}>
+            <button type="button" className="primary" onClick={goInstall} disabled={awaitingInstall && connect.isPending}>
               {picked.length ? `Install factory on ${picked.length} selected` : "Install factory on this account"}
             </button>
             <span className="muted">
               {pickedIds.length
-                ? "GitHub will ask you to confirm permissions — the repositories you ticked are already selected."
+                ? "GitHub will ask you to confirm permissions, then return you here to continue."
                 : "GitHub will ask you to confirm. Tick repositories above first to install on those only."}
             </span>
           </>

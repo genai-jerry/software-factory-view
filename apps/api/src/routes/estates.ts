@@ -2,7 +2,61 @@ import { githubAppInstallUrl } from "@console/core";
 import { estates, memberships, orgs, repos, users } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, resolveSession, userClient, type AppDeps } from "../context.js";
+import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
+
+/** Connect (or extend) an estate from a GitHub App installation the user can see. */
+export async function connectInstallation(
+  deps: AppDeps,
+  ctx: RequestCtx,
+  opts: { installationId: number; repoNodeIds?: string[]; name?: string; coordinationRepoNodeId?: string; allowEmpty?: boolean },
+): Promise<{ ok: true; estateId: string; repoCount: number } | { ok: false; status: number; error: string }> {
+  const { db } = deps.dbh;
+  const gh = userClient(deps, ctx);
+  const mine = await gh.listMyInstallations();
+  const inst = mine.find((i) => i.id === opts.installationId);
+  if (!inst) return { ok: false, status: 403, error: "you are not a member of that installation's account" };
+
+  const available = await gh.listInstallationRepos(opts.installationId);
+  const wanted = opts.repoNodeIds?.length ? available.filter((r) => opts.repoNodeIds!.includes(r.node_id)) : available;
+  if (wanted.length === 0 && !opts.allowEmpty) return { ok: false, status: 400, error: "no repositories selected" };
+
+  let estate = (await db.select().from(estates).where(eq(estates.installationId, opts.installationId)).limit(1))[0];
+  if (!estate) {
+    const orgName = opts.name?.trim() || inst.account.login;
+    const org = (await db.insert(orgs).values({ name: orgName }).returning())[0]!;
+    estate = (await db.insert(estates).values({ orgId: org.id, name: orgName, installationId: opts.installationId }).returning())[0]!;
+  }
+
+  const existingMembers = await db.select().from(memberships).where(eq(memberships.orgId, estate.orgId)).limit(1);
+  await db
+    .insert(memberships)
+    .values({ orgId: estate.orgId, userId: ctx.userId, role: existingMembers.length === 0 ? "owner" : "member" })
+    .onConflictDoNothing();
+
+  for (const r of wanted) {
+    await db
+      .insert(repos)
+      .values({
+        orgId: estate.orgId,
+        estateId: estate.id,
+        ghNodeId: r.node_id,
+        fullName: r.full_name,
+        defaultBranch: r.default_branch,
+      })
+      .onConflictDoUpdate({
+        target: repos.ghNodeId,
+        set: { estateId: estate.id, orgId: estate.orgId, fullName: r.full_name, defaultBranch: r.default_branch },
+      });
+  }
+
+  if (opts.coordinationRepoNodeId) {
+    const coord = (await db.select().from(repos).where(eq(repos.ghNodeId, opts.coordinationRepoNodeId)).limit(1))[0];
+    if (coord) await db.update(estates).set({ coordinationRepoId: coord.id }).where(eq(estates.id, estate.id));
+  }
+
+  await deps.reconcileQueue.add("initial-sync", { estateIds: [estate.id] }, { removeOnComplete: 100 });
+  return { ok: true, estateId: estate.id, repoCount: wanted.length };
+}
 
 /**
  * Connecting an estate, in the app rather than in a config file.
@@ -200,60 +254,14 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
     const installationId = Number(req.body?.installationId);
     if (!installationId) return reply.code(400).send({ error: "installationId required" });
 
-    // Authorisation: the user must be able to see this installation on GitHub.
-    const gh = userClient(deps, ctx);
-    const mine = await gh.listMyInstallations();
-    const inst = mine.find((i) => i.id === installationId);
-    if (!inst) return reply.code(403).send({ error: "you are not a member of that installation's account" });
-
-    const available = await gh.listInstallationRepos(installationId);
-    const wanted = req.body?.repoNodeIds?.length
-      ? available.filter((r) => req.body.repoNodeIds!.includes(r.node_id))
-      : available;
-    if (wanted.length === 0) return reply.code(400).send({ error: "no repositories selected" });
-
-    // Estate + org: reuse if this installation is already connected, else create.
-    let estate = (await db.select().from(estates).where(eq(estates.installationId, installationId)).limit(1))[0];
-    if (!estate) {
-      const orgName = req.body?.name?.trim() || inst.account.login;
-      const org = (await db.insert(orgs).values({ name: orgName }).returning())[0]!;
-      estate = (
-        await db.insert(estates).values({ orgId: org.id, name: orgName, installationId }).returning()
-      )[0]!;
-    }
-
-    // The acting user becomes a member (owner if the org has none yet).
-    const existingMembers = await db.select().from(memberships).where(eq(memberships.orgId, estate.orgId)).limit(1);
-    await db
-      .insert(memberships)
-      .values({ orgId: estate.orgId, userId: ctx.userId, role: existingMembers.length === 0 ? "owner" : "member" })
-      .onConflictDoNothing();
-
-    for (const r of wanted) {
-      await db
-        .insert(repos)
-        .values({
-          orgId: estate.orgId,
-          estateId: estate.id,
-          ghNodeId: r.node_id,
-          fullName: r.full_name,
-          defaultBranch: r.default_branch,
-        })
-        .onConflictDoUpdate({
-          target: repos.ghNodeId,
-          set: { estateId: estate.id, orgId: estate.orgId, fullName: r.full_name, defaultBranch: r.default_branch },
-        });
-    }
-
-    if (req.body?.coordinationRepoNodeId) {
-      const coord = (await db.select().from(repos).where(eq(repos.ghNodeId, req.body.coordinationRepoNodeId)).limit(1))[0];
-      if (coord) await db.update(estates).set({ coordinationRepoId: coord.id }).where(eq(estates.id, estate.id));
-    }
-
-    // Populate immediately — no waiting on a webhook.
-    await deps.reconcileQueue.add("initial-sync", { estateIds: [estate.id] }, { removeOnComplete: 100 });
-
-    return { ok: true, estateId: estate.id, repoCount: wanted.length, syncQueued: true };
+    const result = await connectInstallation(deps, ctx, {
+      installationId,
+      repoNodeIds: req.body?.repoNodeIds,
+      name: req.body?.name,
+      coordinationRepoNodeId: req.body?.coordinationRepoNodeId,
+    });
+    if (!result.ok) return reply.code(result.status).send({ error: result.error });
+    return { ok: true, estateId: result.estateId, repoCount: result.repoCount, syncQueued: true };
   });
 
   /** Remove a repo from an estate (its projections cascade away). */

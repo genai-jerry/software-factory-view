@@ -49,9 +49,9 @@ export function HomePage({
           <p className="muted">
             {signedIn ? (
               <>
-                Tick the repositories the factory should watch. If the App is not installed on that account yet, GitHub
-                will ask you to confirm permissions with those repositories already selected. The first person to
-                connect an estate owns it.
+                Tick the repositories the factory should watch, then confirm the App on GitHub. GitHub will return you
+                here to connect those repositories and continue factory enablement. The first person to connect an
+                estate owns it.
               </>
             ) : (
               <>
@@ -84,13 +84,21 @@ export function HomePage({
           >
             {current === "org" && me && <ConnectEstate onConnected={onConnected} title="Connect an organisation" />}
           </Station>
+          <Station
+            n="03"
+            id="enable"
+            title="Enable the factory"
+            current={current}
+            done={false}
+            status="labels, secrets, OpenSpec"
+          />
         </ol>
       </div>
     </div>
   );
 }
 
-type StationId = "signin" | "org";
+type StationId = "signin" | "org" | "enable";
 
 function Station({
   n,

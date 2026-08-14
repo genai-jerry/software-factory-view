@@ -60,7 +60,15 @@ export function App() {
   const needsFrontDoor = !signedIn || user!.orgs.length === 0;
 
   if (needsFrontDoor) {
-    return <HomePage me={user} setup={setup.data} onConnected={() => void me.refetch()} />;
+    return (
+      <HomePage
+        me={user}
+        setup={setup.data}
+        onConnected={() => {
+          window.location.assign("/onboarding");
+        }}
+      />
+    );
   }
 
   return (

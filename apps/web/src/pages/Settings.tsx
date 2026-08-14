@@ -67,8 +67,10 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
             </>
           )}{" "}
           loaded from {status.source}. Webhook URL <code>{status.publicOrigin}/webhooks/github</code>. The App must be
-          public (Advanced → Make public) and its Callback URL must be{" "}
-          <code>{status.publicOrigin}/auth/github/callback</code> or Sign in with GitHub 404s.
+          public (Advanced → Make public), its Callback URL must be{" "}
+          <code>{status.publicOrigin}/auth/github/callback</code>, and Post installation → Setup URL must be{" "}
+          <code>{status.publicOrigin}/setup/install</code> (with Redirect on update) or GitHub leaves people on the
+          installation settings page instead of returning them to this wizard.
         </div>
       ) : (
         <div className="banner stale">No GitHub App is configured. Sign-in will not work until one is.</div>

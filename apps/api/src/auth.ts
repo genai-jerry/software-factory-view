@@ -5,7 +5,12 @@ import type { FastifyInstance } from "fastify";
 import { SESSION_COOKIE, type AppDeps } from "./context.js";
 
 const SESSION_TTL_DAYS = 14;
-const oauthStates = new Map<string, number>(); // state -> expiry; single-process MVP
+const oauthStates = new Map<string, { expiry: number; next?: string }>(); // state -> expiry; single-process MVP
+
+function safeRelativeNext(raw: string | undefined): string | undefined {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return undefined;
+  return raw;
+}
 
 /**
  * GitHub OAuth (authorization-code) handled entirely server-side. The browser
@@ -14,14 +19,14 @@ const oauthStates = new Map<string, number>(); // state -> expiry; single-proces
 export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { cfg, dbh } = deps;
 
-  app.get("/auth/github/login", async (_req, reply) => {
+  app.get<{ Querystring: { next?: string } }>("/auth/github/login", async (req, reply) => {
     const creds = await deps.credentials.resolve();
     if (!creds) {
       if (cfg.DEV_FAKE_LOGIN === "1") return reply.redirect("/auth/dev-login");
       return reply.redirect("/");
     }
     const state = randomToken(16);
-    oauthStates.set(state, Date.now() + 10 * 60_000);
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60_000, next: safeRelativeNext(req.query.next) });
     const redirectUri = `${cfg.PUBLIC_ORIGIN}/auth/github/callback`;
     const url =
       `${cfg.GITHUB_WEB_URL}/login/oauth/authorize?client_id=${encodeURIComponent(creds.clientId)}` +
@@ -31,8 +36,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.get<{ Querystring: { code?: string; state?: string } }>("/auth/github/callback", async (req, reply) => {
     const { code, state } = req.query;
-    const expiry = state ? oauthStates.get(state) : undefined;
-    if (!code || !state || !expiry || expiry < Date.now()) {
+    const stored = state ? oauthStates.get(state) : undefined;
+    if (!code || !state || !stored || stored.expiry < Date.now()) {
       return reply.code(400).send({ error: "invalid OAuth state" });
     }
     oauthStates.delete(state);
@@ -63,7 +68,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     await bootstrapMemberships(deps, userId, gh);
     await createSession(deps, userId, reply);
-    return reply.redirect("/");
+    return reply.redirect(stored.next ?? "/");
   });
 
   // Dev-only bypass so the UI can be exercised without a GitHub App (DEV_FAKE_LOGIN=1).

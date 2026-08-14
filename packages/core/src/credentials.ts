@@ -177,7 +177,8 @@ export function buildAppManifest(publicOrigin: string, name: string): Record<str
     hook_attributes: { url: `${publicOrigin}/webhooks/github`, active: true },
     redirect_url: `${publicOrigin}/setup/github-app/callback`,
     callback_urls: [`${publicOrigin}/auth/github/callback`],
-    setup_url: `${publicOrigin}/onboarding`,
+    setup_url: `${publicOrigin}/setup/install`,
+    setup_on_update: true,
     // SaaS: any GitHub user must be able to sign in and install. Private Apps
     // 404 on /login/oauth/authorize for anyone who is not the owner (GitHub,
     // June 2025) — GitHub hides them rather than showing an error.

@@ -204,6 +204,8 @@ describe("App manifest", () => {
     expect((m["hook_attributes"] as unknown as { url: string }).url).toBe("https://console.example.com/webhooks/github");
     expect(m["redirect_url"]).toBe("https://console.example.com/setup/github-app/callback");
     expect(m["callback_urls"]).toEqual(["https://console.example.com/auth/github/callback"]);
+    expect(m["setup_url"]).toBe("https://console.example.com/setup/install");
+    expect(m["setup_on_update"]).toBe(true);
   });
 
   it("is public so any GitHub user can sign in (private Apps 404 on authorize)", () => {

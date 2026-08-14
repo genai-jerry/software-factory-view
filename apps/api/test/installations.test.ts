@@ -183,3 +183,49 @@ describe("GET /api/installations", () => {
     );
   });
 });
+
+describe("GET /setup/install", () => {
+  it("sends an anonymous caller to sign in, then back here", async () => {
+    const res = await app.inject({ method: "GET", url: "/setup/install?installation_id=99&setup_action=install" });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(
+      "/auth/github/login?next=%2Fsetup%2Finstall%3Finstallation_id%3D99%26setup_action%3Dinstall",
+    );
+  });
+
+  it("connects the installation GitHub just created and continues the wizard", async () => {
+    github["/user/installations"] = {
+      body: {
+        installations: [{ id: 99, account: { id: 42, login: "alice", type: "User", avatar_url: "https://example/a.png" } }],
+      },
+    };
+    github["/user/installations/99/repositories"] = {
+      body: {
+        repositories: [{ id: 1, node_id: "R_1", full_name: "alice/notes", default_branch: "main", private: false }],
+      },
+    };
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/setup/install?installation_id=99&setup_action=install",
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/onboarding");
+
+    const estate = (await deps.dbh.db.select().from(estates))[0];
+    expect(estate?.installationId).toBe(99);
+    const connected = await deps.dbh.db.select().from(repos);
+    expect(connected.map((r) => r.fullName)).toEqual(["alice/notes"]);
+  });
+
+  it("ignores a spoofed installation_id the signed-in user cannot see", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/setup/install?installation_id=404&setup_action=install",
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain("/onboarding?install_error=");
+  });
+});

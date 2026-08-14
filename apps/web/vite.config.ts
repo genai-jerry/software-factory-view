@@ -12,8 +12,9 @@ export default defineConfig({
       "/api": "http://localhost:8787",
       "/auth": "http://localhost:8787",
       "/webhooks": "http://localhost:8787",
-      // The App-manifest handshake and its GitHub callback are server-rendered
-      // by the api. The trailing slash keeps bare /setup on the SPA screen.
+      // The App-manifest handshake, GitHub's post-install Setup URL
+      // (/setup/install), and the manifest callback are served by the api.
+      // The trailing slash keeps bare /setup on the SPA screen.
       "/setup/": "http://localhost:8787",
     },
   },
