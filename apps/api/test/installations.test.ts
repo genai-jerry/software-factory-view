@@ -178,10 +178,51 @@ describe("GET /api/installations", () => {
     expect(acme.configureUrl).toBe("https://github.com/apps/factory-console/installations/99");
     expect(acme.repos).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ fullName: "acme/api", connected: true, nodeId: "R_2" }),
-        expect.objectContaining({ fullName: "acme/web", connected: false, nodeId: "R_3" }),
+        expect.objectContaining({ fullName: "acme/api", connected: true, nodeId: "R_2", inInstallation: true }),
+        expect.objectContaining({ fullName: "acme/web", connected: false, nodeId: "R_3", inInstallation: false }),
       ]),
     );
+  });
+});
+
+describe("POST /api/estates", () => {
+  const connect = (body: unknown) =>
+    app.inject({
+      method: "POST",
+      url: "/api/estates",
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: body,
+    });
+
+  it("explains when the selected repos are not in the GitHub App installation", async () => {
+    github["/user/installations"] = {
+      body: {
+        installations: [{ id: 99, account: { id: 42, login: "alice", type: "User", avatar_url: "https://example/a.png" } }],
+      },
+    };
+    github["/user/installations/99/repositories"] = {
+      body: { repositories: [{ id: 1, node_id: "R_1", full_name: "alice/notes", default_branch: "main", private: false }] },
+    };
+
+    const res = await connect({ installationId: 99, repoNodeIds: ["R_MISSING"] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/none of the selected repositories are in this GitHub App installation/);
+  });
+
+  it("connects a repo that is in the installation", async () => {
+    github["/user/installations"] = {
+      body: {
+        installations: [{ id: 99, account: { id: 42, login: "alice", type: "User", avatar_url: "https://example/a.png" } }],
+      },
+    };
+    github["/user/installations/99/repositories"] = {
+      body: { repositories: [{ id: 1, node_id: "R_1", full_name: "alice/notes", default_branch: "main", private: false }] },
+    };
+
+    const res = await connect({ installationId: 99, repoNodeIds: ["R_1"] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, repoCount: 1 });
+    expect((await deps.dbh.db.select().from(repos)).map((r) => r.fullName)).toEqual(["alice/notes"]);
   });
 });
 

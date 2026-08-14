@@ -18,7 +18,17 @@ export async function connectInstallation(
 
   const available = await gh.listInstallationRepos(opts.installationId);
   const wanted = opts.repoNodeIds?.length ? available.filter((r) => opts.repoNodeIds!.includes(r.node_id)) : available;
-  if (wanted.length === 0 && !opts.allowEmpty) return { ok: false, status: 400, error: "no repositories selected" };
+  if (wanted.length === 0 && !opts.allowEmpty) {
+    if (opts.repoNodeIds?.length) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          "none of the selected repositories are in this GitHub App installation — add them on GitHub (Reinstall / change repositories), then Refresh",
+      };
+    }
+    return { ok: false, status: 400, error: "no repositories selected" };
+  }
 
   let estate = (await db.select().from(estates).where(eq(estates.installationId, opts.installationId)).limit(1))[0];
   if (!estate) {
@@ -94,6 +104,8 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
       defaultBranch: string;
       private: boolean;
       connected: boolean;
+      /** True when this repo is in the GitHub App installation (Connect can sync it). */
+      inInstallation: boolean;
     };
     type AccountRow = {
       installationId: number | null;
@@ -142,6 +154,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
         } else {
           if (!have.id && r.id) have.id = r.id;
           if (r.connected) have.connected = true;
+          if (r.inInstallation) have.inInstallation = true;
         }
       }
     };
@@ -170,6 +183,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
           defaultBranch: r.default_branch,
           private: r.private,
           connected: known.has(r.node_id),
+          inInstallation: true,
         }));
       } catch {
         // The user may lack visibility on some installations; show it as empty
@@ -217,6 +231,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
             defaultBranch: r.default_branch || "main",
             private: r.private,
             connected: false,
+            inInstallation: false,
           })),
         );
       }

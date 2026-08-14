@@ -358,12 +358,16 @@ function AccountRepos({
   const visible = inst.repos.filter((r) => !q || r.fullName.toLowerCase().includes(q));
   if (q && visible.length === 0 && !inst.account.toLowerCase().includes(q)) return null;
 
-  const picked = inst.repos.filter((r) => !r.connected && Boolean(selected[r.nodeId]));
-  const unconnectedVisible = visible.filter((r) => !r.connected);
-  const allVisiblePicked = unconnectedVisible.length > 0 && unconnectedVisible.every((r) => selected[r.nodeId]);
-  const pickedIds = picked.map((r) => r.id).filter((id): id is number => typeof id === "number" && id > 0);
-  const pickedNodeIds = picked.map((r) => r.nodeId).filter(Boolean);
   const installed = inst.installationId != null;
+  const picked = inst.repos.filter((r) => !r.connected && r.inInstallation && Boolean(selected[r.nodeId]));
+  const ungrantedPicked = installed
+    ? inst.repos.filter((r) => !r.connected && !r.inInstallation && Boolean(selected[r.nodeId]))
+    : [];
+  const toGrant = inst.repos.filter((r) => !r.connected && Boolean(selected[r.nodeId]));
+  const unconnectedVisible = visible.filter((r) => !r.connected && (!installed || r.inInstallation));
+  const allVisiblePicked = unconnectedVisible.length > 0 && unconnectedVisible.every((r) => selected[r.nodeId]);
+  const pickedIds = toGrant.map((r) => r.id).filter((id): id is number => typeof id === "number" && id > 0);
+  const pickedNodeIds = toGrant.map((r) => r.nodeId).filter(Boolean);
   const href = githubInstallHref(
     inst.installUrl,
     pickedIds,
@@ -381,6 +385,7 @@ function AccountRepos({
     const next = { ...selected };
     for (const r of visible) {
       if (r.connected || !r.nodeId) continue;
+      if (installed && !r.inInstallation) continue;
       next[r.nodeId] = on;
     }
     setSelected(next);
@@ -425,11 +430,26 @@ function AccountRepos({
               />
               {r.fullName} {r.private && <span className="muted">(private)</span>}
               {r.connected && <span className="badge merge">already connected</span>}
+              {installed && !r.inInstallation && !r.connected && (
+                <span className="badge">not on the App yet</span>
+              )}
             </label>
           ))}
         </div>
       )}
       {connect.isError && installed && <div className="banner error">{(connect.error as ApiError).message}</div>}
+      {installed && ungrantedPicked.length > 0 && picked.length === 0 && (
+        <div className="banner stale">
+          {ungrantedPicked.length === 1
+            ? "That repository is not in the GitHub App installation yet. Add it on GitHub, then Refresh."
+            : "Those repositories are not in the GitHub App installation yet. Add them on GitHub, then Refresh."}{" "}
+          {inst.configureUrl && (
+            <a href={inst.configureUrl} target="_blank" rel="noreferrer">
+              Reinstall / change repositories on GitHub →
+            </a>
+          )}
+        </div>
+      )}
       <div className="row" style={{ marginTop: "0.5rem" }}>
         {installed ? (
           <>

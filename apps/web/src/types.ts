@@ -39,6 +39,8 @@ export interface InstallationSummary {
     defaultBranch: string;
     private: boolean;
     connected: boolean;
+    /** False when the repo is visible to you but not yet granted to the GitHub App. */
+    inInstallation: boolean;
   }>;
 }
 
