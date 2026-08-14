@@ -49,8 +49,8 @@ export function HomePage({
           <p className="muted">
             {signedIn ? (
               <>
-                Install the factory&apos;s GitHub App on an organisation you belong to, then tick the repositories it
-                should watch. The first person to connect an estate owns it.
+                Tick the repositories the factory should watch. If the App is not installed on that account yet, you
+                will confirm the install on GitHub. The first person to connect an estate owns it.
               </>
             ) : (
               <>
@@ -127,8 +127,8 @@ function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
   return (
     <div>
       <p className="muted">
-        This creates your Console user from your GitHub identity. After you return, you will connect an organisation
-        and tick repositories.
+        This creates your Console user from your GitHub identity. After you return, your repositories are listed so you
+        can pick where to install the factory.
       </p>
       {setup?.configured && (
         <p className="muted">

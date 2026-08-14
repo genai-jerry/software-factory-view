@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
@@ -56,17 +56,36 @@ export function ConnectEstate({
     enabled: setup.data?.configured === true,
   });
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [openFor, setOpenFor] = useState<number | null>(null);
+  const [filter, setFilter] = useState("");
+  const [highlight, setHighlight] = useState<string | null>(null);
 
   const connect = useMutation({
     mutationFn: (vars: { installationId: number; repoNodeIds: string[] }) => api.post("/api/estates", vars),
     onSuccess: () => {
-      setOpenFor(null);
       setSelected({});
       onConnected();
       void installations.refetch();
     },
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const installationId = params.get("installation_id");
+    if (!installationId) return;
+    void installations.refetch();
+    setHighlight(installationId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!highlight || !installations.data) return;
+    const inst = installations.data.installations.find((i) => String(i.installationId) === highlight);
+    if (!inst) return;
+    const next: Record<string, boolean> = {};
+    for (const r of inst.repos) {
+      if (!r.connected && r.nodeId) next[r.nodeId] = true;
+    }
+    if (Object.keys(next).length) setSelected((prev) => ({ ...next, ...prev }));
+  }, [highlight, installations.data]);
 
   if (setup.data && !setup.data.configured) {
     return (
@@ -95,87 +114,186 @@ export function ConnectEstate({
         </button>
       </div>
       <p className="muted">
-        Organisations and personal accounts where the App is installed, that your GitHub user can see. Tick the
-        repositories the Console should watch — connecting syncs them immediately.
+        Tick the repositories the factory should watch. If the App is not on that account yet, installing takes you to
+        GitHub to confirm — private repositories appear there too. Connecting syncs immediately.
         {setup.data?.appSlug && (
           <>
             {" "}
             <a href={`https://github.com/apps/${setup.data.appSlug}/installations/new`} target="_blank" rel="noreferrer">
-              Install on an organisation →
+              Install on another organisation →
             </a>
           </>
         )}
       </p>
       {installations.isError && <div className="banner error">{(installations.error as ApiError).message}</div>}
-      {installations.data?.installations.length === 0 && (
+      {installations.isFetching && !installations.data && <p className="muted">Loading repositories from GitHub…</p>}
+      {installations.data && installations.data.installations.length === 0 && (
         <div className="banner info">
-          The App is not installed anywhere you can see yet.
+          No GitHub accounts or repositories were visible for this user yet.
           {setup.data?.appSlug ? (
             <>
               {" "}
               <a href={`https://github.com/apps/${setup.data.appSlug}/installations/new`} target="_blank" rel="noreferrer">
-                Install it on an organisation
-              </a>
-              , then come back and hit Refresh. No need to sign in again.
+                Install the App on GitHub
+              </a>{" "}
+              (private repos are listed there), then come back and hit Refresh.
             </>
           ) : (
-            <> Install it on your organisation, then hit Refresh.</>
+            <> Install the App on GitHub, then hit Refresh.</>
           )}
         </div>
       )}
+      {installations.data &&
+        (installations.data.installations.length > 1 ||
+          installations.data.installations.reduce((n, i) => n + i.repos.length, 0) > 6) && (
+          <input
+            type="search"
+            placeholder="Filter repositories…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ marginBottom: "0.75rem" }}
+          />
+        )}
       {installations.data?.installations.map((inst) => (
-        <div key={inst.installationId} className="check-row" style={{ display: "block" }}>
-          <div className="spread">
-            <span>
-              <strong>{inst.account}</strong> <span className="muted">({inst.accountType.toLowerCase()})</span>{" "}
-              {inst.estateId ? (
-                <span className="badge merge">connected · {inst.repos.filter((r) => r.connected).length} repos</span>
-              ) : (
-                <span className="badge">not connected</span>
-              )}
-            </span>
-            <button onClick={() => setOpenFor(openFor === inst.installationId ? null : inst.installationId)}>
-              {inst.estateId ? "Add repos" : "Connect"}
-            </button>
-          </div>
-          {openFor === inst.installationId && (
-            <div style={{ marginTop: "0.5rem" }}>
-              {inst.repos.length === 0 && <p className="muted">No repositories visible in this installation.</p>}
-              {inst.repos.map((r) => (
-                <label key={r.nodeId} style={{ display: "block", padding: "0.15rem 0" }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: "auto", marginRight: 6 }}
-                    disabled={r.connected}
-                    checked={r.connected || Boolean(selected[r.nodeId])}
-                    onChange={(e) => setSelected({ ...selected, [r.nodeId]: e.target.checked })}
-                  />
-                  {r.fullName} {r.private && <span className="muted">(private)</span>}
-                  {r.connected && <span className="badge merge">already connected</span>}
-                </label>
-              ))}
-              {connect.isError && <div className="banner error">{(connect.error as ApiError).message}</div>}
-              <div className="row" style={{ marginTop: "0.5rem" }}>
-                <button
-                  className="primary"
-                  disabled={connect.isPending || Object.values(selected).every((v) => !v)}
-                  onClick={() =>
-                    connect.mutate({
-                      installationId: inst.installationId,
-                      repoNodeIds: Object.entries(selected)
-                        .filter(([, v]) => v)
-                        .map(([k]) => k),
-                    })
-                  }
-                >
-                  {connect.isPending ? "Connecting…" : "Connect selected & sync"}
-                </button>
-                <span className="muted">Connecting queues an immediate reconcile — no webhook needed.</span>
-              </div>
-            </div>
-          )}
-        </div>
+        <AccountRepos
+          key={`${inst.installationId ?? "new"}:${inst.account}`}
+          inst={inst}
+          filter={filter}
+          selected={selected}
+          setSelected={setSelected}
+          highlight={highlight !== null && String(inst.installationId) === highlight}
+          connect={connect}
+        />
       ))}
+    </div>
+  );
+}
+
+function AccountRepos({
+  inst,
+  filter,
+  selected,
+  setSelected,
+  highlight,
+  connect,
+}: {
+  inst: InstallationSummary;
+  filter: string;
+  selected: Record<string, boolean>;
+  setSelected: (next: Record<string, boolean>) => void;
+  highlight: boolean;
+  connect: {
+    isPending: boolean;
+    isError: boolean;
+    error: unknown;
+    mutate: (vars: { installationId: number; repoNodeIds: string[] }) => void;
+  };
+}) {
+  const q = filter.trim().toLowerCase();
+  const visible = inst.repos.filter((r) => !q || r.fullName.toLowerCase().includes(q));
+  if (q && visible.length === 0 && !inst.account.toLowerCase().includes(q)) return null;
+
+  const picked = inst.repos.filter((r) => !r.connected && Boolean(selected[r.nodeId]));
+  const unconnectedVisible = visible.filter((r) => !r.connected);
+  const allVisiblePicked = unconnectedVisible.length > 0 && unconnectedVisible.every((r) => selected[r.nodeId]);
+  const pickedIds = picked.map((r) => r.id).filter((id): id is number => typeof id === "number" && id > 0);
+  const installed = inst.installationId != null;
+  const href = (() => {
+    const base = inst.installUrl;
+    if (!base) return null;
+    if (!pickedIds.length) return base;
+    const extra = pickedIds.map((id) => `repository_ids[]=${id}`).join("&");
+    return base.includes("?") ? `${base}&${extra}` : `${base}?${extra}`;
+  })();
+
+  const toggleVisible = (on: boolean) => {
+    const next = { ...selected };
+    for (const r of visible) {
+      if (r.connected || !r.nodeId) continue;
+      next[r.nodeId] = on;
+    }
+    setSelected(next);
+  };
+
+  return (
+    <div className={`repo-account${highlight ? " highlight" : ""}`}>
+      <div className="spread">
+        <span>
+          {inst.avatarUrl && <img src={inst.avatarUrl} alt="" width={18} height={18} className="repo-account-avatar" />}
+          <strong>{inst.account}</strong> <span className="muted">({inst.accountType.toLowerCase()})</span>{" "}
+          {inst.estateId ? (
+            <span className="badge merge">connected · {inst.repos.filter((r) => r.connected).length} repos</span>
+          ) : installed ? (
+            <span className="badge">installed · pick repos</span>
+          ) : (
+            <span className="badge">not installed</span>
+          )}
+        </span>
+        {unconnectedVisible.length > 0 && (
+          <button type="button" onClick={() => toggleVisible(!allVisiblePicked)}>
+            {allVisiblePicked ? "Clear" : "Select all"}
+          </button>
+        )}
+      </div>
+      {inst.repos.length === 0 && (
+        <p className="muted">
+          No repositories listed here yet. Private repositories appear on GitHub&apos;s next screen — install to pick
+          them.
+        </p>
+      )}
+      {visible.length > 0 && (
+        <div className="repo-pick-list">
+          {visible.map((r) => (
+            <label key={r.nodeId || r.fullName} className="repo-pick">
+              <input
+                type="checkbox"
+                style={{ width: "auto", marginRight: 6 }}
+                disabled={r.connected}
+                checked={r.connected || Boolean(selected[r.nodeId])}
+                onChange={(e) => setSelected({ ...selected, [r.nodeId]: e.target.checked })}
+              />
+              {r.fullName} {r.private && <span className="muted">(private)</span>}
+              {r.connected && <span className="badge merge">already connected</span>}
+            </label>
+          ))}
+        </div>
+      )}
+      {connect.isError && installed && <div className="banner error">{(connect.error as ApiError).message}</div>}
+      <div className="row" style={{ marginTop: "0.5rem" }}>
+        {installed ? (
+          <>
+            <button
+              className="primary"
+              disabled={connect.isPending || picked.length === 0}
+              onClick={() =>
+                connect.mutate({
+                  installationId: inst.installationId as number,
+                  repoNodeIds: picked.map((r) => r.nodeId),
+                })
+              }
+            >
+              {connect.isPending ? "Connecting…" : "Connect selected & sync"}
+            </button>
+            {href && (
+              <a href={href} rel="noreferrer">
+                Choose more on GitHub →
+              </a>
+            )}
+            <span className="muted">Connecting queues an immediate reconcile — no webhook needed.</span>
+          </>
+        ) : href ? (
+          <>
+            <a href={href}>
+              <button className="primary">
+                {picked.length ? `Install factory on ${picked.length} selected` : "Install factory on this account"}
+              </button>
+            </a>
+            <span className="muted">GitHub will ask you to confirm. You will return here with those repositories listed, ready to connect.</span>
+          </>
+        ) : (
+          <span className="muted">The App slug is not known yet, so an install link cannot be built.</span>
+        )}
+      </div>
     </div>
   );
 }

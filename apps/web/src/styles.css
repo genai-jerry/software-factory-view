@@ -366,6 +366,35 @@ textarea { min-height: 5rem; resize: vertical; }
   margin: 0;
 }
 
+.repo-account {
+  display: block;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.repo-account:last-child { border-bottom: none; }
+.repo-account.highlight {
+  outline: 1px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.repo-account-avatar {
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+}
+.repo-pick-list {
+  margin-top: 0.4rem;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.6rem;
+}
+.repo-pick {
+  display: block;
+  padding: 0.2rem 0;
+  font-size: 0.9rem;
+}
+
 @media (max-width: 640px) {
   .ticket-head { grid-template-columns: 2.2rem 1fr; }
   .ticket-status { grid-column: 2; text-align: left; }

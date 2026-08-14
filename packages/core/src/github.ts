@@ -204,6 +204,22 @@ export interface GhWorkflowRun {
   updated_at: string;
 }
 
+export interface GhRepoSummary {
+  id: number;
+  node_id: string;
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+  owner: { id: number; login: string; type?: string; avatar_url?: string };
+}
+
+export interface GhAccountSummary {
+  id: number;
+  login: string;
+  type?: string;
+  avatar_url?: string;
+}
+
 /** Read + non-authoritative operations, shared by both identities. */
 export class RepoReader {
   constructor(
@@ -215,6 +231,28 @@ export class RepoReader {
     const token = await this.tokenProvider();
     const { json } = await ghFetch(this.apiUrl, token, method, path, body);
     return json;
+  }
+
+  /** Follow page= until a short page, capped so a huge org cannot stall onboarding. */
+  protected async paginate<T>(path: string, unwrap: (json: unknown) => T[], perPage = 100, maxPages = 10): Promise<T[]> {
+    const out: T[] = [];
+    const sep = path.includes("?") ? "&" : "?";
+    for (let page = 1; page <= maxPages; page++) {
+      const json = await this.req("GET", `${path}${sep}per_page=${perPage}&page=${page}`);
+      const chunk = unwrap(json);
+      out.push(...chunk);
+      if (chunk.length < perPage) break;
+    }
+    return out;
+  }
+
+  protected async tryPaginate<T>(path: string, unwrap: (json: unknown) => T[]): Promise<T[]> {
+    try {
+      return await this.paginate(path, unwrap);
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 403 || e.status === 404)) return [];
+      throw e;
+    }
   }
 
   async getRepo(owner: string, repo: string): Promise<{ node_id: string; default_branch: string; full_name: string; private: boolean }> {
@@ -447,21 +485,100 @@ export class UserClient extends RepoReader {
    * connect-an-estate flow: you can only wire up an installation on an org you
    * are actually a member of.
    */
-  async listMyInstallations(): Promise<Array<{ id: number; account: { login: string; type?: string; avatar_url?: string } }>> {
-    const json = (await this.req("GET", "/user/installations?per_page=100")) as {
-      installations: Array<{ id: number; account: { login: string; type?: string; avatar_url?: string } }>;
-    };
-    return json.installations ?? [];
+  async listMyInstallations(): Promise<
+    Array<{ id: number; account: { id?: number; login: string; type?: string; avatar_url?: string } }>
+  > {
+    return this.paginate("/user/installations", (json) => {
+      const data = json as { installations?: Array<{ id: number; account: { id?: number; login: string; type?: string; avatar_url?: string } }> };
+      return data.installations ?? [];
+    });
   }
 
   /** Repositories the user can see within one installation. */
   async listInstallationRepos(
     installationId: number,
-  ): Promise<Array<{ node_id: string; full_name: string; default_branch: string; private: boolean }>> {
-    const json = (await this.req("GET", `/user/installations/${installationId}/repositories?per_page=100`)) as {
-      repositories: Array<{ node_id: string; full_name: string; default_branch: string; private: boolean }>;
+  ): Promise<Array<{ id: number; node_id: string; full_name: string; default_branch: string; private: boolean }>> {
+    return this.paginate(`/user/installations/${installationId}/repositories`, (json) => {
+      const data = json as {
+        repositories?: Array<{ id: number; node_id: string; full_name: string; default_branch: string; private: boolean }>;
+      };
+      return data.repositories ?? [];
+    });
+  }
+
+  /**
+   * Accounts (personal + orgs) and repositories this GitHub user can see,
+   * including ones the App is not installed on yet. GitHub App user tokens
+   * only return installed repos from /user/repos, so public listing fills
+   * the gap that otherwise leaves a first-time sign-in looking empty.
+   */
+  async listAccessibleAccounts(login: string): Promise<Array<{ account: GhAccountSummary; repos: GhRepoSummary[] }>> {
+    const byLogin = new Map<string, { account: GhAccountSummary; repos: Map<number, GhRepoSummary> }>();
+
+    const addAccount = (account: GhAccountSummary) => {
+      const key = account.login.toLowerCase();
+      const existing = byLogin.get(key);
+      if (!existing) {
+        byLogin.set(key, { account, repos: new Map() });
+        return;
+      }
+      if (!existing.account.id && account.id) existing.account.id = account.id;
+      if (!existing.account.avatar_url && account.avatar_url) existing.account.avatar_url = account.avatar_url;
+      if (!existing.account.type && account.type) existing.account.type = account.type;
     };
-    return json.repositories ?? [];
+
+    const addRepo = (repo: GhRepoSummary) => {
+      if (!repo?.full_name || !repo.owner?.login) return;
+      addAccount({
+        id: repo.owner.id,
+        login: repo.owner.login,
+        type: repo.owner.type ?? "User",
+        avatar_url: repo.owner.avatar_url,
+      });
+      const bucket = byLogin.get(repo.owner.login.toLowerCase())!;
+      if (repo.id) bucket.repos.set(repo.id, repo);
+    };
+
+    const asRepos = (json: unknown) => (Array.isArray(json) ? (json as GhRepoSummary[]) : []);
+    const asOrgs = (json: unknown) => (Array.isArray(json) ? (json as GhAccountSummary[]) : []);
+
+    try {
+      const me = await this.me();
+      addAccount({ id: me.id, login: me.login, type: "User", avatar_url: me.avatar_url });
+    } catch (e) {
+      if (!(e instanceof GitHubHttpError && (e.status === 403 || e.status === 404))) throw e;
+      addAccount({ id: 0, login, type: "User" });
+    }
+
+    for (const repo of await this.tryPaginate("/user/repos?affiliation=owner,collaborator,organization_member&sort=updated", asRepos)) {
+      addRepo(repo);
+    }
+    for (const repo of await this.tryPaginate(`/users/${encodeURIComponent(login)}/repos?type=owner&sort=updated`, asRepos)) {
+      addRepo(repo);
+    }
+
+    const orgs = new Map<string, GhAccountSummary>();
+    const ingestOrg = (org: GhAccountSummary | undefined) => {
+      if (!org?.login) return;
+      orgs.set(org.login.toLowerCase(), { id: org.id, login: org.login, type: "Organization", avatar_url: org.avatar_url });
+    };
+    for (const org of await this.tryPaginate("/user/orgs", asOrgs)) ingestOrg(org);
+    for (const row of await this.tryPaginate("/user/memberships/orgs?state=active", (json) => {
+      const data = Array.isArray(json) ? (json as Array<{ organization?: GhAccountSummary }>) : [];
+      return data;
+    })) {
+      ingestOrg(row.organization);
+    }
+    for (const org of await this.tryPaginate(`/users/${encodeURIComponent(login)}/orgs`, asOrgs)) ingestOrg(org);
+
+    for (const org of orgs.values()) {
+      addAccount(org);
+      for (const repo of await this.tryPaginate(`/orgs/${encodeURIComponent(org.login)}/repos?type=all&sort=updated`, asRepos)) {
+        addRepo(repo);
+      }
+    }
+
+    return [...byLogin.values()].map(({ account, repos }) => ({ account, repos: [...repos.values()] }));
   }
 
   async createComment(owner: string, repo: string, issueNumber: number, body: string): Promise<GhComment> {

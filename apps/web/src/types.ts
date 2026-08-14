@@ -21,13 +21,23 @@ export interface SetupStatus {
 }
 
 export interface InstallationSummary {
-  installationId: number;
+  installationId: number | null;
+  accountId: number | null;
   account: string;
   accountType: string;
   avatarUrl: string | null;
   estateId: string | null;
   estateName: string | null;
-  repos: Array<{ nodeId: string; fullName: string; defaultBranch: string; private: boolean; connected: boolean }>;
+  /** GitHub App install/configure URL for this account, when the slug is known. */
+  installUrl: string | null;
+  repos: Array<{
+    id: number | null;
+    nodeId: string;
+    fullName: string;
+    defaultBranch: string;
+    private: boolean;
+    connected: boolean;
+  }>;
 }
 
 export interface Me {
