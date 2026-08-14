@@ -170,37 +170,39 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 
     try {
       // Idempotence: re-running re-verifies rather than duplicating the PR —
-      // unless the stub still uses `secrets: inherit`, which does not forward
-      // Anthropic credentials across GitHub accounts. That case opens a patch PR.
+      // unless the stub still uses `secrets: inherit` or omits factory_repo.
+      // Inherit does not forward Anthropic credentials across GitHub accounts;
+      // omitting factory_repo clones <caller>/claude-software-factory, which
+      // does not exist for SaaS consumers and fails as a git username prompt.
       const existingStub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
-      if (existingStub && stubPassesCallerSecrets(existingStub.content)) {
+      if (existingStub && stubIsCurrent(existingStub.content)) {
         await recordStep(deps, repo, "stubs", "ok", { found: true });
         return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
       }
       if (existingStub) {
-        const patched = rewriteInheritToNamedSecrets(existingStub.content);
+        const patched = rewriteCallerStub(existingStub.content);
         if (patched === existingStub.content) {
           await recordStep(deps, repo, "stubs", "ok", { found: true });
           return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
         }
         const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
         if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
-        const branch = "factory-console/pass-caller-secrets";
+        const branch = "factory-console/fix-caller-stub";
         if (!(await client.getBranchHeadSha(owner, name, branch))) {
           await client.createBranch(owner, name, branch, headSha);
         }
         const current = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml", branch);
         if (current?.content !== patched) {
           await client.putFile(owner, name, ".github/workflows/factory-pipeline.yml", {
-            message: "factory: pass Anthropic secrets into the reusable pipeline",
+            message: "factory: pass caller secrets and factory_repo into the reusable pipeline",
             content: patched,
             branch,
             sha: current?.sha,
           });
         }
         const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
-          title: "Pass Anthropic secrets into the factory pipeline",
-          body: SECRETS_PATCH_PR_BODY,
+          title: "Fix factory caller stub",
+          body: STUB_PATCH_PR_BODY,
         });
         await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, patched: true });
         return { ok: true, prNumber: pr.number, prUrl: pr.html_url, patched: true };
@@ -384,6 +386,13 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
               ? "secrets: inherit does not forward secrets across GitHub accounts — re-run the stub-files step"
               : "caller does not pass Anthropic secrets into the reusable workflow",
         );
+        push(
+          "pipeline-factory-repo",
+          stubPassesFactoryRepo(stub.content),
+          stubPassesFactoryRepo(stub.content)
+            ? `caller passes factory_repo (${stub.content.match(/factory_repo:\s*(\S+)/)?.[1]})`
+            : "factory_repo missing — the pipeline clones <this-account>/claude-software-factory and fails if that repo does not exist. Re-run the stub-files step",
+        );
       }
       const guard = await client.getFileAtRef(owner, name, ".github/workflows/factory-branch-guard.yml");
       push("branch-guard-stub", Boolean(guard), guard ? "present" : "missing — no factory:incident on direct main commits");
@@ -556,9 +565,27 @@ function stubPassesCallerSecrets(content: string): boolean {
   );
 }
 
+function stubPassesFactoryRepo(content: string): boolean {
+  return /^\s*factory_repo:\s*\S+/m.test(content);
+}
+
+function stubIsCurrent(content: string): boolean {
+  return stubPassesCallerSecrets(content) && stubPassesFactoryRepo(content);
+}
+
 function rewriteInheritToNamedSecrets(content: string): string {
   if (stubPassesCallerSecrets(content) || !/secrets:\s*inherit/.test(content)) return content;
   return content.replace(/^[ \t]*secrets:\s*inherit[ \t]*$/m, CALLER_SECRET_PASS);
+}
+
+function ensureFactoryRepoInput(content: string): string {
+  if (stubPassesFactoryRepo(content)) return content;
+  if (!/^\s*factory_ref:\s*\S+/m.test(content)) return content;
+  return content.replace(/^(\s*factory_ref:\s*\S+)[ \t]*$/m, `$1\n      factory_repo: ${FACTORY_REPO}`);
+}
+
+function rewriteCallerStub(content: string): string {
+  return ensureFactoryRepoInput(rewriteInheritToNamedSecrets(content));
 }
 
 async function ensurePull(
@@ -646,6 +673,7 @@ ${CALLER_SECRET_PASS}
       role: \${{ inputs.role }}
       issue_number: \${{ inputs.issue_number }}
       factory_ref: ${FACTORY_REF}
+      factory_repo: ${FACTORY_REPO}
 `,
     ".github/workflows/factory-branch-guard.yml": `name: Factory branch guard
 
@@ -739,9 +767,12 @@ Add \`.factory/profile.json\` before or after merging (see the factory handbook 
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
 `;
 
-const SECRETS_PATCH_PR_BODY = `The factory pipeline is a reusable workflow in another repository. GitHub only forwards \`secrets: inherit\` inside the same Organisation or Enterprise, so this repository's \`CLAUDE_CODE_OAUTH_TOKEN\` / \`ANTHROPIC_API_KEY\` never reached the agent job — it failed at **Require Anthropic credentials** even when the secret was set.
+const STUB_PATCH_PR_BODY = `The factory pipeline is a reusable workflow in another repository. Two caller-stub mistakes make agent jobs fail before they start:
 
-This PR passes those secrets by name. Merge it, then re-run the failed factory workflow.
+- \`secrets: inherit\` does not forward \`CLAUDE_CODE_OAUTH_TOKEN\` / \`ANTHROPIC_API_KEY\` across GitHub accounts.
+- Omitting \`factory_repo\` clones \`<this-account>/claude-software-factory\`. If that repo does not exist, git reports \`could not read Username for 'https://github.com'\`.
+
+This PR passes secrets by name and sets \`factory_repo\` to the factory that the \`uses:\` line already pins. Merge it, then re-run the failed factory workflow.
 
 ---
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
