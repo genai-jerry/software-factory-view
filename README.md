@@ -95,22 +95,23 @@ Set `PUBLIC_ORIGIN` if you reach the Console anywhere other than the default for
 your mode; OAuth callbacks and the App's webhook URL are derived from it.
 `ANTHROPIC_API_KEY` is optional and only enables the Q&A panel.
 
-## Cloud deploy (Hostinger VPS)
+## Cloud deploy (VPS)
 
-The Console runs as one Docker Compose project on the VPS behind
-[Docker Manager](https://hpanel.hostinger.com/vps/1659755/docker-manager)
-(VM `1659755`). Postgres and Redis are in the same compose file. The GitHub
-workflow `.github/workflows/deploy.yml` deploys only on push to `main`.
+Same path as Sales OS: GitHub Actions builds images, scps them to the VPS,
+`docker load`s, then `docker compose up` in `~/factory-console`. Postgres and
+Redis are in that compose file. Traefik on `lighthouse-network` routes
+`Host(CONSOLE_HOST)` to nginx. The workflow runs on push to `main` and from
+**Actions → Deploy → Run workflow**.
 
 ### GitHub Environment `production`
 
 Create the environment, then set. GitHub forbids secret names that start with
-`GITHUB_`, so the App credentials use `GH_*` here; the workflow maps them to
-`GITHUB_APP_*` / `GITHUB_OAUTH_*` on the VPS.
+`GITHUB_`, so the App credentials use `GH_*` here; the workflow writes them to
+the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`.
 
 **Secrets**
 
-- `HOSTINGER_API_KEY` — hPanel → [API settings](https://hpanel.hostinger.com/profile/api)
+- `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_KEY` — copy from lighthouse-sales (SSH to the VPS)
 - `CONSOLE_MASTER_KEY` — `openssl rand -base64 32` (back this up)
 - `DB_PASSWORD` — password for the in-compose Postgres
 - `GH_APP_ID` — the SaaS GitHub App's numeric id
@@ -122,23 +123,20 @@ Create the environment, then set. GitHub forbids secret names that start with
 
 **Variables**
 
-- `HOSTINGER_VM_ID` — `1659755` (optional; the workflow defaults to this VPS)
-- `PUBLIC_ORIGIN` — the HTTPS URL browsers will use, e.g. `https://factory.example.com`. Traefik terminates TLS and routes that hostname to nginx. Do not use `:80` — Traefik already binds 80/443 on this VPS.
+- `PUBLIC_ORIGIN` — the HTTPS URL browsers will use, e.g. `https://sf.genaipeople.com`. Traefik terminates TLS and routes that hostname to nginx. Do not use `:80` — Traefik already binds 80/443 on this VPS.
 
-The workflow builds `factory-console-app` and `factory-console-web`, pushes them to GHCR, and sends [`infra/docker-compose.cloud.yml`](infra/docker-compose.cloud.yml) to Docker Manager. Hostinger only stores that YAML and pulls images — it cannot `docker build` this private repo, which is why a project can show **Created / 0 containers**.
-
-After the first push, confirm the two GHCR packages are **public** (GitHub → Packages) so the VPS can pull without a registry login.
+The workflow builds `factory-console-app:latest` and `factory-console-web:latest`, copies [`infra/docker-compose.deploy.yml`](infra/docker-compose.deploy.yml) to `~/factory-console/docker-compose.yml`, and starts the stack. Images use `pull_policy: never` so the host does not try GHCR.
 
 Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_FAKE_LOGIN=1`.
 
 ### First deploy
 
 1. Set the secrets and variables above. `PUBLIC_ORIGIN` must be an `https://` hostname whose DNS A record points at `187.127.165.119` (this VPS).
-2. Push to `main`. CI typechecks, tests, builds the images, then deploys.
-3. In Docker Manager, confirm project `factory-console` is **running** (postgres, redis, api, worker, web). nginx is not published on :80; Traefik on `lighthouse-network` fronts it.
+2. Push to `main` (or run the workflow). CI typechecks, tests, builds the images, then deploys.
+3. Confirm five containers are up (`factory-console-api-1` healthy, plus worker, web, postgres, redis). nginx is not published on :80; Traefik fronts it.
 4. Open `PUBLIC_ORIGIN`. The home page is sign in, then connect an organisation and repositories. The GitHub App is the platform App from the secrets above; a factory admin can rotate it later in Settings. Set the App's webhook URL to `{PUBLIC_ORIGIN}/webhooks/github` and its OAuth callback to `{PUBLIC_ORIGIN}/auth/github/callback`.
 
-Do not compose the root `docker-compose.yml` from the panel — that file is for local `build:`. Cloud must use the image-only file and `CONSOLE_IMAGE_APP` / `CONSOLE_IMAGE_WEB`.
+The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger Docker Manager at it.
 
 ### Adopt your existing factory estate
 

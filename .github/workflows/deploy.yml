@@ -1,25 +1,16 @@
-# Deploy the Factory Console to the Hostinger VPS Docker Manager.
-#
-# VPS: https://hpanel.hostinger.com/vps/1659755/docker-manager
-# Checklist: infra/cloud.env.example
+# Deploy Factory Console the same way Sales OS does: build images in CI,
+# scp tarballs to the VPS, docker load, docker compose up.
 #
 # GitHub Environment "production"
-#   HOSTINGER_API_KEY      secret     hPanel → profile → API
-#   HOSTINGER_VM_ID        variable   default 1659755 (from the VPS URL)
-#   PUBLIC_ORIGIN          variable   https://your-hostname  (Traefik Host rule)
-#   CONSOLE_MASTER_KEY     secret     openssl rand -base64 32
-#   DB_PASSWORD            secret     postgres password for this VPS
-#   GH_APP_ID              secret     required   platform GitHub App numeric id
-#   GH_APP_PRIVATE_KEY     secret     required   PEM; store with \n for newlines
-#   GH_APP_WEBHOOK_SECRET  secret     required
-#   GH_OAUTH_CLIENT_ID     secret     required
-#   GH_OAUTH_CLIENT_SECRET secret     required
+#   DEPLOY_HOST / DEPLOY_USER / DEPLOY_KEY   same SSH trio as lighthouse-sales
+#   PUBLIC_ORIGIN                            https://sf.genaipeople.com
+#   CONSOLE_MASTER_KEY                       openssl rand -base64 32
+#   DB_PASSWORD                              in-compose Postgres password
+#   GH_APP_ID / GH_APP_PRIVATE_KEY / GH_APP_WEBHOOK_SECRET
+#   GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET
 #
 # GitHub forbids secret names that start with GITHUB_. The GH_* secrets above
-# are mapped to GITHUB_APP_* / GITHUB_OAUTH_* process env on the VPS.
-#
-# Images are built here and pushed to GHCR. Hostinger only stores compose YAML
-# and pulls those images — it cannot docker-build this private repo.
+# are written to the VPS .env as GITHUB_APP_* / GITHUB_OAUTH_*.
 # Do not set DEV_FAKE_LOGIN=1.
 
 name: Deploy
@@ -27,6 +18,7 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-production
@@ -34,13 +26,10 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
-  actions: write
 
 jobs:
   check:
     name: typecheck-test-build
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -55,16 +44,18 @@ jobs:
       - run: pnpm test
 
   deploy:
-    name: hostinger
-    if: github.ref == 'refs/heads/main'
+    name: vps
     needs: check
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: actions/checkout@v5
-      - name: Require Hostinger credentials
+
+      - name: Require deploy credentials
         env:
-          HOSTINGER_API_KEY: ${{ secrets.HOSTINGER_API_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
           CONSOLE_MASTER_KEY: ${{ secrets.CONSOLE_MASTER_KEY }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
@@ -75,7 +66,9 @@ jobs:
           GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
         run: |
           missing=
-          [ -n "$HOSTINGER_API_KEY" ] || missing="$missing HOSTINGER_API_KEY"
+          [ -n "$DEPLOY_HOST" ] || missing="$missing DEPLOY_HOST"
+          [ -n "$DEPLOY_USER" ] || missing="$missing DEPLOY_USER"
+          [ -n "$DEPLOY_KEY" ] || missing="$missing DEPLOY_KEY"
           [ -n "$CONSOLE_MASTER_KEY" ] || missing="$missing CONSOLE_MASTER_KEY"
           [ -n "$DB_PASSWORD" ] || missing="$missing DB_PASSWORD"
           [ -n "$PUBLIC_ORIGIN" ] || missing="$missing PUBLIC_ORIGIN"
@@ -86,19 +79,20 @@ jobs:
           [ -n "$GH_OAUTH_CLIENT_SECRET" ] || missing="$missing GH_OAUTH_CLIENT_SECRET"
           if [ -n "$missing" ]; then
             echo "::error::Set these on the GitHub Environment 'production':$missing"
-            echo "HOSTINGER_API_KEY — hPanel → profile → API"
+            echo "DEPLOY_HOST / DEPLOY_USER / DEPLOY_KEY — copy from lighthouse-sales"
             echo "CONSOLE_MASTER_KEY — openssl rand -base64 32"
             echo "DB_PASSWORD — postgres password for this VPS"
-            echo "PUBLIC_ORIGIN — variable, e.g. https://console.example.com"
-            echo "GH_APP_* / GH_OAUTH_* — the SaaS GitHub App (id, PKCS#8 or PKCS#1 PEM, webhook secret, OAuth pair)"
-            echo "HOSTINGER_VM_ID — variable, this VPS is 1659755"
+            echo "PUBLIC_ORIGIN — variable, e.g. https://sf.genaipeople.com"
+            echo "GH_APP_* / GH_OAUTH_* — the SaaS GitHub App"
             exit 1
           fi
+
       - name: Flatten GitHub App private key
         id: appkey
         env:
           PEM: ${{ secrets.GH_APP_PRIVATE_KEY }}
         run: python3 -c 'import os; pem=os.environ["PEM"].replace("\r\n","\n").strip(); flat=pem.replace("\n","\\n"); open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write("pem<<ENDPEM\n"+flat+"\nENDPEM\n")'
+
       - name: Hostname for Traefik
         id: host
         env:
@@ -109,99 +103,140 @@ jobs:
           host="${host%%/*}"
           host="${host%%:*}"
           if [ -z "$host" ]; then
-            echo "::error::PUBLIC_ORIGIN must include a hostname, e.g. https://factory.example.com"
+            echo "::error::PUBLIC_ORIGIN must include a hostname, e.g. https://sf.genaipeople.com"
             exit 1
           fi
           echo "console_host=$host" >> "$GITHUB_OUTPUT"
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v3
-      - name: Build and push app image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/Dockerfile.api
-          target: api
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/factory-console-app:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/factory-console-app:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build and push web image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/Dockerfile.web
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/factory-console-web:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/factory-console-web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Make GHCR packages public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build app image
+        run: docker build -f infra/Dockerfile.api --target api -t factory-console-app:latest .
+
+      - name: Build web image
+        run: docker build -f infra/Dockerfile.web -t factory-console-web:latest .
+
+      - name: Save images to tarballs
         run: |
-          # Hostinger's docker daemon has no GHCR credentials. Public packages
-          # let it pull. If this fails, set visibility in GitHub → Packages.
-          for pkg in factory-console-app factory-console-web; do
-            gh api --method POST \
-              -H "Accept: application/vnd.github+json" \
-              "/user/packages/container/${pkg}/visibility" \
-              -f visibility=public \
-              || gh api --method POST \
-                -H "Accept: application/vnd.github+json" \
-                "/users/${OWNER}/packages/container/${pkg}/visibility" \
-                -f visibility=public \
-              || echo "::warning::Could not make ${pkg} public. In GitHub → Packages, set it public or docker login ghcr.io on the VPS."
-          done
-      - name: Deploy to Hostinger VPS
+          docker save factory-console-app:latest | gzip > factory-console-app.tar.gz
+          docker save factory-console-web:latest | gzip > factory-console-web.tar.gz
+
+      - name: Stage compose file
+        run: cp infra/docker-compose.deploy.yml docker-compose.yml
+
+      - name: Prepare deploy directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -euo pipefail
+            mkdir -p "$HOME/factory-console"
+
+      - name: Transfer image tarballs
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          timeout: 120s
+          command_timeout: 30m
+          source: "factory-console-app.tar.gz,factory-console-web.tar.gz"
+          target: "/tmp/"
+
+      - name: Transfer compose
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          source: "docker-compose.yml"
+          target: "~/factory-console/"
+
+      - name: Deploy on host
+        uses: appleboy/ssh-action@v1.0.3
         env:
-          HOSTINGER_API_KEY: ${{ secrets.HOSTINGER_API_KEY }}
-          VM_ID: ${{ vars.HOSTINGER_VM_ID || '1659755' }}
-          ENV_VARS: |
-            NODE_ENV=production
-            DEV_FAKE_LOGIN=0
-            CONSOLE_HOST=${{ steps.host.outputs.console_host }}
-            PUBLIC_ORIGIN=${{ vars.PUBLIC_ORIGIN }}
-            CONSOLE_MASTER_KEY=${{ secrets.CONSOLE_MASTER_KEY }}
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            GITHUB_APP_ID=${{ secrets.GH_APP_ID }}
-            GITHUB_APP_PRIVATE_KEY=${{ steps.appkey.outputs.pem }}
-            GITHUB_APP_WEBHOOK_SECRET=${{ secrets.GH_APP_WEBHOOK_SECRET }}
-            GITHUB_OAUTH_CLIENT_ID=${{ secrets.GH_OAUTH_CLIENT_ID }}
-            GITHUB_OAUTH_CLIENT_SECRET=${{ secrets.GH_OAUTH_CLIENT_SECRET }}
-            CONSOLE_IMAGE_APP=ghcr.io/${{ github.repository_owner }}/factory-console-app:${{ github.sha }}
-            CONSOLE_IMAGE_WEB=ghcr.io/${{ github.repository_owner }}/factory-console-web:${{ github.sha }}
-        run: |
-          # Send the image-only compose as raw YAML. Hostinger does not clone
-          # this private repo as a build context, so `build:` never produces
-          # containers (the current "Created / 0 container" project).
-          body=$(jq -n \
-            --arg content "$(cat infra/docker-compose.cloud.yml)" \
-            --arg project_name "factory-console" \
-            --arg environment "$ENV_VARS" \
-            '{project_name: $project_name, content: $content, environment: $environment}')
-          echo "Deploying factory-console on VM $VM_ID (Traefik host ${{ steps.host.outputs.console_host }})"
-          response=$(curl -sS -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $HOSTINGER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$body" \
-            "https://developers.hostinger.com/api/vps/v1/virtual-machines/${VM_ID}/docker")
-          http_body=$(printf '%s\n' "$response" | sed '$d')
-          http_status=$(printf '%s\n' "$response" | tail -n1)
-          if [ "$http_status" -ge 200 ] && [ "$http_status" -lt 300 ]; then
-            echo "Hostinger accepted the deploy ($http_status)"
-            exit 0
-          fi
-          echo "::error::Hostinger deploy failed ($http_status): $http_body"
-          echo "If pull failed, make the GHCR packages public or docker login ghcr.io on the VPS."
-          echo "If the message is about port 80, Traefik already binds it — this compose does not publish :80."
-          exit 1
+          CONSOLE_HOST: ${{ steps.host.outputs.console_host }}
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          CONSOLE_MASTER_KEY: ${{ secrets.CONSOLE_MASTER_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_APP_ID: ${{ secrets.GH_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ steps.appkey.outputs.pem }}
+          GITHUB_APP_WEBHOOK_SECRET: ${{ secrets.GH_APP_WEBHOOK_SECRET }}
+          GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          timeout: 60s
+          command_timeout: 30m
+          envs: CONSOLE_HOST,PUBLIC_ORIGIN,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET
+          script: |
+            set -euo pipefail
+
+            if [ -z "${CONSOLE_HOST:-}" ]; then
+              echo "CONSOLE_HOST is empty — set PUBLIC_ORIGIN on the production environment." >&2
+              exit 1
+            fi
+
+            DEPLOY_DIR="$HOME/factory-console"
+            cd "$DEPLOY_DIR"
+
+            if docker compose version >/dev/null 2>&1; then
+              DC=(docker compose)
+            else
+              DC=(docker-compose)
+            fi
+
+            for img in factory-console-app factory-console-web; do
+              docker load < "/tmp/${img}.tar.gz"
+              rm -f "/tmp/${img}.tar.gz"
+            done
+
+            # Upsert keys into .env. Empty values are skipped so an existing
+            # host entry (e.g. ANTHROPIC_API_KEY) is preserved.
+            # GitHub App secrets come from env_file only — do not also put
+            # ${GITHUB_APP_*} in compose `environment:` or an empty
+            # interpolation would blank them (same gotcha as sales-os).
+            touch .env
+            chmod 600 .env
+            for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD \
+                       ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY \
+                       GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID \
+                       GITHUB_OAUTH_CLIENT_SECRET; do
+              VALUE="${!KEY-}"
+              [ -z "$VALUE" ] && continue
+              TMP="$(mktemp)"
+              grep -v "^${KEY}=" .env > "$TMP" || true
+              printf '%s=%s\n' "$KEY" "$VALUE" >> "$TMP"
+              mv "$TMP" .env
+            done
+            chmod 600 .env
+
+            docker network inspect lighthouse-network >/dev/null 2>&1 || \
+              docker network create lighthouse-network
+
+            "${DC[@]}" up -d --remove-orphans
+
+            echo "Waiting for api to become healthy..."
+            for attempt in $(seq 1 60); do
+              STATE=$(docker inspect -f '{{.State.Health.Status}}' factory-console-api-1 2>/dev/null || echo missing)
+              if [ "$STATE" = "healthy" ]; then
+                echo "api healthy"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "api did not become healthy (last state: $STATE)" >&2
+                "${DC[@]}" ps
+                "${DC[@]}" logs --tail 100 api
+                exit 1
+              fi
+              sleep 3
+            done
+
+            docker image prune -f >/dev/null || true
+            echo "Deployment completed. Console reachable at https://${CONSOLE_HOST}/"

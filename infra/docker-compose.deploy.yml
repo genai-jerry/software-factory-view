@@ -1,6 +1,14 @@
-# Hostinger Docker Manager only stores this file — it does not clone the repo
-# as a build context. Images are built and pushed by .github/workflows/deploy.yml.
-# Local runs use the root docker-compose.yml (build:).
+# Production deploy compose. Images are built in CI and loaded onto the host
+# with `docker load`; this file is image-only (no build:) and lives at
+# $HOME/factory-console/docker-compose.yml alongside .env.
+#
+# Local development uses the root docker-compose.yml (build:).
+#
+# Traefik on lighthouse-network routes Host(${CONSOLE_HOST}) to web:80.
+# nginx in web proxies /api /auth /webhooks /setup/ to http://api:8787 on the
+# compose default network — do not publish host ports or Traefik-expose api.
+
+name: factory-console
 
 services:
   postgres:
@@ -31,24 +39,17 @@ services:
       retries: 10
 
   api:
-    image: ${CONSOLE_IMAGE_APP}
+    image: factory-console-app:latest
+    pull_policy: never
     restart: unless-stopped
     command: ["node", "apps/api/dist/index.js"]
+    env_file:
+      - .env
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      NODE_ENV: production
+      DEV_FAKE_LOGIN: "0"
       DATABASE_URL: postgres://console:${DB_PASSWORD:-console}@postgres:5432/console
       REDIS_URL: redis://redis:6379
-      CONSOLE_MASTER_KEY: ${CONSOLE_MASTER_KEY}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
-      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
-      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
-      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
-      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
-      GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,24 +69,17 @@ services:
       start_period: 40s
 
   worker:
-    image: ${CONSOLE_IMAGE_APP}
+    image: factory-console-app:latest
+    pull_policy: never
     restart: unless-stopped
     command: ["node", "apps/worker/dist/index.js"]
+    env_file:
+      - .env
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      NODE_ENV: production
+      DEV_FAKE_LOGIN: "0"
       DATABASE_URL: postgres://console:${DB_PASSWORD:-console}@postgres:5432/console
       REDIS_URL: redis://redis:6379
-      CONSOLE_MASTER_KEY: ${CONSOLE_MASTER_KEY}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
-      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
-      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
-      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
-      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
-      GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,7 +87,8 @@ services:
         condition: service_healthy
 
   web:
-    image: ${CONSOLE_IMAGE_WEB}
+    image: factory-console-web:latest
+    pull_policy: never
     restart: unless-stopped
     environment:
       API_UPSTREAM: http://api:8787
