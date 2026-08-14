@@ -1,0 +1,129 @@
+# Hostinger Docker Manager only stores this file — it does not clone the repo
+# as a build context. Images are built and pushed by .github/workflows/deploy.yml.
+# Local runs use the root docker-compose.yml (build:).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: console
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-console}
+      POSTGRES_DB: console
+    volumes:
+      - software-factory-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U console"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - software-factory-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${CONSOLE_IMAGE_APP}
+    restart: unless-stopped
+    command: ["node", "apps/api/dist/index.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://console:${DB_PASSWORD:-console}@postgres:5432/console
+      REDIS_URL: redis://redis:6379
+      CONSOLE_MASTER_KEY: ${CONSOLE_MASTER_KEY}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 40s
+
+  worker:
+    image: ${CONSOLE_IMAGE_APP}
+    restart: unless-stopped
+    command: ["node", "apps/worker/dist/index.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://console:${DB_PASSWORD:-console}@postgres:5432/console
+      REDIS_URL: redis://redis:6379
+      CONSOLE_MASTER_KEY: ${CONSOLE_MASTER_KEY}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: ${CONSOLE_IMAGE_WEB}
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://api:8787
+      NGINX_RESOLVER: 127.0.0.11 valid=10s ipv6=off
+    depends_on:
+      api:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lighthouse-network
+      - traefik.http.routers.factory-console.rule=Host(`${CONSOLE_HOST}`)
+      - traefik.http.routers.factory-console.entrypoints=websecure
+      - traefik.http.routers.factory-console.tls=true
+      - traefik.http.routers.factory-console.tls.certresolver=letsencrypt
+      - traefik.http.services.factory-console.loadbalancer.server.port=80
+      - traefik.http.routers.factory-console-http.rule=Host(`${CONSOLE_HOST}`)
+      - traefik.http.routers.factory-console-http.entrypoints=web
+      - traefik.http.routers.factory-console-http.middlewares=factory-console-https
+      - traefik.http.middlewares.factory-console-https.redirectscheme.scheme=https
+    networks:
+      - default
+      - lighthouse-network
+
+volumes:
+  software-factory-pgdata:
+    name: software-factory-pgdata
+  software-factory-redisdata:
+    name: software-factory-redisdata
+
+networks:
+  lighthouse-network:
+    name: lighthouse-network
+    external: true
