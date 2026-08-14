@@ -1,4 +1,4 @@
-import { FACTORY_LABELS, InstallationClient, parseApproverFile } from "@console/core";
+import { FACTORY_LABELS, GitHubHttpError, InstallationClient, parseApproverFile } from "@console/core";
 import { estates, gateAssignments, memberships, onboardingRuns, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -158,11 +158,41 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     const { repo, client, owner, name } = target;
 
     try {
-      // Idempotence: re-running re-verifies rather than duplicating the PR.
+      // Idempotence: re-running re-verifies rather than duplicating the PR —
+      // unless the stub still uses `secrets: inherit`, which does not forward
+      // Anthropic credentials across GitHub accounts. That case opens a patch PR.
       const existingStub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
-      if (existingStub) {
+      if (existingStub && stubPassesCallerSecrets(existingStub.content)) {
         await recordStep(deps, repo, "stubs", "ok", { found: true });
         return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
+      }
+      if (existingStub) {
+        const patched = rewriteInheritToNamedSecrets(existingStub.content);
+        if (patched === existingStub.content) {
+          await recordStep(deps, repo, "stubs", "ok", { found: true });
+          return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
+        }
+        const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
+        if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
+        const branch = "factory-console/pass-caller-secrets";
+        if (!(await client.getBranchHeadSha(owner, name, branch))) {
+          await client.createBranch(owner, name, branch, headSha);
+        }
+        const current = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml", branch);
+        if (current?.content !== patched) {
+          await client.putFile(owner, name, ".github/workflows/factory-pipeline.yml", {
+            message: "factory: pass Anthropic secrets into the reusable pipeline",
+            content: patched,
+            branch,
+            sha: current?.sha,
+          });
+        }
+        const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
+          title: "Pass Anthropic secrets into the factory pipeline",
+          body: SECRETS_PATCH_PR_BODY,
+        });
+        await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, patched: true });
+        return { ok: true, prNumber: pr.number, prUrl: pr.html_url, patched: true };
       }
 
       const approverRows = await db.select().from(gateAssignments).where(eq(gateAssignments.estateId, repo.estateId));
@@ -194,10 +224,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         });
       }
 
-      const pr = await client.createPull(owner, name, {
+      const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
         title: "Enable the software factory",
-        head: branch,
-        base: repo.defaultBranch,
         body: STUB_PR_BODY,
       });
       await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url });
@@ -336,6 +364,15 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
             : !refsSync
               ? `uses:@${usesRef} vs factory_ref:${factoryRef} — version skew`
               : `present, permissions intact, pinned at ${usesRef}`,
+        );
+        push(
+          "pipeline-secrets",
+          stubPassesCallerSecrets(stub.content),
+          stubPassesCallerSecrets(stub.content)
+            ? "caller passes ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN by name"
+            : /secrets:\s*inherit/.test(stub.content)
+              ? "secrets: inherit does not forward secrets across GitHub accounts — re-run the stub-files step"
+              : "caller does not pass Anthropic secrets into the reusable workflow",
         );
       }
       const guard = await client.getFileAtRef(owner, name, ".github/workflows/factory-branch-guard.yml");
@@ -491,6 +528,48 @@ async function recordStep(
     });
 }
 
+/**
+ * Caller stubs must pass Anthropic secrets by name. `secrets: inherit` only
+ * forwards them when caller and callee live in the same GitHub Organisation
+ * or Enterprise; a SaaS factory is called from other accounts (and from
+ * personal-user repos), so inherit leaves the agent job with empty credentials.
+ */
+const CALLER_SECRET_PASS = `    secrets:
+      ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      FACTORY_CROSS_REPO_TOKEN: \${{ secrets.FACTORY_CROSS_REPO_TOKEN }}`;
+
+function stubPassesCallerSecrets(content: string): boolean {
+  return (
+    /CLAUDE_CODE_OAUTH_TOKEN:\s*\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}/.test(content) ||
+    /ANTHROPIC_API_KEY:\s*\$\{\{\s*secrets\.ANTHROPIC_API_KEY\s*\}\}/.test(content)
+  );
+}
+
+function rewriteInheritToNamedSecrets(content: string): string {
+  if (stubPassesCallerSecrets(content) || !/secrets:\s*inherit/.test(content)) return content;
+  return content.replace(/^[ \t]*secrets:\s*inherit[ \t]*$/m, CALLER_SECRET_PASS);
+}
+
+async function ensurePull(
+  client: InstallationClient,
+  owner: string,
+  name: string,
+  head: string,
+  base: string,
+  opts: { title: string; body: string },
+): Promise<{ number: number; html_url: string }> {
+  try {
+    return await client.createPull(owner, name, { title: opts.title, head, base, body: opts.body });
+  } catch (e) {
+    if (e instanceof GitHubHttpError && e.status === 422) {
+      const open = (await client.listPulls(owner, name)).find((p) => p.state === "open" && p.head.ref === head);
+      if (open) return { number: open.number, html_url: open.html_url };
+    }
+    throw e;
+  }
+}
+
 /** The consuming repo's whole footprint (FACTORY.md §10), templated. */
 function stubFiles(approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] }): Record<string, string> {
   return {
@@ -552,7 +631,7 @@ permissions:
 jobs:
   factory:
     uses: ${FACTORY_REPO}/.github/workflows/factory-pipeline.yml@${FACTORY_REF}
-    secrets: inherit
+${CALLER_SECRET_PASS}
     with:
       role: \${{ inputs.role }}
       issue_number: \${{ inputs.issue_number }}
@@ -645,6 +724,14 @@ const STUB_PR_BODY = `This PR carries the consuming repo's whole factory footpri
 Add \`.factory/profile.json\` before or after merging (see the factory handbook §2c) — it is the one file whose contents are genuinely yours.
 
 **Merging this PR is the act that enables the factory** — workflow stubs only fire from the default branch.
+
+---
+_Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
+`;
+
+const SECRETS_PATCH_PR_BODY = `The factory pipeline is a reusable workflow in another repository. GitHub only forwards \`secrets: inherit\` inside the same Organisation or Enterprise, so this repository's \`CLAUDE_CODE_OAUTH_TOKEN\` / \`ANTHROPIC_API_KEY\` never reached the agent job — it failed at **Require Anthropic credentials** even when the secret was set.
+
+This PR passes those secrets by name. Merge it, then re-run the failed factory workflow.
 
 ---
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
