@@ -21,7 +21,7 @@ const PHASE_LABELS: Record<Phase, string> = {
 /**
  * Mission control, individual-first (plan 07 §4): "My work" — needs you /
  * yours in flight / waiting on others — is the landing tab; the whole-factory
- * board and estate health live behind the Factory tab. Every row opens the
+ * board and organisation health live behind the Factory tab. Every row opens the
  * peek drawer; the workspace is one more click.
  */
 export function MissionControl() {
@@ -36,7 +36,7 @@ export function MissionControl() {
       <FilterBar />
       {anyStale && (
         <div className="banner stale">
-          Some estates have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
+          Some organisations have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
           that webhooks are reaching the Console.
         </div>
       )}
@@ -202,7 +202,7 @@ function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined;
       </div>
 
       <div className="card">
-        <h2>Estate health</h2>
+        <h2>Organisation health</h2>
         {estates?.map((e) => (
           <div key={e.id} style={{ marginBottom: "0.75rem" }}>
             <div className="spread">
@@ -223,7 +223,7 @@ function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined;
         ))}
         {estates?.length === 0 && (
           <p className="muted">
-            No estates yet. Install the GitHub App on your org, then reload — the installation webhook creates the estate.
+            No organisations connected yet. Install the GitHub App on your org, then reload — the installation webhook creates the connection.
           </p>
         )}
       </div>

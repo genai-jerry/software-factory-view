@@ -78,6 +78,19 @@ function githubInstallHref(base: string | null, repositoryIds: number[], state?:
   return `${url.origin}${path}${parts.length ? `?${parts.join("&")}` : ""}`;
 }
 
+type OnboardingRepo = OnboardingState["repos"][number];
+
+const SETUP_STEPS = ["labels", "secrets", "openspec", "stubs", "profile", "validate"] as const;
+
+function isRepoSetup(repo: OnboardingRepo): boolean {
+  return repo.factoryEnabled;
+}
+
+function stepProgress(repo: OnboardingRepo): { done: number; total: number } {
+  const done = SETUP_STEPS.filter((s) => repo.steps[s]?.status === "ok").length;
+  return { done, total: SETUP_STEPS.length };
+}
+
 export function OnboardingPage() {
   const estates = useQuery({ queryKey: ["estates"], queryFn: () => api.get<{ estates: EstateSummary[] }>("/api/estates") });
   const [estateId, setEstateId] = useState<string | null>(null);
@@ -91,8 +104,6 @@ export function OnboardingPage() {
         no state the factory needs. Steps are idempotent: re-running verifies instead of duplicating.
       </p>
 
-      <ConnectEstate onConnected={() => estates.refetch()} />
-
       {estates.data && estates.data.estates.length > 1 && (
         <select value={chosen ?? ""} onChange={(e) => setEstateId(e.target.value)} style={{ width: "auto", marginBottom: "1rem" }}>
           {estates.data.estates.map((e) => (
@@ -103,13 +114,14 @@ export function OnboardingPage() {
         </select>
       )}
       {chosen && <EstateOnboarding estateId={chosen} />}
+      <ConnectEstate onConnected={() => estates.refetch()} title="Connect repositories" />
     </div>
   );
 }
 
 /**
  * Step 0, in the app: pick a GitHub App installation you belong to and the
- * repositories that form the estate. No repo or org IDs in any config file,
+ * repositories that form the organisation. No repo or org IDs in any config file,
  * and no dependency on an installation webhook arriving.
  *
  * Exported because the shell shows it on its own to a signed-in user who
@@ -118,7 +130,7 @@ export function OnboardingPage() {
  */
 export function ConnectEstate({
   onConnected,
-  title = "Step 0 · Connect an estate",
+  title = "Step 0 · Connect an organisation",
 }: {
   onConnected: () => void;
   title?: string;
@@ -479,14 +491,43 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
   const reconcile = useMutation({
     mutationFn: () => api.post(`/api/estates/${estateId}/reconcile`),
   });
+  const onChanged = () => qc.invalidateQueries({ queryKey: ["onboarding", estateId] });
+  const repos = state.data?.repos ?? [];
+  const incomplete = repos.filter((r) => !isRepoSetup(r));
+  const setup = repos.filter((r) => isRepoSetup(r));
 
   return (
     <div>
+      {state.isLoading && <p className="muted">Loading repositories…</p>}
+      {incomplete.length > 0 && (
+        <>
+          <h4 className="phase-head">Needs setup</h4>
+          <div className="banner stale">
+            {incomplete.length === 1
+              ? "1 repository is not factory-enabled yet — finish the steps below."
+              : `${incomplete.length} repositories are not factory-enabled yet — finish the steps below.`}
+          </div>
+        </>
+      )}
+      {incomplete.map((r) => (
+        <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} />
+      ))}
+      {setup.length > 0 && (
+        <>
+          <h4 className="phase-head">Setup</h4>
+          {setup.map((r) => (
+            <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} />
+          ))}
+        </>
+      )}
+      {state.data && repos.length === 0 && (
+        <p className="muted">No repositories in this organisation yet — connect some below.</p>
+      )}
       <div className="card">
         <div className="spread">
           <h3 style={{ margin: 0 }}>Adopt / resync</h3>
           <button onClick={() => reconcile.mutate()} disabled={reconcile.isPending}>
-            {reconcile.isPending ? "Queued…" : reconcile.isSuccess ? "Reconcile queued ✓" : "Reconcile estate now"}
+            {reconcile.isPending ? "Queued…" : reconcile.isSuccess ? "Reconcile queued ✓" : "Reconcile this organisation now"}
           </button>
         </div>
         <p className="muted">
@@ -494,10 +535,6 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
           assignments from <code>factory-approvers.json</code> — zero re-setup ("adopt existing install").
         </p>
       </div>
-      {state.data?.repos.length === 0 && (
-        <p className="muted">No repositories in this estate yet — connect some above.</p>
-      )}
-      {state.data?.repos.map((r) => <RepoOnboarding key={r.repoId} repo={r} onChanged={() => qc.invalidateQueries({ queryKey: ["onboarding", estateId] })} />)}
     </div>
   );
 }
@@ -506,9 +543,12 @@ function RepoOnboarding({
   repo,
   onChanged,
 }: {
-  repo: OnboardingState["repos"][number];
+  repo: OnboardingRepo;
   onChanged: () => void;
 }) {
+  const setup = isRepoSetup(repo);
+  const progress = stepProgress(repo);
+  const [open, setOpen] = useState(!setup);
   const [error, setError] = useState<string | null>(null);
   const [secretName, setSecretName] = useState("ANTHROPIC_API_KEY");
   const [secretValue, setSecretValue] = useState("");
@@ -517,6 +557,10 @@ function RepoOnboarding({
       ? { ok: repo.steps["validate"]!.status === "ok", checks: (repo.steps["validate"]!.detail as { checks: ValidationResult["checks"] }).checks }
       : null,
   );
+
+  useEffect(() => {
+    if (setup) setOpen(false);
+  }, [setup]);
 
   const run = useMutation({
     mutationFn: (path: string) => api.post<Record<string, unknown>>(path),
@@ -557,11 +601,24 @@ function RepoOnboarding({
     <div className="card">
       <div className="spread">
         <h3 style={{ margin: 0 }}>
-          {repo.fullName} {repo.factoryEnabled && <span className="badge merge">factory enabled</span>}
+          {repo.fullName}{" "}
+          {setup ? (
+            <span className="badge merge">Setup</span>
+          ) : (
+            <span className="badge task-start">
+              {progress.done === 0 ? "Needs setup" : `${progress.done} of ${progress.total} steps`}
+            </span>
+          )}
         </h3>
+        {setup && (
+          <button type="button" onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide" : "Edit"}
+          </button>
+        )}
       </div>
-      {error && <div className="banner error">{error}</div>}
-
+      {error && open && <div className="banner error">{error}</div>}
+      {open && (
+        <>
       <div className="check-row">
         <span style={{ flex: 1 }}>
           <strong>1 · Labels</strong> — create the 14 <code>factory:*</code> labels (idempotent; fixes drift) {stepBadge("labels")}
@@ -688,6 +745,8 @@ function RepoOnboarding({
           run date") and watch it traverse the pipeline in this workspace; your first gate approval happens there.
         </span>
       </div>
+        </>
+      )}
     </div>
   );
 }

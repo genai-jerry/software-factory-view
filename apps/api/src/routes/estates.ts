@@ -271,7 +271,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
     const estate = (
       await db.select().from(estates).where(and(eq(estates.id, req.params.id), inArray(estates.orgId, ctx.orgIds))).limit(1)
     )[0];
-    if (!estate) return reply.code(404).send({ error: "estate not found" });
+    if (!estate) return reply.code(404).send({ error: "organisation not found" });
     await db.delete(repos).where(and(eq(repos.id, req.body.repoId), eq(repos.estateId, estate.id)));
     return { ok: true };
   });

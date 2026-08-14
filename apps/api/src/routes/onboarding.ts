@@ -50,7 +50,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     const estate = (
       await db.select().from(estates).where(and(eq(estates.id, req.params.id), inArray(estates.orgId, ctx.orgIds))).limit(1)
     )[0];
-    if (!estate) return reply.code(404).send({ error: "estate not found" });
+    if (!estate) return reply.code(404).send({ error: "organisation not found" });
     const repoRows = await db.select().from(repos).where(eq(repos.estateId, estate.id));
     const out = [];
     for (const r of repoRows) {
@@ -438,7 +438,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     const estate = (
       await db.select().from(estates).where(and(eq(estates.id, req.params.id), inArray(estates.orgId, ctx.orgIds))).limit(1)
     )[0];
-    if (!estate) return reply.code(404).send({ error: "estate not found" });
+    if (!estate) return reply.code(404).send({ error: "organisation not found" });
     await deps.reconcileQueue.add("on-demand", { estateIds: [estate.id] }, { removeOnComplete: 100 });
     return { ok: true, queued: true };
   });
@@ -638,7 +638,7 @@ const STUB_PR_BODY = `This PR carries the consuming repo's whole factory footpri
 - \`.github/workflows/factory-pipeline.yml\` — caller stub wiring GitHub events to the factory's reusable pipeline (permissions block intact — do not remove it).
 - \`.github/workflows/factory-branch-guard.yml\` — files a factory:incident issue if a commit lands on main without a PR.
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
-- \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this estate's gate assignments.
+- \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.
 

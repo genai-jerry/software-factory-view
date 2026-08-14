@@ -14,7 +14,7 @@ Implemented (Phases 0–2 of the [delivery plan](docs/plan/04-delivery-plan.md),
 
 - **Ingestion** — GitHub App webhooks (HMAC-verified, idempotency ledger, queued), projections keyed by
   `node_id` with last-writer-wins guards, nightly + on-demand reconciler, immutable encrypted artifact cache.
-- **Mission control** — attention queue ("what needs me", with the *why*), pipeline board, estate health.
+- **Mission control** — attention queue ("what needs me", with the *why*), pipeline board, organisation health.
 - **Epic workspace** — stage rail, artifact reader (as-proposed ⇄ as-approved), timeline, task board,
   threads overlaid on GitHub comments via hidden `<!-- console:thread=… -->` markers, `[≡ raw]` links everywhere.
 - **Gate panel** — the exact document PRs, what-changed-since-you-looked, open-questions guard with recorded
@@ -23,7 +23,7 @@ Implemented (Phases 0–2 of the [delivery plan](docs/plan/04-delivery-plan.md),
 - **Decision log** — structured decisions posted to the epic with `<!-- console:decision=… -->`, indexed and
   searchable; gate approvals auto-record.
 - **Ask the Factory** — cited Q&A grounded only in the epic's own artifacts/threads/PRs/runs, per-org token budget.
-- **Onboarding** — GitHub App self-registration (manifest flow), in-app estate/repo connection, labels step,
+- **Onboarding** — GitHub App self-registration (manifest flow), in-app organisation/repo connection, labels step,
   write-through secrets, stub-files PR, 9-check validation suite, adopt-existing-install.
 
 Not yet built (per plan): full RBAC/estate scoping, billing, notifications email/Slack, thread digests & gate
@@ -79,12 +79,12 @@ GitHub App, pinned with `GITHUB_APP_*` secrets (or set later by a factory admin
 in Settings), is installed on every organisation that wants the factory.
 
 When you open the Console, the **home page** is a two-station ticket until you
-belong to an estate:
+belong to an organisation:
 
 1. **Sign in with GitHub** — that *is* registration; there is no separate account.
 2. **Organisation and repositories** — install the factory App on an org you
    belong to, tick the repositories to watch, connect. The Console syncs them
-   immediately, no waiting on a webhook. The first person to connect an estate
+   immediately, no waiting on a webhook. The first person to connect an organisation
    owns it.
 
 After that, `/` is mission control. Repositories that are connected but not yet
@@ -141,9 +141,9 @@ Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_
 
 The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger Docker Manager at it.
 
-### Adopt your existing factory estate
+### Adopt your existing factory organisation
 
-After connecting repos, Onboarding → **Reconcile estate now** walks GitHub and imports
+After connecting repos, Onboarding → **Reconcile this organisation now** walks GitHub and imports
 issues, PRs, runs, gate assignments (`factory-approvers.json`) and change-folder
 artifacts — zero re-setup for a repo that was factory-enabled by hand.
 

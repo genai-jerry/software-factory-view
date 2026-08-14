@@ -7,7 +7,7 @@ import { ConnectEstate } from "./Onboarding.js";
  * Front door for a SaaS factory. The GitHub App is a platform credential
  * (environment secrets, editable later by the GitHub App owner in Settings). New
  * users sign in with GitHub and connect an organisation. Returning users with
- * an estate never see this; `/` is mission control for them.
+ * an organisation never see this; `/` is mission control for them.
  */
 export function HomePage({
   me,
@@ -51,7 +51,7 @@ export function HomePage({
               <>
                 Tick the repositories the factory should watch, then confirm the App on GitHub. GitHub will return you
                 here to connect those repositories and continue factory enablement. The first person to connect an
-                estate owns it.
+                organisation owns it.
               </>
             ) : (
               <>

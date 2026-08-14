@@ -57,7 +57,7 @@ export function FlowPage() {
           {flow.data?.estates.map((estate) => (
             <div className="card" key={estate.id}>
               <h2>{estate.name}</h2>
-              {estate.milestones.length === 0 && <p className="muted">No open epics in this estate.</p>}
+              {estate.milestones.length === 0 && <p className="muted">No open epics in this organisation.</p>}
               {estate.milestones.map((m) => (
                 <MilestoneNode milestone={m} key={m.title} onPeek={setPeekId} />
               ))}

@@ -70,6 +70,6 @@ EOF
 
 if [ "$(env_value PUBLIC_ORIGIN)" = "http://localhost:8080" ]; then
   dim "Note: GitHub cannot reach localhost, so webhooks will not arrive. The"
-  dim "Console still works — use 'Reconcile estate now' to pull updates, or"
+  dim "Console still works — use 'Reconcile this organisation now' to pull updates, or"
   dim "expose it with a tunnel (cloudflared/ngrok) and set PUBLIC_ORIGIN to that URL."
 fi

@@ -100,7 +100,7 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       entries.push({
         kind: "blocked",
         rank: whyYou ? 1 : 4,
-        whyYou: whyYou ?? "blocked issue in your estate — any member may reply to resume it",
+        whyYou: whyYou ?? "blocked issue in your organisation — any member may reply to resume it",
         epicId,
         issueId: issue.id,
         title: `#${issue.number} ${issue.title}`,

@@ -41,7 +41,7 @@ export function SettingsPage({ me }: { me: Me }) {
       {me.orgs.map((o) => (
         <OrgSettingsCard key={o.id} orgId={o.id} />
       ))}
-      {me.orgs.length === 0 && <p className="muted">No orgs yet — connect an estate first.</p>}
+      {me.orgs.length === 0 && <p className="muted">No orgs yet — connect an organisation first.</p>}
     </div>
   );
 }
