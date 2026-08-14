@@ -3,6 +3,73 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
+const INSTALL_SELECTION_KEY = "factory.installSelection";
+
+type InstallSelection = { account: string; nodeIds: string[] };
+
+function rememberInstallSelection(account: string, nodeIds: string[]): void {
+  try {
+    sessionStorage.setItem(INSTALL_SELECTION_KEY, JSON.stringify({ account, nodeIds } satisfies InstallSelection));
+  } catch {
+    // Private mode / quota — GitHub `state` is the fallback.
+  }
+}
+
+function readInstallSelection(): InstallSelection | null {
+  try {
+    const raw = sessionStorage.getItem(INSTALL_SELECTION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InstallSelection;
+    if (!parsed?.account || !Array.isArray(parsed.nodeIds)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function encodeInstallState(account: string, nodeIds: string[]): string {
+  return `v1:${encodeURIComponent(account)}:${nodeIds.map(encodeURIComponent).join(",")}`;
+}
+
+function decodeInstallState(state: string | null): InstallSelection | null {
+  if (!state?.startsWith("v1:")) return null;
+  const rest = state.slice(3);
+  const split = rest.indexOf(":");
+  if (split < 0) return null;
+  const account = decodeURIComponent(rest.slice(0, split));
+  const nodeIds = rest
+    .slice(split + 1)
+    .split(",")
+    .map((id) => decodeURIComponent(id))
+    .filter(Boolean);
+  return account ? { account, nodeIds } : null;
+}
+
+/**
+ * GitHub only pre-selects repos on `/installations/new/permissions` when the
+ * account is `suggested_target_id` (not `target_id`) and each repo is a
+ * `repository_ids[]` query param. `target_id` lands on the right account but
+ * defaults to "All repositories".
+ */
+function githubInstallHref(base: string | null, repositoryIds: number[], state?: string): string | null {
+  if (!base) return null;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    return base;
+  }
+  const accountId = url.searchParams.get("suggested_target_id") ?? url.searchParams.get("target_id");
+  const path = url.pathname.endsWith("/permissions") ? url.pathname : `${url.pathname.replace(/\/$/, "")}/permissions`;
+  const parts: string[] = [];
+  if (accountId) parts.push(`suggested_target_id=${encodeURIComponent(accountId)}`);
+  for (const id of repositoryIds.slice(0, 100)) {
+    if (id > 0) parts.push(`repository_ids[]=${id}`);
+  }
+  if (state) parts.push(`state=${encodeURIComponent(state)}`);
+  return `${url.origin}${path}${parts.length ? `?${parts.join("&")}` : ""}`;
+}
+
 export function OnboardingPage() {
   const estates = useQuery({ queryKey: ["estates"], queryFn: () => api.get<{ estates: EstateSummary[] }>("/api/estates") });
   const [estateId, setEstateId] = useState<string | null>(null);
@@ -55,7 +122,13 @@ export function ConnectEstate({
     retry: false,
     enabled: setup.data?.configured === true,
   });
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [selected, setSelected] = useState<Record<string, boolean>>(() => {
+    const remembered = readInstallSelection();
+    if (!remembered) return {};
+    const next: Record<string, boolean> = {};
+    for (const id of remembered.nodeIds) next[id] = true;
+    return next;
+  });
   const [filter, setFilter] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
 
@@ -70,6 +143,15 @@ export function ConnectEstate({
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const fromState = decodeInstallState(params.get("state"));
+    if (fromState?.nodeIds.length) {
+      rememberInstallSelection(fromState.account, fromState.nodeIds);
+      setSelected((prev) => {
+        const next = { ...prev };
+        for (const id of fromState.nodeIds) next[id] = true;
+        return next;
+      });
+    }
     const installationId = params.get("installation_id");
     if (!installationId) return;
     void installations.refetch();
@@ -80,9 +162,15 @@ export function ConnectEstate({
     if (!highlight || !installations.data) return;
     const inst = installations.data.installations.find((i) => String(i.installationId) === highlight);
     if (!inst) return;
+    const remembered = readInstallSelection();
+    const wanted =
+      remembered && remembered.account.toLowerCase() === inst.account.toLowerCase()
+        ? new Set(remembered.nodeIds)
+        : null;
+    if (!wanted?.size) return;
     const next: Record<string, boolean> = {};
     for (const r of inst.repos) {
-      if (!r.connected && r.nodeId) next[r.nodeId] = true;
+      if (!r.connected && r.nodeId && wanted.has(r.nodeId)) next[r.nodeId] = true;
     }
     if (Object.keys(next).length) setSelected((prev) => ({ ...next, ...prev }));
   }, [highlight, installations.data]);
@@ -114,8 +202,8 @@ export function ConnectEstate({
         </button>
       </div>
       <p className="muted">
-        Tick the repositories the factory should watch. If the App is not on that account yet, installing takes you to
-        GitHub to confirm — private repositories appear there too. Connecting syncs immediately.
+        Tick the repositories the factory should watch. If the App is not on that account yet, GitHub will ask you to
+        confirm permissions with those repositories already selected. Connecting syncs immediately.
         {setup.data?.appSlug && (
           <>
             {" "}
@@ -197,14 +285,19 @@ function AccountRepos({
   const unconnectedVisible = visible.filter((r) => !r.connected);
   const allVisiblePicked = unconnectedVisible.length > 0 && unconnectedVisible.every((r) => selected[r.nodeId]);
   const pickedIds = picked.map((r) => r.id).filter((id): id is number => typeof id === "number" && id > 0);
+  const pickedNodeIds = picked.map((r) => r.nodeId).filter(Boolean);
   const installed = inst.installationId != null;
-  const href = (() => {
-    const base = inst.installUrl;
-    if (!base) return null;
-    if (!pickedIds.length) return base;
-    const extra = pickedIds.map((id) => `repository_ids[]=${id}`).join("&");
-    return base.includes("?") ? `${base}&${extra}` : `${base}?${extra}`;
-  })();
+  const href = githubInstallHref(
+    inst.installUrl,
+    pickedIds,
+    pickedNodeIds.length ? encodeInstallState(inst.account, pickedNodeIds) : undefined,
+  );
+
+  const goInstall = () => {
+    if (!href) return;
+    rememberInstallSelection(inst.account, pickedNodeIds);
+    window.location.assign(href);
+  };
 
   const toggleVisible = (on: boolean) => {
     const next = { ...selected };
@@ -275,7 +368,7 @@ function AccountRepos({
               {connect.isPending ? "Connecting…" : "Connect selected & sync"}
             </button>
             {href && (
-              <a href={href} rel="noreferrer">
+              <a href={href} onClick={() => rememberInstallSelection(inst.account, pickedNodeIds)}>
                 Choose more on GitHub →
               </a>
             )}
@@ -283,12 +376,14 @@ function AccountRepos({
           </>
         ) : href ? (
           <>
-            <a href={href}>
-              <button className="primary">
-                {picked.length ? `Install factory on ${picked.length} selected` : "Install factory on this account"}
-              </button>
-            </a>
-            <span className="muted">GitHub will ask you to confirm. You will return here with those repositories listed, ready to connect.</span>
+            <button type="button" className="primary" onClick={goInstall}>
+              {picked.length ? `Install factory on ${picked.length} selected` : "Install factory on this account"}
+            </button>
+            <span className="muted">
+              {pickedIds.length
+                ? "GitHub will ask you to confirm permissions — the repositories you ticked are already selected."
+                : "GitHub will ask you to confirm. Tick repositories above first to install on those only."}
+            </span>
           </>
         ) : (
           <span className="muted">The App slug is not known yet, so an install link cannot be built.</span>

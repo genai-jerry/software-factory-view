@@ -139,7 +139,7 @@ describe("GET /api/installations", () => {
       accountId: 42,
     });
     expect(byAccount.alice.repos.map((r) => r.fullName)).toEqual(["alice/notes"]);
-    expect(byAccount.alice.installUrl).toBe("https://github.com/apps/factory-console/installations/new/permissions?target_id=42");
+    expect(byAccount.alice.installUrl).toBe("https://github.com/apps/factory-console/installations/new/permissions?suggested_target_id=42");
 
     expect(byAccount.acme).toMatchObject({
       installationId: null,
@@ -147,7 +147,7 @@ describe("GET /api/installations", () => {
       accountId: 7,
     });
     expect(byAccount.acme.repos.map((r) => r.fullName)).toEqual(["acme/api", "acme/web"]);
-    expect(byAccount.acme.installUrl).toContain("target_id=7");
+    expect(byAccount.acme.installUrl).toContain("suggested_target_id=7");
   });
 
   it("keeps an existing installation and merges extra repos onto it", async () => {

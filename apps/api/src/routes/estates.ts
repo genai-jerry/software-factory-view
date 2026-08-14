@@ -1,3 +1,4 @@
+import { githubAppInstallUrl } from "@console/core";
 import { estates, memberships, orgs, repos, users } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -88,8 +89,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
     };
     const installUrlFor = (accountId: number | null) => {
       if (!slug) return null;
-      const base = `${web}/apps/${slug}/installations/new`;
-      return accountId ? `${base}/permissions?target_id=${accountId}` : base;
+      return githubAppInstallUrl({ webUrl: web, slug, accountId });
     };
 
     const installations = await gh.listMyInstallations();

@@ -49,8 +49,9 @@ export function HomePage({
           <p className="muted">
             {signedIn ? (
               <>
-                Tick the repositories the factory should watch. If the App is not installed on that account yet, you
-                will confirm the install on GitHub. The first person to connect an estate owns it.
+                Tick the repositories the factory should watch. If the App is not installed on that account yet, GitHub
+                will ask you to confirm permissions with those repositories already selected. The first person to
+                connect an estate owns it.
               </>
             ) : (
               <>

@@ -220,6 +220,36 @@ export interface GhAccountSummary {
   avatar_url?: string;
 }
 
+/**
+ * GitHub App install URL that pre-selects an account and repositories.
+ *
+ * GitHub only honours repository pre-selection on `/installations/new/permissions`
+ * with `suggested_target_id` (not `target_id`) plus `repository_ids[]`. Omit the
+ * repo ids and GitHub defaults to "All repositories", which forces the user to
+ * pick again after they already chose in the Console.
+ *
+ * @see https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/migrating-oauth-apps-to-github-apps
+ */
+export function githubAppInstallUrl(opts: {
+  webUrl: string;
+  slug: string;
+  accountId?: number | null;
+  repositoryIds?: number[];
+  state?: string;
+}): string {
+  const web = opts.webUrl.replace(/\/$/, "");
+  const repoIds = (opts.repositoryIds ?? []).filter((id) => id > 0).slice(0, 100);
+  const usePermissions = Boolean(opts.accountId) || repoIds.length > 0;
+  const path = usePermissions
+    ? `${web}/apps/${opts.slug}/installations/new/permissions`
+    : `${web}/apps/${opts.slug}/installations/new`;
+  const parts: string[] = [];
+  if (opts.accountId) parts.push(`suggested_target_id=${opts.accountId}`);
+  for (const id of repoIds) parts.push(`repository_ids[]=${id}`);
+  if (opts.state) parts.push(`state=${encodeURIComponent(opts.state)}`);
+  return parts.length ? `${path}?${parts.join("&")}` : path;
+}
+
 /** Read + non-authoritative operations, shared by both identities. */
 export class RepoReader {
   constructor(
