@@ -85,7 +85,7 @@ export function App() {
           <NavLink to="/blocked">Blocked</NavLink>
           <NavLink to="/decisions">Decisions</NavLink>
           <NavLink to="/onboarding">Onboarding</NavLink>
-          <NavLink to="/settings">Settings</NavLink>
+          {setup.data?.canEditApp && <NavLink to="/settings">Settings</NavLink>}
         </nav>
         <div style={{ marginTop: "2rem" }} className="muted">
           {user!.avatarUrl && (
@@ -112,8 +112,8 @@ export function App() {
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
-          <Route path="/settings" element={<SettingsPage me={user!} />} />
-          <Route path="/setup" element={<Navigate to="/settings" replace />} />
+          <Route path="/settings" element={setup.data?.canEditApp ? <SettingsPage me={user!} /> : <Navigate to="/" replace />} />
+          <Route path="/setup" element={<Navigate to={setup.data?.canEditApp ? "/settings" : "/"} replace />} />
         </Routes>
       </main>
     </div>

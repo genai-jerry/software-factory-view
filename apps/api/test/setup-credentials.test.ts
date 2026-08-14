@@ -138,7 +138,7 @@ describe("manual App registration", () => {
     expect(await deps.dbh.db.select().from(githubAppConfig)).toHaveLength(0);
   });
 
-  it("rejects anonymous writes; a factory admin can register and later edit", async () => {
+  it("rejects anonymous writes; the App owner can register and later edit", async () => {
     expect((await post(VALID, { cookie: "" })).statusCode).toBe(403);
 
     expect((await post(VALID)).statusCode).toBe(200);
@@ -205,9 +205,9 @@ describe("editing a stored registration", () => {
     expect((await post({ ...VALID, slug: "" }, { cookie: sessionCookie })).json().slug).toBeNull();
   });
 
-  it("still demands the full set when the credentials come from the environment", async () => {
-    // No stored row: an env-configured Console has nothing to patch, and
-    // half-copying its secrets into the database would be worse than asking.
+  it("refuses env-credential edits when the GitHub App owner cannot be determined", async () => {
+    // Environment credentials have no configuredBy row, and GET /app cannot
+    // reach api.invalid, so nobody qualifies as the App owner.
     deps.credentials = new CredentialStore({
       masterKey: MASTER_KEY,
       apiUrl: "https://api.invalid",
@@ -217,8 +217,8 @@ describe("editing a stored registration", () => {
     app = await buildApp(deps);
 
     const res = await post({ clientSecret: "rotated" }, { cookie: sessionCookie });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toMatch(/environment/);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/GitHub App owner/);
   });
 
   it("rejects anonymous edits even when nobody owns the Console yet", async () => {
@@ -238,5 +238,47 @@ describe("editing a stored registration", () => {
 
     const signedIn = await app.inject({ method: "GET", url: "/api/setup/status", headers: { cookie: sessionCookie } });
     expect(signedIn.json().canEditApp).toBe(true);
+  });
+
+  it("does not treat every org owner as the GitHub App owner", async () => {
+    expect((await post(VALID)).statusCode).toBe(200);
+
+    const carol = (
+      await deps.dbh.db
+        .insert(users)
+        .values({ ghUserId: 100, login: "carol", encryptedOauthToken: encryptSecret("gho_carol", MASTER_KEY) })
+        .returning()
+    )[0]!;
+    const org = (await deps.dbh.db.select().from(orgs).limit(1))[0]!;
+    await deps.dbh.db.insert(memberships).values({ orgId: org.id, userId: carol.id, role: "owner" });
+    await deps.dbh.db.insert(sessions).values({ id: "sess-carol", userId: carol.id, expiresAt: new Date(Date.now() + 3600_000) });
+    const carolCookie = "console_session=sess-carol";
+
+    const status = await app.inject({ method: "GET", url: "/api/setup/status", headers: { cookie: carolCookie } });
+    expect(status.json().canEditApp).toBe(false);
+
+    const edit = await post({ ...VALID, appId: "999" }, { cookie: carolCookie });
+    expect(edit.statusCode).toBe(403);
+  });
+
+  it("hides App credentials from a factory member who does not own the GitHub App", async () => {
+    expect((await post(VALID)).statusCode).toBe(200);
+
+    const bob = (
+      await deps.dbh.db
+        .insert(users)
+        .values({ ghUserId: 99, login: "bob", encryptedOauthToken: encryptSecret("gho_bob", MASTER_KEY) })
+        .returning()
+    )[0]!;
+    const org = (await deps.dbh.db.select().from(orgs).limit(1))[0]!;
+    await deps.dbh.db.insert(memberships).values({ orgId: org.id, userId: bob.id, role: "member" });
+    await deps.dbh.db.insert(sessions).values({ id: "sess-bob", userId: bob.id, expiresAt: new Date(Date.now() + 3600_000) });
+    const bobCookie = "console_session=sess-bob";
+
+    const status = await app.inject({ method: "GET", url: "/api/setup/status", headers: { cookie: bobCookie } });
+    expect(status.json().canEditApp).toBe(false);
+
+    const edit = await post({ ...VALID, appId: "999" }, { cookie: bobCookie });
+    expect(edit.statusCode).toBe(403);
   });
 });

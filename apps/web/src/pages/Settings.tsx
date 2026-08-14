@@ -33,12 +33,11 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
  */
 export function SettingsPage({ me }: { me: Me }) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
-  const factoryAdmin = me.orgs.some((o) => o.role === "owner" || o.role === "admin") || Boolean(setup.data?.canEditApp);
 
   return (
     <div>
       <h1>Settings</h1>
-      {factoryAdmin && setup.data && <GitHubAppSection status={setup.data} />}
+      {setup.data?.canEditApp && setup.data && <GitHubAppSection status={setup.data} />}
       {me.orgs.map((o) => (
         <OrgSettingsCard key={o.id} orgId={o.id} />
       ))}
@@ -54,8 +53,8 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
       <h2>GitHub App</h2>
       <p className="muted">
         The factory is a SaaS: one GitHub App signs every customer in and is installed on every organisation that wants
-        the factory. Prefer pinning it with <code>GITHUB_APP_*</code> secrets on the host. This form is for a factory
-        admin to set or rotate it after signing in.
+        the factory. Prefer pinning it with <code>GITHUB_APP_*</code> secrets on the host. This form is for the GitHub
+        App owner to set or rotate it after signing in.
       </p>
       {status.configured ? (
         <div className="banner info">
@@ -85,7 +84,7 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
           <AppCredentialsForm status={status} onSaved={() => void qc.invalidateQueries({ queryKey: ["setup"] })} />
         </>
       ) : (
-        <p className="muted">Only a factory admin can change these credentials.</p>
+        <p className="muted">Only the GitHub App owner can change these credentials.</p>
       )}
     </div>
   );

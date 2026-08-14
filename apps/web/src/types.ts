@@ -10,7 +10,7 @@ export interface SetupStatus {
   clientId: string | null;
   /** Whether a webhook secret is stored (the secret itself never leaves the API). */
   hasWebhookSecret: boolean;
-  /** Whether this browser could save a change to the App registration. */
+  /** Whether this signed-in user owns the GitHub App (and may open Settings). */
   canEditApp: boolean;
   hasMasterKey: boolean;
   /** Set when a stored registration exists but cannot be decrypted. */

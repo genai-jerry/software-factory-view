@@ -4,9 +4,9 @@ import { decryptSecret } from "./crypto.js";
 /**
  * Where the Console's own GitHub App credentials come from.
  *
- * Precedence: the database row (written by a factory admin in Settings) wins
+ * Precedence: the database row (written by the GitHub App owner in Settings) wins
  * over environment variables. Pin GITHUB_APP_* secrets to bootstrap sign-in;
- * an admin can rotate the App after logging in without a redeploy.
+ * the owner can rotate the App after logging in without a redeploy.
  *
  * CONSOLE_MASTER_KEY is the one credential that must live in the environment:
  * it is what decrypts everything else.
@@ -46,11 +46,20 @@ export interface CredentialStoreOptions {
   };
 }
 
+type GitHubAppInfo = {
+  id: number;
+  slug: string;
+  name: string;
+  html_url: string;
+  client_id: string;
+  owner?: { id?: number; login?: string; type?: string };
+};
+
 export class CredentialStore {
   private cached: ResolvedAppCredentials | null = null;
   private lastError: string | null = null;
-  /** Slug fetched from GitHub when the stored/env credentials omit it. */
-  private fetchedSlug: string | null | undefined = undefined;
+  /** GET /app, including owner — cached so Settings gating does not hit GitHub on every page load. */
+  private fetchedAppInfo: GitHubAppInfo | null | undefined = undefined;
 
   constructor(private readonly opts: CredentialStoreOptions) {}
 
@@ -58,7 +67,7 @@ export class CredentialStore {
   invalidate(): void {
     this.cached = null;
     this.lastError = null;
-    this.fetchedSlug = undefined;
+    this.fetchedAppInfo = undefined;
   }
 
   /**
@@ -128,14 +137,22 @@ export class CredentialStore {
     const creds = await this.resolve();
     if (!creds) return null;
     if (creds.slug) return creds.slug;
-    if (this.fetchedSlug !== undefined) return this.fetchedSlug;
+    return (await this.resolveAppInfo())?.slug ?? null;
+  }
+
+  /**
+   * GET /app for the registered credentials. Null when the Console has no App,
+   * or GitHub could not be reached. Cached until invalidate().
+   */
+  async resolveAppInfo(): Promise<GitHubAppInfo | null> {
+    if (this.fetchedAppInfo !== undefined) return this.fetchedAppInfo;
     try {
       const auth = await this.auth();
-      this.fetchedSlug = auth ? (await auth.appInfo()).slug : null;
+      this.fetchedAppInfo = auth ? await auth.appInfo() : null;
     } catch {
-      this.fetchedSlug = null;
+      this.fetchedAppInfo = null;
     }
-    return this.fetchedSlug;
+    return this.fetchedAppInfo;
   }
 
   /** The App auth handle, or null when the Console has no App registered yet. */

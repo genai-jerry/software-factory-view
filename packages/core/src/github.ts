@@ -89,7 +89,14 @@ export class AppAuth {
   }
 
   /** The authenticated App (app JWT). Used to recover the slug when credentials come from the environment. */
-  async appInfo(): Promise<{ id: number; slug: string; name: string; html_url: string; client_id: string }> {
+  async appInfo(): Promise<{
+    id: number;
+    slug: string;
+    name: string;
+    html_url: string;
+    client_id: string;
+    owner?: { id?: number; login?: string; type?: string };
+  }> {
     const jwt = await this.appJwt();
     const { json } = await ghFetch(this.cfg.apiUrl, jwt, "GET", "/app");
     return json as never;
@@ -508,6 +515,16 @@ export class UserClient extends RepoReader {
 
   async me(): Promise<{ id: number; login: string; name: string | null; avatar_url: string }> {
     return (await this.req("GET", "/user")) as never;
+  }
+
+  /** This user's membership in a GitHub organisation, if they have one. */
+  async orgMembership(org: string): Promise<{ role: string; state: string } | null> {
+    try {
+      return (await this.req("GET", `/user/memberships/orgs/${encodeURIComponent(org)}`)) as { role: string; state: string };
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 403 || e.status === 404)) return null;
+      throw e;
+    }
   }
 
   /**

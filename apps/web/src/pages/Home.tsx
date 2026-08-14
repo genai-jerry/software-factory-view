@@ -5,7 +5,7 @@ import { ConnectEstate } from "./Onboarding.js";
 
 /**
  * Front door for a SaaS factory. The GitHub App is a platform credential
- * (environment secrets, editable later by a factory admin in Settings). New
+ * (environment secrets, editable later by the GitHub App owner in Settings). New
  * users sign in with GitHub and connect an organisation. Returning users with
  * an estate never see this; `/` is mission control for them.
  */

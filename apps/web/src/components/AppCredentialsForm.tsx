@@ -78,7 +78,7 @@ export function AppCredentialsForm({ status, onSaved }: { status: SetupStatus; o
       )}
       {!status.canEditApp && (
         <div className="banner error">
-          <strong>Only a factory admin can save these.</strong> Pin{" "}
+          <strong>Only the GitHub App owner can save these.</strong> Pin{" "}
           <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_PRIVATE_KEY</code>, <code>GITHUB_OAUTH_CLIENT_ID</code> and{" "}
           <code>GITHUB_OAUTH_CLIENT_SECRET</code> as host secrets if sign-in itself is broken.
         </div>

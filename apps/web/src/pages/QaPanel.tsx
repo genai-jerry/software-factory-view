@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
-import type { Citation, QaData } from "../types.js";
+import type { Citation, QaData, SetupStatus } from "../types.js";
 
 /** One panel, two scopes (plan 07 §5): the epic workspace's context rail and
  * the peek drawer's issue scope share everything but corpus and prompts. */
@@ -27,6 +27,7 @@ export function QaPanel({ scope }: { scope: QaScope }) {
   const base = scope.kind === "epic" ? `/api/epics/${scope.id}/qa` : `/api/issues/${scope.id}/qa`;
   const queryKey = ["qa", scope.kind, scope.id];
   const qa = useQuery({ queryKey, queryFn: () => api.get<QaData>(base) });
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status"), retry: false });
   const [question, setQuestion] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
 
@@ -46,7 +47,15 @@ export function QaPanel({ scope }: { scope: QaScope }) {
       <h3>Ask the Factory</h3>
       {qa.data && !qa.data.enabled && (
         <p className="muted">
-          Not configured — set this org's model and API key in <a href="/settings">Settings</a> (or ANTHROPIC_API_KEY on the API).
+          Not configured —{" "}
+          {setup.data?.canEditApp ? (
+            <>
+              set this org's model and API key in <a href="/settings">Settings</a>
+            </>
+          ) : (
+            <>the GitHub App owner can set this org's model and API key in Settings</>
+          )}{" "}
+          (or ANTHROPIC_API_KEY on the API).
         </p>
       )}
       {qa.data?.budget && (

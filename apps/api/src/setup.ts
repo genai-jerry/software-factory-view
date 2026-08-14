@@ -2,12 +2,12 @@ import { AppAuth, buildAppManifest, encryptSecret, randomToken, toPkcs8 } from "
 import { githubAppConfig, memberships, orgs, users } from "@console/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { resolveSession, type AppDeps, type RequestCtx } from "./context.js";
+import { resolveSession, userClient, type AppDeps, type RequestCtx } from "./context.js";
 import { connectInstallation } from "./routes/estates.js";
 
 /**
  * GitHub App credentials for this SaaS Console. The platform App is pinned
- * with GITHUB_APP_* environment secrets; a factory admin may also set or
+ * with GITHUB_APP_* environment secrets; the GitHub App owner may also set or
  * rotate it from Settings after signing in.
  *
  * The same endpoint edits a stored registration (see setupAccess for who
@@ -87,7 +87,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       return reply
         .code(403)
         .type("text/html")
-        .send(page("Not allowed", "<p>Only a factory admin can create or change the GitHub App. Sign in first.</p>"));
+        .send(page("Not allowed", "<p>Only the GitHub App owner can create or change these credentials. Sign in first.</p>"));
     }
 
     const state = randomToken(16);
@@ -205,7 +205,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
 
     const { allowed, ctx } = await setupAccess(deps, req);
-    if (!allowed) return reply.code(403).send({ error: "only a factory admin can change the GitHub App" });
+    if (!allowed) return reply.code(403).send({ error: "only the GitHub App owner can change these credentials" });
 
     const key = deps.cfg.CONSOLE_MASTER_KEY;
     if (!key) return reply.code(400).send({ error: "CONSOLE_MASTER_KEY is not set on the API — credentials cannot be stored" });
@@ -309,18 +309,23 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 }
 
 /**
- * Who may register or edit the factory's GitHub App.
+ * Who may register or edit the factory's GitHub App — and who sees Settings.
  *
- * Never anonymous. The App is a SaaS platform credential: it is pinned with
- * GITHUB_APP_* secrets, and only a factory admin may change it after signing
- * in. Owners and admins of any org qualify; on a fresh Console the first
- * signed-in user (no memberships yet) may set it so they are not locked out
- * before connecting an estate.
+ * Never anonymous. Once the App is registered, only its GitHub owner (the
+ * user who owns it, or an admin of the owning organisation) may change it or
+ * open Settings. On a fresh Console with no App yet, an org owner/admin — or
+ * the first signed-in user, if nobody has connected an estate — may register
+ * it so they are not locked out.
  */
 async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
   const db = deps.dbh.db;
   const ctx = await resolveSession(db, deps.cfg, req);
   if (!ctx) return { allowed: false, ctx: null };
+
+  if (await deps.credentials.isConfigured()) {
+    return { allowed: await isGitHubAppOwner(deps, ctx), ctx };
+  }
+
   const mine = await db.select({ role: memberships.role }).from(memberships).where(eq(memberships.userId, ctx.userId));
   if (mine.some((m) => m.role === "owner" || m.role === "admin")) return { allowed: true, ctx };
   if (mine.length === 0) {
@@ -328,6 +333,31 @@ async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowe
     return { allowed: anyone.length === 0, ctx };
   }
   return { allowed: false, ctx };
+}
+
+/** The GitHub user or org-admin who owns the registered App. */
+async function isGitHubAppOwner(deps: AppDeps, ctx: RequestCtx): Promise<boolean> {
+  const db = deps.dbh.db;
+  const user = (await db.select({ ghUserId: users.ghUserId, login: users.login }).from(users).where(eq(users.id, ctx.userId)).limit(1))[0];
+  const owner = (await deps.credentials.resolveAppInfo())?.owner;
+
+  if (owner?.type === "Organization" && owner.login) {
+    try {
+      const membership = await userClient(deps, ctx).orgMembership(owner.login);
+      if (membership?.state === "active" && membership.role === "admin") return true;
+    } catch {
+      // Membership lookup failed — do not grant.
+    }
+    return false;
+  }
+
+  if (owner?.id && user?.ghUserId && owner.id === user.ghUserId) return true;
+  if (owner?.login && owner.login.toLowerCase() === ctx.login.toLowerCase()) return true;
+  if (owner?.login || owner?.id) return false;
+
+  // GitHub unreachable or GET /app had no owner — who registered it in the Console.
+  const row = (await db.select({ configuredBy: githubAppConfig.configuredBy }).from(githubAppConfig).limit(1))[0];
+  return Boolean(row?.configuredBy && row.configuredBy.toLowerCase() === ctx.login.toLowerCase());
 }
 
 const manifestStates = new Map<string, number>();

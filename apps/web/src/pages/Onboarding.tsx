@@ -215,7 +215,7 @@ export function ConnectEstate({
       <div className="card">
         <h3>Connect an organisation</h3>
         <p className="muted">
-          The factory GitHub App is not available yet, so installations cannot be listed. A factory admin configures
+          The factory GitHub App is not available yet, so installations cannot be listed. The GitHub App owner configures
           it in Settings after signing in, or pins it with <code>GITHUB_APP_*</code> secrets on the host.
         </p>
         {setup.data.credentialError && <div className="banner error">{setup.data.credentialError}</div>}
