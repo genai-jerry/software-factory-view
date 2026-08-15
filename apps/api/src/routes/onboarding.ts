@@ -488,9 +488,14 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
   });
 
   /**
-   * Reset — open a PR that removes the factory footprint so setup can be run
-   * again. Secrets and labels stay; merging is the human act that turns the
-   * factory off.
+   * Reset — remove the factory footprint so setup can be run again. The
+   * confirm dialog is the human act that turns the factory off: files are
+   * deleted straight from the default branch, and only branch protection
+   * demotes the reset to a PR a human merges. Either way the Console-side
+   * setup history is cleared so the repo reads as clean, and the stale
+   * `factory-console/*` working branches are pruned — a leftover
+   * enable-factory branch is what makes a later stub-files run die with
+   * "No commits between <default> and factory-console/enable-factory".
    */
   app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/reset", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
@@ -505,36 +510,71 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 
       const files = await collectFactoryFootprint(client, owner, name, repo.defaultBranch);
       if (files.length === 0) {
-        return reply.code(409).send({
-          error: "no factory files on this repo — nothing to reset. Run the setup steps instead.",
-        });
+        // Already clean on GitHub — the remaining footprint is Console state
+        // (green step badges from the previous setup) and stale branches.
+        await pruneFactoryBranches(client, owner, name);
+        await clearSetupState(deps, repo);
+        await recordStep(deps, repo, "reset", "ok", { mode: "clean", removed: [] });
+        return { ok: true, mode: "clean", removed: [], defaultBranch: repo.defaultBranch };
       }
 
-      const branch = "factory-console/reset-factory";
-      if (!(await client.getBranchHeadSha(owner, name, branch))) {
-        await client.createBranch(owner, name, branch, headSha);
-      }
-
+      const removed: string[] = [];
+      let blocked: GitHubHttpError | null = null;
       for (const file of files) {
-        const onBranch = await client.getFileAtRef(owner, name, file.path, branch);
-        if (!onBranch) continue;
-        await client.deleteFile(owner, name, file.path, {
-          message: `factory: remove ${file.path}`,
-          sha: onBranch.sha,
-          branch,
-        });
+        try {
+          await client.deleteFile(owner, name, file.path, {
+            message: `factory: remove ${file.path}`,
+            sha: file.sha,
+            branch: repo.defaultBranch,
+          });
+          removed.push(file.path);
+        } catch (e) {
+          // 403/409/422 are how GitHub says "not on this branch directly" —
+          // protection rules, required PRs, push restrictions. Anything else
+          // (rate limit, 5xx) is a real failure and aborts the reset.
+          if (e instanceof GitHubHttpError && [403, 409, 422].includes(e.status) && removed.length === 0) {
+            blocked = e;
+            break;
+          }
+          throw e;
+        }
       }
 
-      const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
-        title: "Remove the software factory from this repository",
-        body: RESET_PR_BODY(files.map((f) => f.path)),
-      });
-      await recordStep(deps, repo, "reset", "ok", {
-        prNumber: pr.number,
-        prUrl: pr.html_url,
-        removed: files.map((f) => f.path),
-      });
-      return { ok: true, prNumber: pr.number, prUrl: pr.html_url, removed: files.map((f) => f.path) };
+      if (blocked) {
+        // Fall back to the PR flow: deletions land on a working branch and a
+        // human merge finishes the reset. Setup history is kept — the repo is
+        // not clean until that PR merges; a second Reset after merging clears it.
+        const branch = "factory-console/reset-factory";
+        if (!(await client.getBranchHeadSha(owner, name, branch))) {
+          await client.createBranch(owner, name, branch, headSha);
+        }
+        for (const file of files) {
+          const onBranch = await client.getFileAtRef(owner, name, file.path, branch);
+          if (!onBranch) continue;
+          await client.deleteFile(owner, name, file.path, {
+            message: `factory: remove ${file.path}`,
+            sha: onBranch.sha,
+            branch,
+          });
+        }
+        const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
+          title: "Remove the software factory from this repository",
+          body: RESET_PR_BODY(files.map((f) => f.path)),
+        });
+        await recordStep(deps, repo, "reset", "pending", {
+          mode: "pr",
+          prNumber: pr.number,
+          prUrl: pr.html_url,
+          removed: files.map((f) => f.path),
+          reason: blocked.message,
+        });
+        return { ok: true, mode: "pr", prNumber: pr.number, prUrl: pr.html_url, removed: files.map((f) => f.path) };
+      }
+
+      await pruneFactoryBranches(client, owner, name);
+      await clearSetupState(deps, repo);
+      await recordStep(deps, repo, "reset", "ok", { mode: "direct", removed, branch: repo.defaultBranch });
+      return { ok: true, mode: "direct", removed, defaultBranch: repo.defaultBranch };
     } catch (err) {
       await recordStep(deps, repo, "reset", "failed", { error: (err as Error).message });
       return reply.code(502).send({ error: (err as Error).message });
@@ -832,6 +872,34 @@ This PR passes secrets by name and sets \`factory_repo\` to the factory that the
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
 `;
 
+/**
+ * The Console-side branches setup works on. Left behind after a reset they
+ * poison the next enablement: the old branch no longer differs from the
+ * default branch, so createPull 422s with "No commits between …".
+ */
+const FACTORY_WORK_BRANCHES = ["factory-console/enable-factory", "factory-console/fix-caller-stub", "factory-console/reset-factory"];
+
+/** Best-effort: a branch that cannot be pruned must not fail the reset. */
+async function pruneFactoryBranches(client: InstallationClient, owner: string, name: string): Promise<void> {
+  for (const branch of FACTORY_WORK_BRANCHES) {
+    try {
+      await client.deleteBranch(owner, name, branch);
+    } catch {
+      // Protected or otherwise refused — setup recreates branches it needs.
+    }
+  }
+}
+
+/**
+ * Forget the recorded setup history so the repo reads as "needs setup" again,
+ * not as six green steps over files that no longer exist. The reset row itself
+ * is re-recorded by the caller after this runs.
+ */
+async function clearSetupState(deps: AppDeps, repo: { id: string; orgId: string; estateId: string }): Promise<void> {
+  await deps.dbh.db.delete(onboardingRuns).where(eq(onboardingRuns.repoId, repo.id));
+  await deps.dbh.db.update(repos).set({ factoryEnabled: false, profileSha: null }).where(eq(repos.id, repo.id));
+}
+
 /** Known files the enablement PR writes, plus later factory extras. */
 const FACTORY_RESET_FILES = [
   ".github/workflows/factory-pipeline.yml",
@@ -850,13 +918,13 @@ const FACTORY_RESET_DIRS = ["openspec", ".factory", ".claude/commands/opsx"];
 const FACTORY_RESET_MAX_FILES = 200;
 
 function RESET_PR_BODY(paths: string[]): string {
-  return `This PR removes the software factory from this repository so you can run setup again.
+  return `This PR removes the software factory from this repository so you can run setup again. Branch protection on the default branch prevented the Console from deleting these files directly, so a human merge finishes the reset.
 
 Files to delete:
 
 ${paths.map((p) => `- \`${p}\``).join("\n")}
 
-**Not touched:** \`CLAUDE.md\`, Actions secrets, and \`factory:*\` labels. Merge this PR, then return to the Console and run the setup steps.
+**Not touched:** \`CLAUDE.md\`, Actions secrets, and \`factory:*\` labels. Merge this PR, then press **Reset factory** in the Console once more — it will see the repo is clean, clear the recorded setup steps, and show you the re-enable checklist.
 
 ---
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_

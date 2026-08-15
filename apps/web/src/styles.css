@@ -27,6 +27,8 @@
   --error-fg: #e89a97;
   --info-bg: #16283a;
   --info-fg: #9ec7ef;
+  --ok-bg: #16301f;
+  --ok-fg: #8fd4ab;
   --overlay: rgba(0, 0, 0, 0.55);
   font-size: 15px;
   color-scheme: dark;
@@ -54,6 +56,8 @@
   --error-fg: #8f2f2b;
   --info-bg: #e2eefb;
   --info-fg: #24537f;
+  --ok-bg: #e2f5e9;
+  --ok-fg: #175c34;
   --overlay: rgba(15, 20, 24, 0.35);
   color-scheme: light;
 }
@@ -81,6 +85,8 @@
     --error-fg: #8f2f2b;
     --info-bg: #e2eefb;
     --info-fg: #24537f;
+    --ok-bg: #e2f5e9;
+    --ok-fg: #175c34;
     --overlay: rgba(15, 20, 24, 0.35);
     color-scheme: light;
   }
@@ -145,6 +151,7 @@ textarea { min-height: 5rem; resize: vertical; }
 .banner.stale { background: var(--warn-bg); border: 1px solid var(--amber); color: var(--warn-fg); }
 .banner.error { background: var(--error-bg); border: 1px solid var(--red); color: var(--error-fg); }
 .banner.info { background: var(--info-bg); border: 1px solid var(--accent); color: var(--info-fg); }
+.banner.success { background: var(--ok-bg); border: 1px solid var(--green); color: var(--ok-fg); }
 
 .card {
   background: var(--bg-panel);

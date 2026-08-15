@@ -479,6 +479,16 @@ export class InstallationClient extends RepoReader {
     await this.req("POST", `/repos/${owner}/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: fromSha });
   }
 
+  /** Delete a branch ref; a branch that is already gone is success, not failure. */
+  async deleteBranch(owner: string, repo: string, branch: string): Promise<void> {
+    try {
+      await this.req("DELETE", `/repos/${owner}/${repo}/git/refs/heads/${encodePath(branch)}`);
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 404 || e.status === 422)) return;
+      throw e;
+    }
+  }
+
   async putFile(
     owner: string,
     repo: string,
