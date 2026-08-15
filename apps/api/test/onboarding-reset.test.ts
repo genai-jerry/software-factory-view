@@ -3,6 +3,7 @@ import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { estates, memberships, orgs, repos, sessions, users, onboardingRuns } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
+import { eq } from "drizzle-orm";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +12,11 @@ import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 
 /**
- * Reset opens a PR that deletes the factory footprint so setup can be run
- * again. It must not merge, must not touch secrets/labels/CLAUDE.md, and must
- * refuse when there is nothing factory-related on the default branch.
+ * Reset deletes the factory footprint straight from the default branch, clears
+ * the recorded setup steps, and prunes stale factory-console/* branches so a
+ * later enablement run does not 422 on "No commits between …". Branch
+ * protection demotes it to a PR a human merges. It must never touch
+ * secrets/labels/CLAUDE.md.
  */
 
 const MASTER_KEY = randomBytes(32).toString("base64");
@@ -26,6 +29,8 @@ const PKCS8 = generateKeyPairSync("rsa", {
 let deps: AppDeps;
 let app: Awaited<ReturnType<typeof buildApp>>;
 let repoId: string;
+let orgId: string;
+let estateId: string;
 let calls: string[];
 let routes: Array<[string, { status?: number; body: unknown }]>;
 
@@ -44,6 +49,13 @@ const fileBody = (sha: string, text = "x") => ({
   sha,
   encoding: "base64",
 });
+
+/** Recorded step rows a reset is expected to wipe. */
+const seedSteps = () =>
+  deps.dbh.db.insert(onboardingRuns).values([
+    { orgId, estateId, repoId, step: "labels", status: "ok", detail: { found: 14 }, updatedAt: new Date() },
+    { orgId, estateId, repoId, step: "validate", status: "ok", detail: { checks: [] }, updatedAt: new Date() },
+  ]);
 
 beforeEach(async () => {
   const pg = new PGlite();
@@ -77,15 +89,25 @@ beforeEach(async () => {
       .returning()
   )[0]!;
   const org = (await deps.dbh.db.insert(orgs).values({ name: "acme" }).returning())[0]!;
+  orgId = org.id;
   await deps.dbh.db.insert(memberships).values({ orgId: org.id, userId: user.id, role: "owner" });
   await deps.dbh.db.insert(sessions).values({ id: "sess-1", userId: user.id, expiresAt: new Date(Date.now() + 3600_000) });
   const estate = (
     await deps.dbh.db.insert(estates).values({ orgId: org.id, name: "acme", installationId: 99 }).returning()
   )[0]!;
+  estateId = estate.id;
   repoId = (
     await deps.dbh.db
       .insert(repos)
-      .values({ orgId: org.id, estateId: estate.id, ghNodeId: "R_1", fullName: "acme/api", defaultBranch: "main" })
+      .values({
+        orgId: org.id,
+        estateId: estate.id,
+        ghNodeId: "R_1",
+        fullName: "acme/api",
+        defaultBranch: "main",
+        factoryEnabled: true,
+        profileSha: "p1",
+      })
       .returning()
   )[0]!.id;
 
@@ -96,15 +118,26 @@ beforeEach(async () => {
     ["GET /repos/acme/api/branches/factory-console%2Freset-factory", { status: 404, body: { message: "Not Found" } }],
     ["GET /repos/acme/api/contents/.github/workflows/factory-pipeline.yml", { body: fileBody("s1", "name: Factory pipeline\n") }],
     ["GET /repos/acme/api/contents/", { status: 404, body: { message: "Not Found" } }],
-    ["POST /repos/acme/api/git/refs", { body: { ref: "refs/heads/factory-console/reset-factory" } }],
     ["DELETE /repos/acme/api/contents/", { body: {} }],
+    ["DELETE /repos/acme/api/git/refs/heads/", { status: 204, body: null }],
+    ["POST /repos/acme/api/git/refs", { body: { ref: "refs/heads/factory-console/reset-factory" } }],
     ["POST /repos/acme/api/pulls", { body: { number: 12, html_url: "https://github.com/acme/api/pull/12" } }],
   ];
 
-  vi.stubGlobal("fetch", async (url: string | URL, init?: { method?: string }) => {
+  vi.stubGlobal("fetch", async (url: string | URL, init?: { method?: string; body?: string }) => {
     const path = String(url).replace(/^https:\/\/[^/]+/, "");
     const method = init?.method ?? "GET";
-    const key = `${method} ${path}`;
+    // Contents-API writes carry the target branch in the body, not the URL —
+    // surface it in the call key so tests can tell direct deletes from
+    // fallback-branch deletes.
+    let branch = "";
+    try {
+      const parsed = init?.body ? (JSON.parse(init.body) as { branch?: string }) : null;
+      if (parsed?.branch) branch = ` branch=${parsed.branch}`;
+    } catch {
+      /* not JSON */
+    }
+    const key = `${method} ${path}${branch}`;
     calls.push(key);
     const hit = routes.find(([match]) => key.includes(match));
     if (!hit) throw new Error(`unstubbed GitHub call: ${key}`);
@@ -118,45 +151,89 @@ beforeEach(async () => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-const stepRow = async () => (await deps.dbh.db.select().from(onboardingRuns)).find((r) => r.step === "reset");
+const stepRows = async () => await deps.dbh.db.select().from(onboardingRuns);
+const repoRow = async () => (await deps.dbh.db.select().from(repos).where(eq(repos.id, repoId)))[0]!;
 
 describe("the reset action", () => {
-  it("opens a PR that deletes factory files and does not merge it", async () => {
+  it("deletes factory files from the default branch, clears steps, and marks the repo clean", async () => {
+    await seedSteps();
+
     const res = await post();
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({
       ok: true,
+      mode: "direct",
+      removed: [".github/workflows/factory-pipeline.yml"],
+      defaultBranch: "main",
+    });
+
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml") && c.endsWith("branch=main"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("POST /repos/acme/api/pulls"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("POST /repos/acme/api/git/refs"))).toBe(false);
+    expect(calls.some((c) => c.includes("/merges") || c.includes("/merge"))).toBe(false);
+    expect(calls.some((c) => c.includes("CLAUDE.md"))).toBe(false);
+    expect(calls.some((c) => c.includes("/actions/secrets"))).toBe(false);
+    expect(calls.some((c) => c.includes("/labels"))).toBe(false);
+
+    // Stale working branches are pruned so the next enablement PR can be created.
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/git/refs/heads/factory-console/enable-factory"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/git/refs/heads/factory-console/reset-factory"))).toBe(true);
+
+    // Console-side state reads as clean: only the reset row remains, factory off.
+    const rows = await stepRows();
+    expect(rows.map((r) => r.step)).toEqual(["reset"]);
+    expect(rows[0]).toMatchObject({ step: "reset", status: "ok" });
+    expect(rows[0]!.detail).toMatchObject({ mode: "direct", removed: [".github/workflows/factory-pipeline.yml"] });
+    expect(await repoRow()).toMatchObject({ factoryEnabled: false, profileSha: null });
+  });
+
+  it("falls back to a PR when branch protection refuses the direct delete, and keeps step history", async () => {
+    await seedSteps();
+    reply(
+      "DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml branch=main",
+      { message: "Changes must be made through a pull request." },
+      409,
+    );
+
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      mode: "pr",
       prNumber: 12,
       prUrl: "https://github.com/acme/api/pull/12",
       removed: [".github/workflows/factory-pipeline.yml"],
     });
 
     expect(calls.some((c) => c.startsWith("POST /repos/acme/api/git/refs"))).toBe(true);
-    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml") && c.endsWith("branch=factory-console/reset-factory"))).toBe(true);
     expect(calls.some((c) => c.startsWith("POST /repos/acme/api/pulls"))).toBe(true);
-    expect(calls.some((c) => c.includes("/merges") || c.includes("/merge"))).toBe(false);
-    expect(calls.some((c) => c.includes("CLAUDE.md"))).toBe(false);
-    expect(calls.some((c) => c.includes("/actions/secrets"))).toBe(false);
-    expect(calls.some((c) => c.includes("/labels"))).toBe(false);
-
-    const step = await stepRow();
-    expect(step).toMatchObject({ step: "reset", status: "ok" });
-    expect(step!.detail).toMatchObject({ prNumber: 12, prUrl: "https://github.com/acme/api/pull/12" });
+    // Not clean until the PR merges: steps stay, factory flag stays, branches stay.
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/git/refs/heads/"))).toBe(false);
+    const rows = await stepRows();
+    expect(rows.map((r) => r.step).sort()).toEqual(["labels", "reset", "validate"]);
+    expect(rows.find((r) => r.step === "reset")).toMatchObject({ status: "pending" });
+    expect(await repoRow()).toMatchObject({ factoryEnabled: true });
   });
 
-  it("refuses when the default branch has no factory files, and creates no branch", async () => {
+  it("treats a repo with no factory files as already clean and clears the recorded steps", async () => {
+    await seedSteps();
     reply("GET /repos/acme/api/contents/.github/workflows/factory-pipeline.yml", { message: "Not Found" }, 404);
 
     const res = await post();
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error).toMatch(/nothing to reset/);
-    expect(calls.some((c) => c.startsWith("POST /repos/acme/api/git/refs"))).toBe(false);
-    expect(calls.some((c) => c.startsWith("DELETE "))).toBe(false);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, mode: "clean", removed: [], defaultBranch: "main" });
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/"))).toBe(false);
     expect(calls.some((c) => c.startsWith("POST /repos/acme/api/pulls"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/git/refs/heads/factory-console/enable-factory"))).toBe(true);
+
+    const rows = await stepRows();
+    expect(rows.map((r) => r.step)).toEqual(["reset"]);
+    expect(rows[0]!.detail).toMatchObject({ mode: "clean", removed: [] });
+    expect(await repoRow()).toMatchObject({ factoryEnabled: false, profileSha: null });
   });
 
   it("walks openspec/ and still leaves CLAUDE.md alone", async () => {
-    reply("GET /repos/acme/api/contents/openspec/config.yaml", fileBody("o1", "schema: spec-driven\n"));
     reply("GET /repos/acme/api/contents/openspec?", [
       { path: "openspec/config.yaml", type: "file", sha: "o1" },
     ]);
@@ -164,11 +241,16 @@ describe("the reset action", () => {
     const res = await post();
     expect(res.statusCode).toBe(200);
     expect(res.json().removed).toEqual([".github/workflows/factory-pipeline.yml", "openspec/config.yaml"]);
-    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/openspec/config.yaml"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("DELETE /repos/acme/api/contents/openspec/config.yaml") && c.endsWith("branch=main"))).toBe(true);
     expect(calls.some((c) => c.includes("CLAUDE.md"))).toBe(false);
   });
 
-  it("reuses an existing reset PR instead of opening a second", async () => {
+  it("reuses an existing reset PR instead of opening a second when falling back", async () => {
+    reply(
+      "DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml branch=main",
+      { message: "Changes must be made through a pull request." },
+      409,
+    );
     reply("GET /repos/acme/api/pulls?", [
       {
         number: 9,
@@ -182,7 +264,7 @@ describe("the reset action", () => {
 
     const res = await post();
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, prNumber: 9, prUrl: "https://github.com/acme/api/pull/9" });
+    expect(res.json()).toMatchObject({ ok: true, mode: "pr", prNumber: 9, prUrl: "https://github.com/acme/api/pull/9" });
     expect(calls.some((c) => c.startsWith("POST /repos/acme/api/git/refs"))).toBe(false);
   });
 });

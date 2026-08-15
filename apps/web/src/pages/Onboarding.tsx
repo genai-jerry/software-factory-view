@@ -80,6 +80,47 @@ function githubInstallHref(base: string | null, repositoryIds: number[], state?:
 
 type OnboardingRepo = OnboardingState["repos"][number];
 
+/**
+ * What POST /onboarding/reset did. "direct" deleted the files from the default
+ * branch; "pr" means branch protection forced a PR a human still has to merge;
+ * "clean" means there was nothing left on GitHub and only Console state was
+ * cleared.
+ */
+type ResetOutcome = {
+  ok: boolean;
+  mode: "direct" | "pr" | "clean";
+  removed: string[];
+  prUrl?: string;
+  prNumber?: number;
+  defaultBranch?: string;
+};
+
+/**
+ * Reconstructed from the recorded reset step, not component state: the card
+ * remounts when a reset moves the repo between the "Setup" and "Needs setup"
+ * groups, and the outcome must also survive a page reload.
+ */
+function resetOutcomeFromSteps(repo: OnboardingRepo): ResetOutcome | null {
+  const s = repo.steps["reset"];
+  if (!s) return null;
+  const d = s.detail as { mode?: unknown; removed?: unknown; prUrl?: unknown; prNumber?: unknown; branch?: unknown };
+  if (d.mode !== "direct" && d.mode !== "pr" && d.mode !== "clean") return null; // legacy PR-only detail
+  return {
+    ok: true,
+    mode: d.mode,
+    removed: Array.isArray(d.removed) ? d.removed.filter((p): p is string => typeof p === "string") : [],
+    prUrl: typeof d.prUrl === "string" ? d.prUrl : undefined,
+    prNumber: typeof d.prNumber === "number" ? d.prNumber : undefined,
+    defaultBranch: typeof d.branch === "string" ? d.branch : undefined,
+  };
+}
+
+/** True once a reset finished and no setup step has been run since. */
+function isRepoClean(repo: OnboardingRepo): boolean {
+  if (repo.steps["reset"]?.status !== "ok") return false;
+  return !repo.factoryEnabled && SETUP_STEPS.every((s) => !repo.steps[s]);
+}
+
 const SETUP_STEPS = ["labels", "secrets", "openspec", "stubs", "profile", "validate"] as const;
 const STEP_TITLES: Record<(typeof SETUP_STEPS)[number], string> = {
   labels: "Labels",
@@ -100,6 +141,7 @@ function stepProgress(repo: OnboardingRepo): { done: number; total: number } {
 }
 
 function collapsedSummary(repo: OnboardingRepo): string {
+  if (isRepoClean(repo)) return "Factory removed — this repo is clean. Run the steps whenever you want to re-enable it.";
   const failed = SETUP_STEPS.find((s) => repo.steps[s]?.status === "failed");
   if (failed) {
     const err = repo.steps[failed]?.detail["error"];
@@ -595,6 +637,7 @@ function RepoOnboarding({
 }) {
   const setup = isRepoSetup(repo);
   const progress = stepProgress(repo);
+  const resetOutcome = resetOutcomeFromSteps(repo);
   const [open, setOpen] = useState(defaultOpen ?? !setup);
   const [error, setError] = useState<string | null>(null);
   const [secretName, setSecretName] = useState("CLAUDE_CODE_OAUTH_TOKEN");
@@ -619,9 +662,10 @@ function RepoOnboarding({
   });
 
   const reset = useMutation({
-    mutationFn: () => api.post<Record<string, unknown>>(`/api/repos/${repo.repoId}/onboarding/reset`),
-    onSuccess: () => {
+    mutationFn: () => api.post<ResetOutcome>(`/api/repos/${repo.repoId}/onboarding/reset`),
+    onSuccess: (r) => {
       setError(null);
+      if (r.mode !== "pr") setValidation(null);
       setOpen(true);
       onChanged();
     },
@@ -634,7 +678,7 @@ function RepoOnboarding({
   const confirmReset = () => {
     if (
       !window.confirm(
-        "Open a PR that removes factory files from this repo? Secrets, labels, and CLAUDE.md stay. Merge the PR, then run setup again.",
+        "Remove all factory files from this repo? They are deleted from the default branch right away (branch protection turns this into a PR you merge instead). Secrets, labels, and CLAUDE.md stay.",
       )
     ) {
       return;
@@ -675,6 +719,8 @@ function RepoOnboarding({
           {repo.fullName}{" "}
           {setup ? (
             <span className="badge merge">Setup</span>
+          ) : isRepoClean(repo) ? (
+            <span className="badge merge">Clean — factory removed</span>
           ) : (
             <span className="badge task-start">
               {progress.done === 0 ? "Needs setup" : `${progress.done} of ${progress.total} steps`}
@@ -697,16 +743,10 @@ function RepoOnboarding({
             : collapsedSummary(repo)}
         </p>
       )}
-      {typeof repo.steps["reset"]?.detail["prUrl"] === "string" && (
-        <p className="muted" style={{ margin: "0.4rem 0 0" }}>
-          →{" "}
-          <a href={repo.steps["reset"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">
-            reset PR
-          </a>{" "}
-          — merge it, then run setup again. Secrets and labels stay.
-        </p>
-      )}
       {error && open && <div className="banner error">{error}</div>}
+      {resetOutcome && (resetOutcome.mode === "pr" ? repo.steps["reset"]?.status === "pending" : isRepoClean(repo)) && (
+        <ResetOutcomePanel outcome={resetOutcome} />
+      )}
       {open && (
         <>
       <div className="check-row">
@@ -842,9 +882,9 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>Reset</strong> — open a PR that deletes factory workflows, OpenSpec, and{" "}
-          <code>.factory/profile.json</code>. Secrets, labels, and <code>CLAUDE.md</code> stay. Merge it, then run setup
-          again. {stepBadge("reset")}
+          <strong>Reset</strong> — delete factory workflows, OpenSpec, and <code>.factory/profile.json</code> from the
+          default branch and clear the recorded steps above (branch protection turns this into a PR you merge instead).
+          Secrets, labels, and <code>CLAUDE.md</code> stay. {stepBadge("reset")}
         </span>
         <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
           {reset.isPending ? "Resetting…" : "Reset factory…"}
@@ -852,6 +892,81 @@ function RepoOnboarding({
       </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Post-reset feedback: what actually happened, what was deliberately left in
+ * place, and what to do next — so the operator is never staring at six stale
+ * green badges wondering whether the reset took.
+ */
+function ResetOutcomePanel({ outcome }: { outcome: ResetOutcome }) {
+  if (outcome.mode === "pr") {
+    return (
+      <div className="banner stale" style={{ marginTop: "0.6rem" }}>
+        <strong>Reset needs a merge.</strong> Branch protection on the default branch stops the Console from deleting
+        files directly, so it opened{" "}
+        {outcome.prUrl ? (
+          <a href={outcome.prUrl} target="_blank" rel="noreferrer">
+            a reset PR{outcome.prNumber ? ` (#${outcome.prNumber})` : ""}
+          </a>
+        ) : (
+          "a reset PR"
+        )}{" "}
+        deleting {outcome.removed.length} file{outcome.removed.length === 1 ? "" : "s"}.
+        <ol style={{ margin: "0.4rem 0 0 1.2rem", padding: 0 }}>
+          <li>Merge the reset PR on GitHub.</li>
+          <li>
+            Press <strong>Reset factory</strong> here once more — the Console will confirm the repo is clean and clear
+            the recorded setup steps.
+          </li>
+        </ol>
+      </div>
+    );
+  }
+
+  return (
+    <div className="banner success" style={{ marginTop: "0.6rem" }}>
+      <strong>
+        {outcome.mode === "clean"
+          ? "This repo was already clean — no factory files found on GitHub."
+          : `Factory removed — ${outcome.removed.length} file${outcome.removed.length === 1 ? "" : "s"} deleted from ${
+              outcome.defaultBranch ?? "the default branch"
+            }.`}
+      </strong>{" "}
+      The recorded setup steps were cleared and leftover <code>factory-console/*</code> branches pruned, so re-running
+      setup starts fresh.
+      {outcome.removed.length > 0 && (
+        <details style={{ margin: "0.35rem 0 0" }}>
+          <summary>Deleted files</summary>
+          <ul style={{ margin: "0.25rem 0 0 1.2rem", padding: 0 }}>
+            {outcome.removed.map((p) => (
+              <li key={p}>
+                <code>{p}</code>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p style={{ margin: "0.4rem 0 0.2rem" }}>
+        <strong>Still in place</strong> (harmless, and reusable if you re-enable): Actions secrets, the{" "}
+        <code>factory:*</code> labels, and <code>CLAUDE.md</code>.
+      </p>
+      <p style={{ margin: "0 0 0.2rem" }}>
+        <strong>Next steps:</strong>
+      </p>
+      <ul style={{ margin: "0 0 0 1.2rem", padding: 0 }}>
+        <li>
+          <strong>To re-enable the factory:</strong> run the steps above top to bottom — Labels and Secret will verify
+          instantly, then merge the fresh enablement PR from step 4.
+        </li>
+        <li>
+          <strong>To leave it off:</strong> nothing else is required. Optionally delete the Actions secret and{" "}
+          <code>factory:*</code> labels on GitHub, close the open <em>Factory: repo profile</em> issue, and remove the
+          repo from the GitHub App installation.
+        </li>
+      </ul>
     </div>
   );
 }
