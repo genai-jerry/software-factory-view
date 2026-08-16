@@ -121,10 +121,11 @@ function isRepoClean(repo: OnboardingRepo): boolean {
   return !repo.factoryEnabled && SETUP_STEPS.every((s) => !repo.steps[s]);
 }
 
-const SETUP_STEPS = ["labels", "secrets", "openspec", "stubs", "profile", "validate"] as const;
+const SETUP_STEPS = ["labels", "secrets", "claude-app", "openspec", "stubs", "profile", "validate"] as const;
 const STEP_TITLES: Record<(typeof SETUP_STEPS)[number], string> = {
   labels: "Labels",
   secrets: "Secret",
+  "claude-app": "Claude GitHub App",
   openspec: "OpenSpec",
   stubs: "Stub files PR",
   profile: "Repo profile",
@@ -784,9 +785,27 @@ function RepoOnboarding({
         </button>
       </div>
 
+      <div className="check-row" style={{ alignItems: "center" }}>
+        <span style={{ flex: 1 }}>
+          <strong>3 · Claude GitHub App</strong> — agent runs exchange an OIDC token for this App's credentials at run
+          time; without it on the repo every run fails with{" "}
+          <em>"Claude Code is not installed on this repository"</em>. GitHub shows an App's installations only to its
+          owner, so once it is installed (with this repo under its repository access), confirm here. {stepBadge("claude-app")}
+          {typeof repo.steps["claude-app"]?.detail["confirmedBy"] === "string" && (
+            <span className="muted"> · confirmed by {String(repo.steps["claude-app"]!.detail["confirmedBy"])}</span>
+          )}
+        </span>
+        <a href="https://github.com/apps/claude" target="_blank" rel="noreferrer">
+          Install on GitHub →
+        </a>
+        <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/claude-app`)} disabled={run.isPending}>
+          {repo.steps["claude-app"]?.status === "ok" ? "Re-confirm" : "It's installed"}
+        </button>
+      </div>
+
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>3 · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
+          <strong>4 · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
           the enablement branch; no terminal needed {stepBadge("openspec")}
         </span>
         <button
@@ -811,7 +830,7 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>4 · Stub files PR</strong> — workflow stubs (permissions intact), models, approvers, issue template, settings.
+          <strong>5 · Stub files PR</strong> — workflow stubs (permissions intact), models, approvers, issue template, settings.
           Merging the PR is the human act that enables the factory. {stepBadge("stubs")}
         </span>
         <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
@@ -827,7 +846,7 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>5 · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
+          <strong>6 · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
           authoritative here. Re-run asks the <strong>Profiler</strong> to read the code again and open a correction PR if
           it disagrees — even when a profile is already merged. The Console never reads your source. {stepBadge("profile")}
         </span>
@@ -851,7 +870,7 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>6 · Validation suite</strong> — nine checks, no writes on a healthy repo {stepBadge("validate")}
+          <strong>7 · Validation suite</strong> — ten checks, no writes on a healthy repo {stepBadge("validate")}
         </span>
         <button onClick={() => validate.mutate()} disabled={validate.isPending}>
           {validate.isPending ? "Checking…" : "Validate"}
@@ -875,7 +894,7 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>7 · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
+          <strong>8 · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
           run date") and watch it traverse the pipeline in this workspace; your first gate approval happens there.
         </span>
       </div>
@@ -959,7 +978,7 @@ function ResetOutcomePanel({ outcome }: { outcome: ResetOutcome }) {
       <ul style={{ margin: "0 0 0 1.2rem", padding: 0 }}>
         <li>
           <strong>To re-enable the factory:</strong> run the steps above top to bottom — Labels and Secret will verify
-          instantly, then merge the fresh enablement PR from step 4.
+          instantly, then merge the fresh enablement PR from step 5.
         </li>
         <li>
           <strong>To leave it off:</strong> nothing else is required. Optionally delete the Actions secret and{" "}

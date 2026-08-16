@@ -15,6 +15,16 @@ const FACTORY_REPO = "genai-jerry/claude-software-factory";
 const FACTORY_REF = "v1";
 
 /**
+ * Anthropic's Claude GitHub App. At run time `claude-code-action` exchanges the
+ * workflow's OIDC token for an installation token of this App — that token is
+ * how agent jobs comment on issues and open PRs. It is a run-time dependency
+ * the wizard used to say nothing about: with the App missing, setup looks
+ * green and then every agent job dies at startup with "Claude Code is not
+ * installed on this repository" (a 401 from the token exchange).
+ */
+const CLAUDE_APP_URL = "https://github.com/apps/claude";
+
+/**
  * The profile issue's trigger label. Deliberately not in FACTORY_LABELS: that
  * list is the board's state model (`isFactoryState` drives the projections),
  * and this is a kind marker on one maintenance issue, not a place in the
@@ -132,6 +142,27 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       }
     },
   );
+
+  /**
+   * The Claude GitHub App step. GitHub lets an App list only its *own*
+   * installations, and the Claude App is Anthropic's, not this Console's — so
+   * there is nothing to probe. What the step records is a human's confirmation
+   * that they installed it (same honesty as the cross-repo-token validation
+   * check), and until someone has actually looked, the wizard keeps the repo
+   * at "needs setup" instead of letting the first agent run be the discovery.
+   */
+  app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/claude-app", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
+    if (!target) return;
+    await recordStep(deps, target.repo, "claude-app", "ok", {
+      confirmedBy: ctx.login,
+      confirmedAt: new Date().toISOString(),
+      appUrl: CLAUDE_APP_URL,
+    });
+    return { ok: true, confirmedBy: ctx.login };
+  });
 
   /**
    * Step 3 — OpenSpec: no terminal required. Queues a worker job that runs the
@@ -401,7 +432,27 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       const hasKey = (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) || (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
       push("actions-secret", hasKey, hasKey ? "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN present" : "neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set as a repository secret");
 
-      // 4. profile.json parses and carries the schema's required keys.
+      // 4. Claude GitHub App — recorded confirmation, not a probe: GitHub shows
+      // an App's installations to nobody but that App, and the Claude App is
+      // Anthropic's. Unconfirmed is "look before you run", not red — a repo
+      // adopted from an existing install may be working fine without the row.
+      const claudeApp = (
+        await db
+          .select()
+          .from(onboardingRuns)
+          .where(and(eq(onboardingRuns.repoId, repo.id), eq(onboardingRuns.step, "claude-app")))
+          .limit(1)
+      )[0];
+      const confirmedBy = claudeApp?.status === "ok" ? (claudeApp.detail as { confirmedBy?: unknown }).confirmedBy : null;
+      push(
+        "claude-github-app",
+        claudeApp?.status === "ok" ? true : null,
+        claudeApp?.status === "ok"
+          ? `installation confirmed${typeof confirmedBy === "string" ? ` by ${confirmedBy}` : ""} (the Console cannot see another App's installations, so this records the human check)`
+          : `not confirmable from the Console — agent runs exchange an OIDC token for the Claude App's credentials, and without the App installed every run fails with "Claude Code is not installed on this repository". Install it at ${CLAUDE_APP_URL}, then confirm the wizard step`,
+      );
+
+      // 5. profile.json parses and carries the schema's required keys.
       const profile = await client.getFileAtRef(owner, name, ".factory/profile.json");
       if (!profile) {
         push("profile", false, ".factory/profile.json missing — implementer/reviewer/qa are hard-blocked. Run the profile step: the Profiler drafts it from the code and opens a PR");
@@ -435,7 +486,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         }
       }
 
-      // 5. factory-models.json roles parse.
+      // 6. factory-models.json roles parse.
       const models = await client.getFileAtRef(owner, name, ".github/factory-models.json");
       if (!models) push("models", false, ".github/factory-models.json missing — every role falls back to the default model");
       else {
@@ -448,7 +499,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         }
       }
 
-      // 6. factory-approvers.json users are collaborators.
+      // 7. factory-approvers.json users are collaborators.
       const approversFile = await client.getFileAtRef(owner, name, ".github/factory-approvers.json");
       if (!approversFile) push("approvers", false, ".github/factory-approvers.json missing — gates are unassigned");
       else {
@@ -467,15 +518,15 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         }
       }
 
-      // 7. OpenSpec initialised.
+      // 8. OpenSpec initialised.
       const openspec = await client.listDir(owner, name, "openspec");
-      push("openspec", openspec.length > 0, openspec.length ? "openspec/ present" : "openspec/ missing — run step 3 (Install OpenSpec) and merge the PR");
+      push("openspec", openspec.length > 0, openspec.length ? "openspec/ present" : "openspec/ missing — run step 4 (Install OpenSpec) and merge the PR");
 
-      // 8. Issue template present.
+      // 9. Issue template present.
       const template = await client.getFileAtRef(owner, name, ".github/ISSUE_TEMPLATE/factory-requirement.yml");
       push("issue-template", Boolean(template), template ? "present" : "missing — requesters have no entry point");
 
-      // 9. Cross-repo PAT probe — needs the repo-side secret value, which the Console never holds.
+      // 10. Cross-repo PAT probe — needs the repo-side secret value, which the Console never holds.
       push("cross-repo-token", null, "not checkable from the Console (the secret value never leaves GitHub); verify via a canary run on a multi-repo epic");
 
       const allOk = checks.every((c) => c.ok !== false);
@@ -854,6 +905,8 @@ const STUB_PR_BODY = `This PR carries the consuming repo's whole factory footpri
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.
 
 Add \`.factory/profile.json\` before or after merging (see the factory handbook §2c) — it is the one file whose contents are genuinely yours.
+
+**Before the first agent run:** install the [Claude GitHub App](${CLAUDE_APP_URL}) on this repository (and include it under the App's repository access). Agent runs exchange an OIDC token for that App's credentials at run time; without it every run fails with \`Claude Code is not installed on this repository\` — installing the \`@anthropic-ai/claude-code\` npm package is not the same thing.
 
 **Merging this PR is the act that enables the factory** — workflow stubs only fire from the default branch.
 
