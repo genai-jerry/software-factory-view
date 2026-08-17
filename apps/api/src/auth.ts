@@ -1,6 +1,6 @@
 import { encryptSecret, randomToken, UserClient } from "@console/core";
 import { estates, memberships, orgs, repos, sessions, users } from "@console/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { SESSION_COOKIE, type AppDeps } from "./context.js";
 
@@ -110,9 +110,12 @@ async function createSession(deps: AppDeps, userId: string, reply: { setCookie: 
 /**
  * Org membership bootstrap (MVP): a signing-in user joins each org whose
  * estate has a repo their GitHub identity can read; the first member of an
- * org becomes its owner. The full invitation/role flow is Phase 4 (F-U2..U4);
- * the GitHub-visibility floor here is what keeps this from being a
- * side-channel (F-U9's daily re-check tightens it later).
+ * org becomes its owner, and anyone who *administers* the probe repo on
+ * GitHub joins as an admin rather than a plain member — otherwise the person
+ * the repo actually belongs to can be locked out of onboarding by whoever
+ * happened to sign in first. The full invitation/role flow is Phase 4
+ * (F-U2..U4); the GitHub-visibility floor here is what keeps this from being
+ * a side-channel (F-U9's daily re-check tightens it later).
  */
 async function bootstrapMemberships(deps: AppDeps, userId: string, gh: UserClient): Promise<void> {
   const { db } = deps.dbh;
@@ -122,13 +125,32 @@ async function bootstrapMemberships(deps: AppDeps, userId: string, gh: UserClien
     const probe = estateRepos[0];
     if (!probe) continue;
     const [owner, name] = probe.fullName.split("/") as [string, string];
+    let view;
     try {
-      await gh.getRepo(owner, name); // 404 for repos the user cannot see
+      view = await gh.getRepo(owner, name); // 404 for repos the user cannot see
     } catch {
       continue;
     }
+    const isRepoAdmin = Boolean(view.permissions?.admin);
+
+    const mine = (
+      await db
+        .select()
+        .from(memberships)
+        .where(and(eq(memberships.orgId, estate.orgId), eq(memberships.userId, userId)))
+        .limit(1)
+    )[0];
+    if (mine) {
+      // Repair an earlier auto-assigned "member" row for a GitHub repo admin.
+      // Hand-assigned roles (viewer) are deliberate and stay as they are.
+      if (mine.role === "member" && isRepoAdmin) {
+        await db.update(memberships).set({ role: "admin" }).where(eq(memberships.id, mine.id));
+      }
+      continue;
+    }
+
     const existingMembers = await db.select().from(memberships).where(eq(memberships.orgId, estate.orgId)).limit(1);
-    const role = existingMembers.length === 0 ? "owner" : "member";
+    const role = existingMembers.length === 0 ? "owner" : isRepoAdmin ? "admin" : "member";
     await db.insert(memberships).values({ orgId: estate.orgId, userId, role }).onConflictDoNothing();
   }
 }
