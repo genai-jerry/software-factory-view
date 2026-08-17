@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, memberships, orgs, repos, sessions, users, onboardingRuns } from "@console/db";
+import { auditLog, estates, memberships, orgs, repos, sessions, users, onboardingRuns } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
@@ -188,6 +188,12 @@ describe("the profile step", () => {
     expect(calls).toContain("PATCH /repos/acme/api/issues/7");
   });
 
+  it("stamps requestedAt so the worker can attribute the Actions run it starts", async () => {
+    await post();
+    const step = await stepRow();
+    expect(typeof (step!.detail as { requestedAt?: unknown }).requestedAt).toBe("string");
+  });
+
   it("reuses the singleton issue by title after the Profiler dropped the label", async () => {
     reply("/issues?", [
       {
@@ -203,5 +209,70 @@ describe("the profile step", () => {
     const res = await post();
     expect(res.json()).toMatchObject({ ok: true, issueNumber: 7, rerun: true });
     expect(calls.some((c) => c === "POST /repos/acme/api/issues")).toBe(false);
+  });
+});
+
+/**
+ * Merging the Profiler's PR from the Console. The click is the human act the
+ * step points at, so it runs as the signed-in user; and the Console only ever
+ * merges the PR its own webhook flow recorded — never one it went looking for.
+ */
+describe("the profile merge", () => {
+  const merge = () =>
+    app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/profile/merge`,
+      headers: { cookie, "x-console-csrf": "1" },
+    });
+
+  const seedStep = async (detail: Record<string, unknown>, status = "pending") => {
+    const repo = (await deps.dbh.db.select().from(repos))[0]!;
+    await deps.dbh.db.insert(onboardingRuns).values({
+      orgId: repo.orgId,
+      estateId: repo.estateId,
+      repoId: repo.id,
+      step: "profile",
+      status,
+      detail,
+      updatedAt: new Date(),
+    });
+  };
+
+  it("refuses while no open Profiler PR is recorded", async () => {
+    await seedStep({ issueNumber: 7 }); // asked, but no PR has arrived yet
+
+    const res = await merge();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/no open Profiler PR/);
+    expect(calls.some((c) => c.includes("/merge"))).toBe(false);
+  });
+
+  it("merges the recorded PR as the user and closes the step", async () => {
+    await seedStep({ issueNumber: 7, prNumber: 12, prUrl: "https://github.com/acme/api/pull/12", prState: "open" });
+    reply("/pulls/12/merge", { sha: "m1", merged: true });
+
+    const res = await merge();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, sha: "m1", prNumber: 12 });
+    expect(calls).toContain("PUT /repos/acme/api/pulls/12/merge");
+
+    const step = await stepRow();
+    expect(step).toMatchObject({ status: "ok" });
+    expect(step!.detail).toMatchObject({ prState: "merged", mergedBy: "alice", mergeSha: "m1" });
+    // The signature is auditable, like every gate merge.
+    expect((await deps.dbh.db.select().from(auditLog))[0]).toMatchObject({
+      action: "pr.merge",
+      target: "acme/api#12",
+    });
+  });
+
+  it("relays GitHub's refusal and leaves the step untouched", async () => {
+    await seedStep({ issueNumber: 7, prNumber: 12, prState: "open" });
+    reply("/pulls/12/merge", { message: "Pull Request is not mergeable" }, 405);
+
+    const res = await merge();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/GitHub declined the merge/);
+    expect(await stepRow()).toMatchObject({ status: "pending" });
   });
 });

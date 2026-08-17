@@ -1,5 +1,5 @@
 import { FACTORY_LABELS, GitHubHttpError, InstallationClient, parseApproverFile } from "@console/core";
-import { estates, gateAssignments, memberships, onboardingRuns, repos } from "@console/db";
+import { auditLog, estates, gateAssignments, memberships, onboardingRuns, pullRequests, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps, type RequestCtx } from "../context.js";
@@ -350,7 +350,14 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         // nothing.
         await user.removeLabel(owner, name, found.number, PROFILE_LABEL.name);
         await user.addLabels(owner, name, found.number, [PROFILE_LABEL.name]);
-        await recordStep(deps, repo, "profile", "pending", { issueNumber: found.number, issueUrl: found.html_url });
+        // requestedAt is the attribution window: the worker only pins Actions
+        // runs (and their failures) to this step when they started after it.
+        // A fresh detail object on purpose — every ask starts a clean story.
+        await recordStep(deps, repo, "profile", "pending", {
+          issueNumber: found.number,
+          issueUrl: found.html_url,
+          requestedAt: new Date().toISOString(),
+        });
         return { ok: true, issueNumber: found.number, issueUrl: found.html_url, rerun: true };
       }
 
@@ -359,11 +366,75 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         labels: [PROFILE_LABEL.name],
         body: PROFILE_ISSUE_BODY,
       });
-      await recordStep(deps, repo, "profile", "pending", { issueNumber: issue.number, issueUrl: issue.html_url });
+      await recordStep(deps, repo, "profile", "pending", {
+        issueNumber: issue.number,
+        issueUrl: issue.html_url,
+        requestedAt: new Date().toISOString(),
+      });
       return { ok: true, issueNumber: issue.number, issueUrl: issue.html_url, rerun: false };
     } catch (err) {
       await recordStep(deps, repo, "profile", "failed", { error: (err as Error).message });
       return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Merge the Profiler's correction PR — the human act the whole step points
+   * at, made reachable from the card that started the run. As the signed-in
+   * user, never the App: agreeing to the repo's stack facts is a person's
+   * signature (same split as the gate merges — the App deliberately has no
+   * merge method). The PR to merge is whatever the webhook flow recorded, so
+   * the Console merges only the PR it has been showing the user.
+   */
+  app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/profile/merge", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
+    if (!target) return;
+    const { repo, owner, name } = target;
+
+    const step = (
+      await db
+        .select()
+        .from(onboardingRuns)
+        .where(and(eq(onboardingRuns.repoId, repo.id), eq(onboardingRuns.step, "profile")))
+        .limit(1)
+    )[0];
+    const detail = (step?.detail ?? {}) as { prNumber?: unknown; prUrl?: unknown; prState?: unknown } & Record<string, unknown>;
+    if (!step || typeof detail.prNumber !== "number" || detail.prState !== "open") {
+      return reply.code(409).send({
+        error: "no open Profiler PR is recorded for this repo — run the profile step and wait for the PR to appear here",
+      });
+    }
+
+    const gh = userClient(deps, ctx);
+    try {
+      const result = await gh.mergePull(owner, name, detail.prNumber, { method: "squash" });
+      await db.insert(auditLog).values({
+        orgId: repo.orgId,
+        actorUserId: ctx.userId,
+        action: "pr.merge",
+        target: `${owner}/${name}#${detail.prNumber}`,
+        payload: { mergeSha: result.sha, kind: "profile" },
+      });
+      // Converge the projection now rather than waiting for the webhook round-trip.
+      await db
+        .update(pullRequests)
+        .set({ state: "merged", mergedAt: new Date(), mergeCommitSha: result.sha })
+        .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.number, detail.prNumber)));
+      await recordStep(deps, repo, "profile", "ok", {
+        ...detail,
+        prState: "merged",
+        mergedBy: ctx.login,
+        mergeSha: result.sha,
+      });
+      return { ok: true, sha: result.sha, prNumber: detail.prNumber };
+    } catch (err) {
+      // GitHub said no (review required, conflicts, branch protection) —
+      // surface that as GitHub's answer, not a Console fault, and leave the
+      // step exactly as it was: the PR is still open and still mergeable on
+      // GitHub once the objection is dealt with.
+      return reply.code(409).send({ error: `GitHub declined the merge: ${(err as Error).message}` });
     }
   });
 

@@ -115,6 +115,47 @@ function resetOutcomeFromSteps(repo: OnboardingRepo): ResetOutcome | null {
   };
 }
 
+/**
+ * What the webhook flow has recorded about the Profiler since the last ask
+ * (worker: updateProfileStepFromRun / updateProfileStepFromPull). Everything
+ * is optional because it accumulates: first the issue, then the run, then the
+ * PR, then the merge.
+ */
+type ProfileProgress = {
+  status: string;
+  issueUrl?: string;
+  run?: { htmlUrl: string; status: string; conclusion: string | null };
+  prNumber?: number;
+  prUrl?: string;
+  prState?: "open" | "merged" | "closed";
+  error?: string;
+  mergedBy?: string;
+};
+
+function profileProgress(repo: OnboardingRepo): ProfileProgress | null {
+  const s = repo.steps["profile"];
+  if (!s) return null;
+  const d = s.detail as Record<string, unknown>;
+  const run = d["run"] as { htmlUrl?: unknown; status?: unknown; conclusion?: unknown } | undefined;
+  return {
+    status: s.status,
+    issueUrl: typeof d["issueUrl"] === "string" ? d["issueUrl"] : undefined,
+    run:
+      run && typeof run.htmlUrl === "string"
+        ? {
+            htmlUrl: run.htmlUrl,
+            status: typeof run.status === "string" ? run.status : "",
+            conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
+          }
+        : undefined,
+    prNumber: typeof d["prNumber"] === "number" ? d["prNumber"] : undefined,
+    prUrl: typeof d["prUrl"] === "string" ? d["prUrl"] : undefined,
+    prState: d["prState"] === "open" || d["prState"] === "merged" || d["prState"] === "closed" ? d["prState"] : undefined,
+    error: typeof d["error"] === "string" ? d["error"] : undefined,
+    mergedBy: typeof d["mergedBy"] === "string" ? d["mergedBy"] : undefined,
+  };
+}
+
 /** True once a reset finished and no setup step has been run since. */
 function isRepoClean(repo: OnboardingRepo): boolean {
   if (repo.steps["reset"]?.status !== "ok") return false;
@@ -572,9 +613,17 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
   const state = useQuery({
     queryKey: ["onboarding", estateId],
     queryFn: () => api.get<OnboardingState>(`/api/estates/${estateId}/onboarding`),
-    // The OpenSpec step runs async in the worker — poll while any repo has one in flight.
+    // Poll while anything is in flight elsewhere: the OpenSpec step runs async
+    // in the worker, and the profile step runs in the repo's own Actions with
+    // its progress arriving by webhook — both finish without another click here.
     refetchInterval: (q) =>
-      q.state.data?.repos.some((r) => ["pending", "running"].includes(r.steps["openspec"]?.status ?? "")) ? 3000 : false,
+      q.state.data?.repos.some(
+        (r) =>
+          ["pending", "running"].includes(r.steps["openspec"]?.status ?? "") ||
+          r.steps["profile"]?.status === "pending",
+      )
+        ? 3000
+        : false,
   });
   const reconcile = useMutation({
     mutationFn: () => api.post(`/api/estates/${estateId}/reconcile`),
@@ -691,6 +740,15 @@ function RepoOnboarding({
     mutationFn: (vars: { name: string; value: string }) => api.post(`/api/repos/${repo.repoId}/onboarding/secret`, vars),
     onSuccess: () => {
       setSecretValue("");
+      setError(null);
+      onChanged();
+    },
+    onError: (e) => setError((e as ApiError).message),
+  });
+
+  const mergeProfilePr = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; sha: string }>(`/api/repos/${repo.repoId}/onboarding/profile/merge`),
+    onSuccess: () => {
       setError(null);
       onChanged();
     },
@@ -858,15 +916,11 @@ function RepoOnboarding({
           {repo.steps["profile"] || setup ? "Re-run" : "Draft it"}
         </button>
       </div>
-      {typeof repo.steps["profile"]?.detail["issueUrl"] === "string" && (
-        <p className="muted">
-          → the run reports on{" "}
-          <a href={repo.steps["profile"]!.detail["issueUrl"] as string} target="_blank" rel="noreferrer">
-            its profile issue
-          </a>
-          . Re-run starts another Profiler pass; merge its PR to correct the profile.
-        </p>
-      )}
+      <ProfileStepFeedback
+        progress={profileProgress(repo)}
+        merging={mergeProfilePr.isPending}
+        onMerge={() => mergeProfilePr.mutate()}
+      />
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
@@ -912,6 +966,121 @@ function RepoOnboarding({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Live feedback under step 6, driven entirely by what the webhooks recorded:
+ * the Profiler runs far away in the repo's own Actions, and without this the
+ * operator pressed a button and stared at a "pending" chip with no way to know
+ * whether it was running, dead, or waiting on them. One state at a time, most
+ * decided first: failure, then the PR (the deliverable), then run progress.
+ */
+function ProfileStepFeedback({
+  progress,
+  merging,
+  onMerge,
+}: {
+  progress: ProfileProgress | null;
+  merging: boolean;
+  onMerge: () => void;
+}) {
+  if (!progress) return null;
+  const issueLink = progress.issueUrl ? (
+    <a href={progress.issueUrl} target="_blank" rel="noreferrer">
+      profile issue
+    </a>
+  ) : null;
+  const runLink = progress.run ? (
+    <a href={progress.run.htmlUrl} target="_blank" rel="noreferrer">
+      Actions run
+    </a>
+  ) : null;
+
+  if (progress.status === "failed") {
+    return (
+      <div className="banner error" style={{ marginTop: "0.4rem" }}>
+        <strong>Profiler failed.</strong> {progress.error ?? "The step did not finish."}
+        {runLink && <> Open the {runLink} for the log.</>}
+        {issueLink && <> Any agent-side detail is on the {issueLink}.</>} Fix the cause, then press Re-run.
+      </div>
+    );
+  }
+
+  if (progress.prState === "open" && progress.prUrl) {
+    return (
+      <div className="banner info" style={{ marginTop: "0.4rem" }}>
+        <strong>The Profiler opened a correction PR:</strong>{" "}
+        <a href={progress.prUrl} target="_blank" rel="noreferrer">
+          #{progress.prNumber}
+        </a>
+        . Its body is the evidence, field by field — review it, then merge; merging is where you agree to what the
+        factory treats as true.{" "}
+        <button className="primary" onClick={onMerge} disabled={merging} title="Squash-merges the PR on GitHub as you.">
+          {merging ? "Merging…" : `Merge PR #${progress.prNumber}`}
+        </button>
+      </div>
+    );
+  }
+
+  if (progress.prState === "closed" && progress.status !== "ok") {
+    return (
+      <div className="banner stale" style={{ marginTop: "0.4rem" }}>
+        The Profiler's{" "}
+        {progress.prUrl ? (
+          <a href={progress.prUrl} target="_blank" rel="noreferrer">
+            correction PR
+          </a>
+        ) : (
+          "correction PR"
+        )}{" "}
+        was closed without merging, so the profile is unchanged. Press Re-run to have it draft a fresh one.
+      </div>
+    );
+  }
+
+  if (progress.status === "ok") {
+    return (
+      <p className="muted">
+        ✓ Profile merged{progress.mergedBy ? ` by ${progress.mergedBy}` : ""}
+        {progress.prUrl && (
+          <>
+            {" "}
+            (
+            <a href={progress.prUrl} target="_blank" rel="noreferrer">
+              PR
+            </a>
+            )
+          </>
+        )}
+        . Re-run any time to have the Profiler re-check it against the code.
+      </p>
+    );
+  }
+
+  // Still pending: distinguish "running", "ran and proposed nothing", and
+  // "no run seen yet" — three states one chip could never carry.
+  if (progress.run && progress.run.status !== "completed") {
+    return (
+      <p className="muted">
+        → the Profiler is reading the repo in its {runLink}. Its findings land on the {issueLink ?? "profile issue"}, and
+        this card updates when its PR appears.
+      </p>
+    );
+  }
+  if (progress.run && progress.run.conclusion === "success") {
+    return (
+      <p className="muted">
+        → the {runLink} finished without opening a correction PR — the Profiler judged the current profile accurate (its
+        note is on the {issueLink ?? "profile issue"}), or its PR is still arriving.
+      </p>
+    );
+  }
+  return (
+    <p className="muted">
+      → waiting for the Profiler's Actions run to start. Progress appears here as it happens
+      {issueLink && <>; the run also reports on the {issueLink}</>}.
+    </p>
   );
 }
 
