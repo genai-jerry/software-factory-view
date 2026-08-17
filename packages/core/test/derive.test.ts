@@ -9,8 +9,19 @@ describe("factory state derivation", () => {
   it("null when no factory label", () => {
     expect(deriveFactoryState(["bug"])).toBeNull();
   });
-  it("all 14 labels are recognised", () => {
+  it("every state label is recognised", () => {
     for (const l of FACTORY_LABELS) expect(deriveFactoryState([l.name])).toBe(l.name);
+  });
+  it("backlog is a state — a parked issue must not vanish from the console", () => {
+    expect(deriveFactoryState(["factory:backlog"])).toBe("factory:backlog");
+  });
+  it("kind markers are not states", () => {
+    expect(deriveFactoryState(["factory:release"])).toBeNull();
+    expect(deriveFactoryState(["factory:in-progress"])).toBeNull();
+    expect(deriveFactoryState(["factory:profile"])).toBeNull();
+  });
+  it("the orthogonal in-progress run marker never wins over the state", () => {
+    expect(deriveFactoryState(["factory:fast-track", "factory:in-progress"])).toBe("factory:fast-track");
   });
 });
 
@@ -26,6 +37,14 @@ describe("issue kind derivation", () => {
   });
   it("plain issue stays plain", () => {
     expect(deriveIssueKind({ labels: ["question"], title: "How do I…", hasParent: false })).toBe("plain");
+  });
+  it("fast-track issue is an epic — it must reach the board and tree", () => {
+    expect(deriveIssueKind({ labels: ["factory:fast-track"], title: "Small fix", hasParent: false })).toBe("epic");
+  });
+  it("release tracker stays plain despite carrying a release-* state", () => {
+    expect(
+      deriveIssueKind({ labels: ["factory:release", "factory:release-ready"], title: "release(2026.09)", hasParent: false }),
+    ).toBe("plain");
   });
 });
 

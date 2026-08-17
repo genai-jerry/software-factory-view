@@ -1,5 +1,5 @@
 import { GATE_STATES } from "@console/core";
-import { comments, estates, gateAssignments, issues, issueStateHistory, repos } from "@console/db";
+import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
 
@@ -9,7 +9,8 @@ import type { AppDeps, RequestCtx } from "./context.js";
  * (plan 07 §4.1 / plan 08 WP1). Ranks:
  *   1  factory:blocked and this user is the best responder
  *      (assignee → author → approver of the stage it halted in)
- *   2  a gate awaiting this user (G1 / G2 / G3)
+ *   2  a gate awaiting this user (G1 / G2 / G3), or a fast-track PR awaiting
+ *      merge (the fast lane has no gate — the merge is its one human step)
  *   3  a task awaiting this user's implementation `Approved`
  *   4  factory:blocked with no ownership signal — the old broadcast entry,
  *      demoted so ownership always sorts above it
@@ -78,6 +79,30 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
   const blockedIds = openFactoryIssues.filter((r) => r.issue.factoryState === "factory:blocked").map((r) => r.issue.id);
   const blockedMeta = await loadBlockedMeta(deps, blockedIds);
 
+  // Fast-track issues have no gate — their one human step is merging the PR
+  // the fast lane opened. Look those PRs up in one batch so the queue can
+  // announce them; without this the fast lane finished in silence.
+  const fastTrackRows = openFactoryIssues.filter((r) => r.issue.factoryState === "factory:fast-track");
+  const fastTrackPrs = new Map<string, number[]>();
+  if (fastTrackRows.length > 0) {
+    const prRows = await db
+      .select({ repoId: pullRequests.repoId, issueNumber: pullRequests.issueNumber, number: pullRequests.number })
+      .from(pullRequests)
+      .where(
+        and(
+          inArray(pullRequests.repoId, [...new Set(fastTrackRows.map((r) => r.repoId))]),
+          inArray(pullRequests.issueNumber, [...new Set(fastTrackRows.map((r) => r.issue.number))]),
+          eq(pullRequests.state, "open"),
+          eq(pullRequests.draft, false),
+        ),
+      );
+    for (const pr of prRows) {
+      const key = `${pr.repoId}:${pr.issueNumber}`;
+      if (!fastTrackPrs.has(key)) fastTrackPrs.set(key, []);
+      fastTrackPrs.get(key)!.push(pr.number);
+    }
+  }
+
   const now = Date.now();
   for (const row of openFactoryIssues) {
     const { issue } = row;
@@ -110,6 +135,26 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
         question: meta?.question ?? null,
         link: `/epics/${epicId}`,
       });
+      continue;
+    }
+
+    if (state === "factory:fast-track") {
+      const prNumbers = fastTrackPrs.get(`${row.repoId}:${issue.number}`) ?? [];
+      if (prNumbers.length > 0) {
+        entries.push({
+          kind: "merge",
+          rank: 2,
+          whyYou: `fast-track PR ${prNumbers.map((n) => `#${n}`).join(", ")} awaits review and merge — the fast lane bypasses gates; any collaborator may act`,
+          epicId,
+          issueId: issue.id,
+          title: `#${issue.number} ${issue.title}`,
+          repo: row.repoFullName,
+          state,
+          ageDays,
+          question: null,
+          link: `/epics/${epicId}`,
+        });
+      }
       continue;
     }
 

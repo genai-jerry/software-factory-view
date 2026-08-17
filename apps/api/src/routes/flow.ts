@@ -1,6 +1,6 @@
-import { GATE_STATES, phaseOfState } from "@console/core";
-import { estates, gateAssignments, issues, issueStateHistory, repos, taskDependencies } from "@console/db";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { GATE_STATES, phaseOfState, RELEASE_KIND_LABEL } from "@console/core";
+import { estates, gateAssignments, issues, issueStateHistory, pullRequests, repos, taskDependencies } from "@console/db";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import { resolveRepoFilter, type RepoFilterQuery } from "./read.js";
@@ -38,6 +38,36 @@ export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
       .where(and(inArray(issues.orgId, ctx.orgIds), ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : [])));
+
+    // Query 1b: open PRs tied to an issue by the factory's branch naming, so a
+    // node can say "PR #86 awaiting merge" — the fast lane's only deliverable
+    // is such a PR, and without this the tree never mentions it.
+    const prRows = await db
+      .select({
+        repoId: pullRequests.repoId,
+        issueNumber: pullRequests.issueNumber,
+        number: pullRequests.number,
+        title: pullRequests.title,
+        kind: pullRequests.kind,
+        draft: pullRequests.draft,
+        ciStatus: pullRequests.ciStatus,
+        htmlUrl: pullRequests.htmlUrl,
+      })
+      .from(pullRequests)
+      .where(
+        and(
+          inArray(pullRequests.orgId, ctx.orgIds),
+          eq(pullRequests.state, "open"),
+          isNotNull(pullRequests.issueNumber),
+          ...(repoFilter ? [inArray(pullRequests.repoId, repoFilter)] : []),
+        ),
+      );
+    const prsOf = new Map<string, Array<Omit<(typeof prRows)[number], "repoId" | "issueNumber">>>();
+    for (const { repoId, issueNumber, ...pr } of prRows) {
+      const key = `${repoId}:${issueNumber}`;
+      if (!prsOf.has(key)) prsOf.set(key, []);
+      prsOf.get(key)!.push(pr);
+    }
 
     // Query 2: newest state transition per issue (freshness / days-in-state).
     const historyRows = await db
@@ -83,7 +113,7 @@ export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
     for (const estate of estateRows) {
       const mine = issueRows.filter((r) => r.estateId === estate.id);
       const epics = mine.filter((r) => r.issue.kind === "epic" && r.issue.state === "open");
-      const trackers = mine.filter((r) => r.issue.labels.includes("factory:release"));
+      const trackers = mine.filter((r) => r.issue.labels.includes(RELEASE_KIND_LABEL));
 
       const milestones = new Map<string, { trackerState: string | null; epics: unknown[] }>();
       const milestone = (title: string) => {
@@ -118,6 +148,7 @@ export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
           rollup,
           blockedCount: rollup.blocked + (e.issue.factoryState === "factory:blocked" ? 1 : 0),
           gate: gateInfo ? { ...gateInfo, approvers: approversOf.get(`${estate.id}:${gateInfo.gate}`) ?? [] } : null,
+          prs: prsOf.get(`${e.issue.repoId}:${e.issue.number}`) ?? [],
           tasks: tasks
             .map((t) => ({
               issueId: t.issue.id,

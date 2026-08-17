@@ -82,6 +82,25 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       )}
       {data.blocked && <ReplyBox issueId={issue.id} />}
 
+      {data.prs.length > 0 && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <h4 className="muted" style={{ margin: "0 0 0.35rem" }}>
+            Open pull requests
+          </h4>
+          {data.prs.map((pr) => (
+            <p style={{ margin: "0 0 0.25rem" }} key={pr.number}>
+              <a href={pr.htmlUrl} target="_blank" rel="noreferrer">
+                PR #{pr.number} {pr.title}
+              </a>{" "}
+              <span className="muted">
+                {pr.draft ? "in draft" : "awaiting merge"}
+                {pr.ciStatus && ` · CI ${pr.ciStatus}`}
+              </span>
+            </p>
+          ))}
+        </div>
+      )}
+
       {(data.deps.blockedBy.length > 0 || data.deps.blocks.length > 0) && (
         <div style={{ marginTop: "1rem" }}>
           <h4 className="muted" style={{ margin: "0 0 0.35rem" }}>

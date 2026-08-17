@@ -1,6 +1,6 @@
 import type { BoardCard } from "../types.js";
 import { RepoChip } from "./RepoChip.js";
-import { HELD_COLUMN, partitionCards } from "../lib/board.js";
+import { FAST_TRACK_COLUMN, HELD_COLUMN, partitionCards } from "../lib/board.js";
 
 const STATE_SHORT: Record<string, string> = {
   "factory:intake": "intake",
@@ -14,14 +14,16 @@ const STATE_SHORT: Record<string, string> = {
   "factory:in-test": "in-test",
   "factory:ready-to-ship": "ready-to-ship",
   "factory:deployed": "deployed",
+  [FAST_TRACK_COLUMN]: "fast track",
   [HELD_COLUMN]: "held / off-rail",
 };
 
 /**
- * The flow lens: epics as cards in state-machine columns, plus a final Held
- * column so off-rail epics (blocked / fast-track / incident / no state) are
- * visible instead of vanishing. Card click opens the peek drawer — same
- * disclosure model as the personal sections.
+ * The flow lens: epics as cards in state-machine columns, plus a Fast track
+ * column (small fixes awaiting a human merge, off the ceremony rail) and a
+ * final Held column so off-rail epics (blocked / incident / backlog / no
+ * state) are visible instead of vanishing. Card click opens the peek drawer —
+ * same disclosure model as the personal sections.
  */
 export function PipelineBoard({ columns, cards, onPeek }: { columns: string[]; cards: BoardCard[]; onPeek: (issueId: string) => void }) {
   const byCol = partitionCards(columns, cards);

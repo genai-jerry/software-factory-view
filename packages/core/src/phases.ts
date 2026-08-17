@@ -20,6 +20,9 @@ export const PHASE_LABELS: Record<Phase, string> = {
 
 const PHASE_MAP: Record<string, Phase> = {
   "factory:backlog": "held",
+  "factory:release-planning": "planning",
+  "factory:release-ready": "planning",
+  "factory:release-approved": "planning",
   "factory:intake": "specifying",
   "factory:spec-ready": "specifying",
   "factory:spec-approved": "planning",
@@ -48,6 +51,9 @@ export function phaseOfState(state: string | null): Phase {
  */
 export const STATE_SENTENCE: Record<string, string> = {
   "factory:backlog": "Filed, waiting for its release to be approved (gate G0) before intake starts.",
+  "factory:release-planning": "Release tracker open; nothing runs until someone asks for a release plan.",
+  "factory:release-ready": "Release plan posted on the tracker, awaiting gate G0 approval.",
+  "factory:release-approved": "Release approved (G0); its issues are entering intake.",
   "factory:intake": "An agent is analysing the requirement and drafting the spec.",
   "factory:spec-ready": "Spec PR open, awaiting gate G1 — approvers: {approvers}.",
   "factory:spec-approved": "Spec approved; the planner is breaking it into tasks.",
@@ -67,6 +73,9 @@ export const STATE_SENTENCE: Record<string, string> = {
 /** "What happens next, and who moves it" — FACTORY.md §3's Advanced-by column, one line per state. */
 export const NEXT_MOVER: Record<string, string> = {
   "factory:backlog": "A release_scope approver comments Approved on the release tracker (G0).",
+  "factory:release-planning": "A human comments Plan release on the tracker to draft the plan.",
+  "factory:release-ready": "A release_scope approver comments Approved on the tracker (G0).",
+  "factory:release-approved": "The factory moves the release's issues into intake.",
   "factory:intake": "The Intake agent opens the spec PR and moves it to spec-ready.",
   "factory:spec-ready": "A spec approver merges the PR or comments Approved (G1).",
   "factory:spec-approved": "The Planner writes tasks.md and opens the sub-issues.",

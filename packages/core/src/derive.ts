@@ -1,4 +1,4 @@
-import { isFactoryState, type FactoryState } from "./factory.js";
+import { isFactoryState, RELEASE_KIND_LABEL, type FactoryState } from "./factory.js";
 
 /**
  * Derivations pinned down in the plan (03 §3). These are pure functions of
@@ -21,6 +21,9 @@ export function deriveIssueKind(input: {
   title: string;
   hasParent: boolean;
 }): IssueKind {
+  // Release trackers carry a factory:release-* state, but they are milestone
+  // badges, not epics — the kind marker keeps them off the board and tree.
+  if (input.labels.includes(RELEASE_KIND_LABEL)) return "plain";
   const state = deriveFactoryState(input.labels);
   if (input.hasParent) return state || /^task\(/i.test(input.title) ? "task" : "plain";
   if (/^task\(/i.test(input.title)) return "task";

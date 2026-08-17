@@ -15,6 +15,12 @@ describe("phaseOfState", () => {
     expect(phaseOfState("factory:blocked")).toBe("held");
     expect(phaseOfState("something:weird")).toBe("held");
   });
+
+  it("parked and fast-lane states map to their real phases", () => {
+    expect(phaseOfState("factory:backlog")).toBe("held");
+    expect(phaseOfState("factory:fast-track")).toBe("building");
+    expect(phaseOfState("factory:release-ready")).toBe("planning");
+  });
 });
 
 describe("state copy", () => {
