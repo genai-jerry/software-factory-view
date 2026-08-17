@@ -1,4 +1,4 @@
-import { encryptSecret, randomToken, UserClient } from "@console/core";
+import { encryptSecret, GitHubHttpError, randomToken, UserClient } from "@console/core";
 import { estates, memberships, orgs, repos, sessions, users } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -108,30 +108,58 @@ async function createSession(deps: AppDeps, userId: string, reply: { setCookie: 
 }
 
 /**
- * Org membership bootstrap (MVP): a signing-in user joins each org whose
- * estate has a repo their GitHub identity can read; the first member of an
- * org becomes its owner, and anyone who *administers* the probe repo on
- * GitHub joins as an admin rather than a plain member — otherwise the person
- * the repo actually belongs to can be locked out of onboarding by whoever
- * happened to sign in first. The full invitation/role flow is Phase 4
- * (F-U2..U4); the GitHub-visibility floor here is what keeps this from being
- * a side-channel (F-U9's daily re-check tightens it later).
+ * Org membership bootstrap (MVP): a signing-in user joins each org their
+ * GitHub identity is actually affiliated with — they can see the estate's
+ * App installation (GitHub only lists installations to account members and
+ * repo collaborators), or they hold write/maintain/admin permission on the
+ * estate's probe repo. Mere *readability* is deliberately not enough: anyone
+ * can read a public repo, and joining on read access seated every signed-in
+ * user in every org, exposing each other's repositories across accounts.
+ *
+ * The first member of an org becomes its owner, and anyone who *administers*
+ * the probe repo on GitHub joins as an admin rather than a plain member —
+ * otherwise the person the repo actually belongs to can be locked out of
+ * onboarding by whoever happened to sign in first. Memberships this bootstrap
+ * previously handed out on readability alone are revoked here on sign-in once
+ * GitHub affirms the user has no write access. The full invitation/role flow
+ * is Phase 4 (F-U2..U4); F-U9's daily re-check tightens revocation later.
  */
-async function bootstrapMemberships(deps: AppDeps, userId: string, gh: UserClient): Promise<void> {
+export async function bootstrapMemberships(deps: AppDeps, userId: string, gh: UserClient): Promise<void> {
   const { db } = deps.dbh;
   const allEstates = await db.select().from(estates);
+  if (allEstates.length === 0) return;
+
+  // Installations the user's token can see. Best-effort: on failure fall back
+  // to per-repo permission probes alone, and never revoke on a flaky call.
+  let myInstallations: Set<number> | null = null;
+  try {
+    myInstallations = new Set((await gh.listMyInstallations()).map((i) => i.id));
+  } catch {
+    myInstallations = null;
+  }
+
   for (const estate of allEstates) {
     const estateRepos = await db.select().from(repos).where(eq(repos.estateId, estate.id)).limit(1);
     const probe = estateRepos[0];
     if (!probe) continue;
     const [owner, name] = probe.fullName.split("/") as [string, string];
-    let view;
+
+    // true = affiliated (may join), false = GitHub affirmed no write access
+    // (a readability-era membership must go), null = unknown (change nothing).
+    let affiliated: boolean | null = myInstallations?.has(estate.installationId) ? true : null;
+    let isRepoAdmin = false;
     try {
-      view = await gh.getRepo(owner, name); // 404 for repos the user cannot see
-    } catch {
-      continue;
+      const view = await gh.getRepo(owner, name); // 404 for repos the user cannot see
+      const p = view.permissions;
+      isRepoAdmin = Boolean(p?.admin);
+      if (p?.admin || p?.maintain || p?.push) affiliated = true;
+      else if (p && affiliated === null) affiliated = false; // read-only: public visibility, not affiliation
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 404 || e.status === 403) && affiliated === null) {
+        affiliated = false; // the user cannot even see the repo
+      }
+      // Anything else (rate limit, outage) leaves affiliation unknown.
     }
-    const isRepoAdmin = Boolean(view.permissions?.admin);
 
     const mine = (
       await db
@@ -141,13 +169,21 @@ async function bootstrapMemberships(deps: AppDeps, userId: string, gh: UserClien
         .limit(1)
     )[0];
     if (mine) {
+      // Auto-assigned "member" rows are the only ones this bootstrap creates
+      // for non-admins, so they are the only ones it revokes. Owner/admin are
+      // earned; hand-assigned roles (viewer) are deliberate and stay as they are.
+      if (mine.role === "member" && affiliated === false) {
+        await db.delete(memberships).where(eq(memberships.id, mine.id));
+        continue;
+      }
       // Repair an earlier auto-assigned "member" row for a GitHub repo admin.
-      // Hand-assigned roles (viewer) are deliberate and stay as they are.
       if (mine.role === "member" && isRepoAdmin) {
         await db.update(memberships).set({ role: "admin" }).where(eq(memberships.id, mine.id));
       }
       continue;
     }
+
+    if (affiliated !== true) continue;
 
     const existingMembers = await db.select().from(memberships).where(eq(memberships.orgId, estate.orgId)).limit(1);
     const role = existingMembers.length === 0 ? "owner" : isRepoAdmin ? "admin" : "member";
