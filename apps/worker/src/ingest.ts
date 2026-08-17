@@ -11,7 +11,13 @@ import {
   projectRun,
   type RepoRef,
 } from "./project.js";
-import { importGateAssignments, refreshEpicArtifacts, refreshRepoProfile } from "./artifacts.js";
+import {
+  importGateAssignments,
+  refreshEpicArtifacts,
+  refreshRepoProfile,
+  updateProfileStepFromPull,
+  updateProfileStepFromRun,
+} from "./artifacts.js";
 
 /**
  * Webhook event dispatcher. The API enqueues {deliveryGuid, event, payload}
@@ -79,6 +85,9 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
       const repo = await ensureRepo(db, p.installation.id, p.repository);
       const pr = p["pull_request"] as GhPull;
       await projectPull(db, repo, pr);
+      // The Profiler's correction PR (head `factory/profile`) is the repo-
+      // profile step's deliverable — surface it on the onboarding card.
+      await updateProfileStepFromPull(db, repo, pr);
       // A document PR opening/updating means fresh artifact refs for its epic.
       const num = pr.head.ref.match(/^factory\/(\d+)-(spec|design)$/)?.[1];
       if (num) {
@@ -96,7 +105,11 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
     case "workflow_run": {
       if (!p.repository || !p.installation) break;
       const repo = await ensureRepo(db, p.installation.id, p.repository);
-      await projectRun(db, repo, p["workflow_run"] as GhWorkflowRun);
+      const run = p["workflow_run"] as GhWorkflowRun;
+      await projectRun(db, repo, run);
+      // A red run while the profile step waits is the error the onboarding
+      // card would otherwise never hear about.
+      await updateProfileStepFromRun(db, repo, run);
       break;
     }
     case "push": {

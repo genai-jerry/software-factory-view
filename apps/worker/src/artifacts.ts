@@ -1,4 +1,4 @@
-import { encryptSecret, parseApproverFile, parseChangePath, type RepoReader } from "@console/core";
+import { encryptSecret, parseApproverFile, parseChangePath, type GhPull, type GhWorkflowRun, type RepoReader } from "@console/core";
 import {
   artifactCache,
   changeArtifacts,
@@ -161,6 +161,105 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
   }
 }
 
+/**
+ * The Profiler's fixed working branch (commands/profiler.md in the factory
+ * repo): its correction PR is always `factory/profile` → the default branch.
+ * That constant is what lets webhook events be attributed to the profile
+ * onboarding step without the Console ever reading the run's log.
+ */
+const PROFILE_BRANCH = "factory/profile";
+
+/**
+ * Events the profiler can arrive on: `issues` (the Console's label re-add, or
+ * a human applying `factory:profile`) and `push` (the drift check). Everything
+ * else — PRs, comments, dispatches — is some other role's run.
+ */
+const PROFILE_RUN_EVENTS = new Set(["issues", "push"]);
+
+/** How the step's detail accumulates across webhooks. All keys optional. */
+type ProfileStepDetail = {
+  issueNumber?: number;
+  issueUrl?: string;
+  /** Stamped by the API route at the moment of the ask — the attribution window's left edge. */
+  requestedAt?: string;
+  run?: { id: number; htmlUrl: string; status: string; conclusion: string | null; createdAt: string };
+  prNumber?: number;
+  prUrl?: string;
+  prState?: "open" | "merged" | "closed";
+  error?: string;
+  [key: string]: unknown;
+};
+
+async function profileStepRow(db: Db, repoId: string) {
+  return (
+    await db
+      .select()
+      .from(onboardingRuns)
+      .where(and(eq(onboardingRuns.repoId, repoId), eq(onboardingRuns.step, "profile")))
+      .limit(1)
+  )[0];
+}
+
+/**
+ * The Profiler's PR is the step's deliverable, and this is where the Console
+ * learns it exists — the profiler reports on the issue and in the PR, never
+ * back to the Console. Head ref is the tell. Only repos that ran the step
+ * through the Console have a row to update; drift-check PRs on repos onboarded
+ * elsewhere stay invisible, which is correct — nobody is watching a wizard for
+ * them.
+ */
+export async function updateProfileStepFromPull(db: Db, repo: RepoRef, pr: GhPull): Promise<void> {
+  if (pr.head.ref !== PROFILE_BRANCH) return;
+  const row = await profileStepRow(db, repo.id);
+  if (!row) return;
+  const detail = { ...(row.detail as ProfileStepDetail) };
+  detail.prNumber = pr.number;
+  detail.prUrl = pr.html_url;
+  const merged = Boolean(pr.merged_at);
+  detail.prState = merged ? "merged" : pr.state === "closed" ? "closed" : "open";
+  // A PR arriving supersedes an attributed run failure: whatever went red, the
+  // Profiler delivered. The run link stays for the curious.
+  delete detail.error;
+  const status = merged || row.status === "ok" ? "ok" : "pending";
+  await db.update(onboardingRuns).set({ status, detail, updatedAt: new Date() }).where(eq(onboardingRuns.id, row.id));
+}
+
+/**
+ * Attribute a pipeline run to the pending profile step so its failure has
+ * somewhere to land besides the Actions tab. Attribution is a window, not a
+ * proof — the run payload for label events names no issue — so it is drawn
+ * tight: only while the step is pending with no PR yet, only run events the
+ * profiler arrives on, and only runs created after the Console asked. On an
+ * already-enabled repo another issue's run can still slip in; the UI words the
+ * failure as the run's, with its log one click away, rather than claiming to
+ * know what died.
+ */
+export async function updateProfileStepFromRun(db: Db, repo: RepoRef, run: GhWorkflowRun): Promise<void> {
+  if (!PROFILE_RUN_EVENTS.has(run.event)) return;
+  const row = await profileStepRow(db, repo.id);
+  if (!row || (row.status !== "pending" && row.status !== "failed")) return;
+  const detail = { ...(row.detail as ProfileStepDetail) };
+  if (detail.prState === "open" || detail.prState === "merged") return; // delivered — later runs are other work
+  const requestedAt = typeof detail.requestedAt === "string" ? Date.parse(detail.requestedAt) : NaN;
+  if (Number.isNaN(requestedAt)) return; // legacy row: no window to attribute within
+  const createdAt = Date.parse(run.created_at);
+  if (Number.isNaN(createdAt) || createdAt < requestedAt - 60_000) return; // predates the ask
+  // Deliveries are unordered; keep the newest run, but always fold in updates
+  // to the one already recorded (queued → in_progress → completed).
+  if (detail.run && detail.run.id !== run.id && Date.parse(detail.run.createdAt) > createdAt) return;
+  detail.run = { id: run.id, htmlUrl: run.html_url, status: run.status, conclusion: run.conclusion, createdAt: run.created_at };
+  const failed = run.status === "completed" && ["failure", "timed_out", "cancelled", "startup_failure"].includes(run.conclusion ?? "");
+  if (failed) {
+    detail.error = "the Actions run carrying the Profiler did not finish — its log has the reason";
+  } else {
+    delete detail.error;
+  }
+  await db
+    .update(onboardingRuns)
+    .set({ status: failed ? "failed" : "pending", detail, updatedAt: new Date() })
+    .where(eq(onboardingRuns.id, row.id));
+}
+
 /** Refresh profile-derived repo facts: staging branch, factory enablement. */
 export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoReader): Promise<void> {
   const [owner, name] = repo.fullName.split("/") as [string, string];
@@ -190,7 +289,14 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
   // moment that answer arrives, so close the step here rather than making the
   // onboarding page poll for a file it already fetches. Only ever marked ok —
   // a profile that later disappears is the validation suite's story to tell.
+  // Accumulated detail (issue, PR, run links) is kept: the file on the default
+  // branch means whatever PR was open has merged, and an attributed run
+  // failure is moot.
   if (profile) {
+    const existing = await profileStepRow(db, repo.id);
+    const detail = { ...((existing?.detail ?? {}) as ProfileStepDetail), sha: profile.sha };
+    if (detail.prState === "open") detail.prState = "merged";
+    delete detail.error;
     await db
       .insert(onboardingRuns)
       .values({
@@ -199,12 +305,12 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
         repoId: repo.id,
         step: "profile",
         status: "ok",
-        detail: { sha: profile.sha },
+        detail,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
         target: [onboardingRuns.repoId, onboardingRuns.step],
-        set: { status: "ok", detail: { sha: profile.sha }, updatedAt: new Date() },
+        set: { status: "ok", detail, updatedAt: new Date() },
       });
   }
 }
