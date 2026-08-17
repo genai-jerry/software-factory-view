@@ -739,14 +739,40 @@ async function loadAdminRepo(deps: AppDeps, ctx: RequestCtx, repoId: string, rep
       .where(and(eq(memberships.orgId, repo.orgId), eq(memberships.userId, ctx.userId)))
       .limit(1)
   )[0];
-  if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
-    reply.code(403).send({ error: "onboarding requires an admin or owner role" });
+  let role = membership?.role ?? null;
+  if (role === "member" && (await isRepoAdminOnGitHub(deps, ctx, repo.fullName))) {
+    // Console roles can lag GitHub's: the first user to sign in takes "owner"
+    // and everyone after lands as auto-assigned "member" (bootstrapMemberships)
+    // — including the person who administers the repo on GitHub. GitHub is the
+    // authority on who may configure a repository, so promote rather than
+    // refuse. Deliberately hand-assigned roles (viewer) are left alone.
+    await db
+      .update(memberships)
+      .set({ role: "admin" })
+      .where(and(eq(memberships.orgId, repo.orgId), eq(memberships.userId, ctx.userId)));
+    role = "admin";
+  }
+  if (role !== "owner" && role !== "admin") {
+    reply.code(403).send({
+      error: `onboarding requires an admin or owner role — your role in this organisation is "${role ?? "none"}". Ask an owner to promote you, or sign in with the GitHub account that administers ${repo.fullName}.`,
+    });
     return null;
   }
   const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0]!;
   const client = new InstallationClient(deps.cfg.GITHUB_API_URL, auth, estate.installationId);
   const [owner, name] = repo.fullName.split("/") as [string, string];
   return { repo, estate, client, owner, name };
+}
+
+/** Whether the signed-in user's own GitHub identity administers the repo. */
+async function isRepoAdminOnGitHub(deps: AppDeps, ctx: RequestCtx, fullName: string): Promise<boolean> {
+  try {
+    const [owner, name] = fullName.split("/") as [string, string];
+    const view = await userClient(deps, ctx).getRepo(owner, name);
+    return Boolean(view.permissions?.admin);
+  } catch {
+    return false; // no OAuth token on file, or GitHub unreachable — fall back to the stored role
+  }
 }
 
 async function recordStep(

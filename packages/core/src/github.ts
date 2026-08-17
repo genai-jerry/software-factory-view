@@ -298,7 +298,17 @@ export class RepoReader {
     }
   }
 
-  async getRepo(owner: string, repo: string): Promise<{ node_id: string; default_branch: string; full_name: string; private: boolean }> {
+  async getRepo(
+    owner: string,
+    repo: string,
+  ): Promise<{
+    node_id: string;
+    default_branch: string;
+    full_name: string;
+    private: boolean;
+    /** The calling identity's own access — only present on authenticated requests. */
+    permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean; pull?: boolean };
+  }> {
     return (await this.req("GET", `/repos/${owner}/${repo}`)) as never;
   }
 

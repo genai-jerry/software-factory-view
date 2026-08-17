@@ -245,6 +245,56 @@ describe("the reset action", () => {
     expect(calls.some((c) => c.includes("CLAUDE.md"))).toBe(false);
   });
 
+  it("promotes a member who administers the repo on GitHub, then resets", async () => {
+    const bob = (
+      await deps.dbh.db
+        .insert(users)
+        .values({ ghUserId: 43, login: "bob", encryptedOauthToken: encryptSecret("gho_bob", MASTER_KEY) })
+        .returning()
+    )[0]!;
+    await deps.dbh.db.insert(memberships).values({ orgId, userId: bob.id, role: "member" });
+    await deps.dbh.db.insert(sessions).values({ id: "sess-2", userId: bob.id, expiresAt: new Date(Date.now() + 3600_000) });
+    // Appended (not unshifted): the bare repo GET must not shadow the more
+    // specific /repos/acme/api/* routes above it.
+    routes.push(["GET /repos/acme/api", { body: { permissions: { admin: true, push: true, pull: true } } }]);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/reset`,
+      headers: { cookie: "console_session=sess-2", "x-console-csrf": "1" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, mode: "direct" });
+
+    const healed = await deps.dbh.db.select().from(memberships).where(eq(memberships.userId, bob.id));
+    expect(healed[0]).toMatchObject({ role: "admin" });
+  });
+
+  it("still refuses a member whose GitHub identity does not administer the repo", async () => {
+    const eve = (
+      await deps.dbh.db
+        .insert(users)
+        .values({ ghUserId: 44, login: "eve", encryptedOauthToken: encryptSecret("gho_eve", MASTER_KEY) })
+        .returning()
+    )[0]!;
+    await deps.dbh.db.insert(memberships).values({ orgId, userId: eve.id, role: "member" });
+    await deps.dbh.db.insert(sessions).values({ id: "sess-3", userId: eve.id, expiresAt: new Date(Date.now() + 3600_000) });
+    routes.push(["GET /repos/acme/api", { body: { permissions: { admin: false, push: true, pull: true } } }]);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/reset`,
+      headers: { cookie: "console_session=sess-3", "x-console-csrf": "1" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toContain("admin or owner role");
+
+    const unchanged = await deps.dbh.db.select().from(memberships).where(eq(memberships.userId, eve.id));
+    expect(unchanged[0]).toMatchObject({ role: "member" });
+    // Refusal must leave the repo untouched: nothing was deleted or branched.
+    expect(calls.every((c) => c.startsWith("GET ") || c.startsWith("POST /app/installations"))).toBe(true);
+  });
+
   it("reuses an existing reset PR instead of opening a second when falling back", async () => {
     reply(
       "DELETE /repos/acme/api/contents/.github/workflows/factory-pipeline.yml branch=main",
