@@ -1,8 +1,15 @@
-import { InstallationClient, type AppAuth, type ConsoleConfig } from "@console/core";
+import { InstallationClient, type AppAuth, type ConsoleConfig, type GhPull } from "@console/core";
 import { estates, issues, repos, type Db } from "@console/db";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { projectComment, projectIssue, projectPull, projectRun, type RepoRef } from "./project.js";
-import { importGateAssignments, refreshEpicArtifacts, refreshRepoProfile, repairDependencies, repairSubIssueLinks } from "./artifacts.js";
+import {
+  importGateAssignments,
+  refreshEpicArtifacts,
+  refreshRepoProfile,
+  repairDependencies,
+  repairProfileStep,
+  repairSubIssueLinks,
+} from "./artifacts.js";
 
 /**
  * The reconciler (spec 01 §2.2): walk the GitHub API per estate and repair any
@@ -66,18 +73,26 @@ export async function reconcileEstate(db: Db, cfg: ConsoleConfig, auth: AppAuth,
         for (const c of ghComments) await projectComment(db, repoRef, fi.ghNodeId, c);
       }
 
+      const pulls: GhPull[] = [];
       for (let page = 1; page <= 5; page++) {
         const batch = await client.listPulls(owner, name, page);
         if (batch.length === 0) break;
         for (const pr of batch) {
           report.pullsSeen++;
           await projectPull(db, repoRef, pr);
+          pulls.push(pr);
         }
         if (batch.length < 100) break;
       }
 
       const { workflow_runs } = await client.listWorkflowRuns(owner, name);
       for (const run of workflow_runs) await projectRun(db, repoRef, run);
+
+      // The onboarding profile step listens for these same runs and PRs by
+      // webhook; when a delivery is missed the card is stuck until this walk
+      // replays them (before refreshRepoProfile below, which finishes the step
+      // once the merged file is on the default branch).
+      await repairProfileStep(db, repoRef, pulls, workflow_runs);
 
       await repairSubIssueLinks(db, repoRef, client);
       await repairDependencies(db, repoRef, client);

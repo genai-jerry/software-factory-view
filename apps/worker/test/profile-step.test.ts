@@ -1,7 +1,7 @@
 import { estates, onboardingRuns, orgs, repos } from "@console/db";
 import type { GhPull, GhWorkflowRun, RepoReader } from "@console/core";
 import { describe, expect, it } from "vitest";
-import { refreshRepoProfile, updateProfileStepFromPull, updateProfileStepFromRun } from "../src/artifacts.js";
+import { refreshRepoProfile, repairProfileStep, updateProfileStepFromPull, updateProfileStepFromRun } from "../src/artifacts.js";
 import { testDb } from "./helpers.js";
 
 /**
@@ -221,6 +221,58 @@ describe("updateProfileStepFromRun", () => {
 
     await updateProfileStepFromRun(db, repoRef, run());
     expect(await step(db)).toMatchObject({ status: "pending" });
+  });
+});
+
+describe("repairProfileStep", () => {
+  it("repairs a step stuck at 'waiting for the run to start' after every webhook was missed", async () => {
+    // The insurance-app-base incident: the Profiler's run fired, opened its
+    // correction PR and then went red on the turn limit — but no workflow_run
+    // or pull_request delivery reached the Console, so the card never moved.
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await repairProfileStep(db, repoRef, [pull()], [run()]);
+
+    const s = await step(db);
+    expect(s).toMatchObject({ status: "pending" });
+    // The PR supersedes the attributed failure; the run link stays for the curious.
+    expect(s!.detail).toMatchObject({ prNumber: 12, prState: "open", run: { id: 900, conclusion: "failure" } });
+    expect(s!.detail).not.toHaveProperty("error");
+  });
+
+  it("surfaces an attributed failure when no PR ever arrived", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await repairProfileStep(db, repoRef, [], [run()]);
+
+    const s = await step(db);
+    expect(s).toMatchObject({ status: "failed" });
+    expect(s!.detail).toMatchObject({ error: expect.stringContaining("did not finish") });
+  });
+
+  it("prefers the open PR over an older closed one instead of replaying history", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await repairProfileStep(
+      db,
+      repoRef,
+      [
+        pull({ number: 9, state: "closed", updated_at: "2026-08-17T09:00:00Z", html_url: "https://github.com/acme/api/pull/9" }),
+        pull(),
+      ],
+      [],
+    );
+
+    expect((await step(db))!.detail).toMatchObject({ prNumber: 12, prState: "open" });
+  });
+
+  it("does nothing on repos that never ran the step", async () => {
+    const { db, repoRef } = await seed();
+    await repairProfileStep(db, repoRef, [pull()], [run()]);
+    expect(await db.select().from(onboardingRuns)).toHaveLength(0);
   });
 });
 
