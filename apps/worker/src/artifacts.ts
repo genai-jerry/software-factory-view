@@ -260,6 +260,30 @@ export async function updateProfileStepFromRun(db: Db, repo: RepoRef, run: GhWor
     .where(eq(onboardingRuns.id, row.id));
 }
 
+/**
+ * Reconcile-time repair for the profile step. Webhooks are the primary path,
+ * but a missed delivery used to be permanent: reconcile projected the
+ * Profiler's runs and PRs into their tables without ever telling the
+ * onboarding step, so the card sat at "waiting for the Profiler's Actions run
+ * to start" while the correction PR waited on GitHub. Feed the walk results
+ * through the same attribution functions the webhooks use — runs first, so an
+ * attributed run (and its failure) is recorded before the PR arrives to
+ * supersede it; a PR recorded first would make updateProfileStepFromRun treat
+ * every run as some other role's work and drop the log link.
+ */
+export async function repairProfileStep(db: Db, repo: RepoRef, pulls: GhPull[], runs: GhWorkflowRun[]): Promise<void> {
+  if (!(await profileStepRow(db, repo.id))) return;
+  for (const run of runs) await updateProfileStepFromRun(db, repo, run);
+  const profilePulls = pulls.filter((p) => p.head.ref === PROFILE_BRANCH);
+  // One PR is the step's story. Prefer the open one (the review being waited
+  // on); otherwise the most recently updated closed/merged one — replaying the
+  // whole list would let an older closed PR overwrite the current state.
+  const pick =
+    profilePulls.find((p) => p.state === "open") ??
+    profilePulls.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+  if (pick) await updateProfileStepFromPull(db, repo, pick);
+}
+
 /** Refresh profile-derived repo facts: staging branch, factory enablement. */
 export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoReader): Promise<void> {
   const [owner, name] = repo.fullName.split("/") as [string, string];
