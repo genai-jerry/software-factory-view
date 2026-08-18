@@ -7,7 +7,7 @@ import { IssuePeek } from "../components/IssuePeek.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
 import { useFocus } from "../lib/filter.js";
-import type { AttentionEntry, BoardCard, EstateSummary, MineRow, MyWork, Phase, WaitingRow } from "../types.js";
+import type { AttentionEntry, BoardCard, EstateSummary, IngestionHealth, MineRow, MyWork, Phase, WaitingRow } from "../types.js";
 
 const PHASE_ORDER: Phase[] = ["held", "specifying", "planning", "building", "shipping"];
 const PHASE_LABELS: Record<Phase, string> = {
@@ -27,14 +27,41 @@ const PHASE_LABELS: Record<Phase, string> = {
 export function MissionControl() {
   const [tab, setTab] = useState<"me" | "factory">("me");
   const [peekId, setPeekId] = useState<string | null>(null);
-  const estates = useQuery({ queryKey: ["estates"], queryFn: () => api.get<{ estates: EstateSummary[] }>("/api/estates") });
+  const estates = useQuery({
+    queryKey: ["estates"],
+    queryFn: () => api.get<{ estates: EstateSummary[]; ingestion: IngestionHealth }>("/api/estates"),
+  });
   const anyStale = estates.data?.estates.some((e) => e.stale);
+  const ingestion = estates.data?.ingestion;
+  // Unprocessed deliveries are normal for a few seconds; a backlog older than
+  // this means the worker is not draining the queue.
+  const STUCK_MS = 10 * 60_000;
+  const webhooksNeverArrived = Boolean(estates.data && estates.data.estates.length > 0 && ingestion && !ingestion.lastReceivedAt);
+  const webhooksStuck = Boolean(
+    ingestion &&
+      ingestion.pending > 0 &&
+      ingestion.lastReceivedAt &&
+      (!ingestion.lastProcessedAt || Date.now() - new Date(ingestion.lastProcessedAt).getTime() > STUCK_MS),
+  );
 
   return (
     <div>
       <h1>Mission control</h1>
       <FilterBar />
-      {anyStale && (
+      {webhooksNeverArrived && (
+        <div className="banner error">
+          No GitHub webhook has ever reached this Console — new issues and PRs will not appear on their own. Check the GitHub App's
+          webhook URL and secret (App settings → Webhook, and Advanced → Recent deliveries for the response codes). Until that is
+          fixed, trigger a reconcile from the Onboarding page to import current GitHub state.
+        </div>
+      )}
+      {webhooksStuck && ingestion && (
+        <div className="banner error">
+          {ingestion.pending} webhook deliver{ingestion.pending === 1 ? "y is" : "ies are"} waiting unprocessed — webhooks reach the
+          Console but the worker is not projecting them. Check that the worker process and Redis are running.
+        </div>
+      )}
+      {anyStale && !webhooksNeverArrived && !webhooksStuck && (
         <div className="banner stale">
           Some organisations have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
           that webhooks are reaching the Console.

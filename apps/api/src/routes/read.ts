@@ -19,6 +19,7 @@ import {
   threadEntries,
   threads,
   users,
+  webhookDeliveries,
 } from "@console/db";
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -54,6 +55,21 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const estateRows = await db.select().from(estates).where(inArray(estates.orgId, ctx.orgIds));
+
+    // Ingestion health: when the projections look empty, the difference
+    // between "no webhook ever arrived" (App webhook URL/secret broken) and
+    // "webhooks arrive but sit unprocessed" (worker or Redis down) is the
+    // whole diagnosis — surface it instead of leaving the operator to guess.
+    const ingestion = (
+      await db
+        .select({
+          lastReceivedAt: dsql<Date | null>`max(${webhookDeliveries.receivedAt})`,
+          lastProcessedAt: dsql<Date | null>`max(${webhookDeliveries.processedAt})`,
+          pending: dsql<number>`count(*) filter (where ${webhookDeliveries.processedAt} is null)`,
+        })
+        .from(webhookDeliveries)
+    )[0]!;
+
     const out = [];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
     for (const e of estateRows) {
@@ -73,7 +89,14 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         })),
       });
     }
-    return { estates: out };
+    return {
+      estates: out,
+      ingestion: {
+        lastReceivedAt: ingestion.lastReceivedAt,
+        lastProcessedAt: ingestion.lastProcessedAt,
+        pending: Number(ingestion.pending),
+      },
+    };
   });
 
   /**

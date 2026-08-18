@@ -13,6 +13,7 @@ import {
   sessions,
   taskDependencies,
   users,
+  webhookDeliveries,
 } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
@@ -331,6 +332,34 @@ describe("/api/flow", () => {
     expect(ft).toBeTruthy();
     expect(ft.state).toBe("factory:fast-track");
     expect(ft.prs).toMatchObject([{ number: 20, draft: false }]);
+  });
+});
+
+describe("/api/estates ingestion health", () => {
+  it("reports never-received, then a pending delivery, then a drained queue", async () => {
+    const read = async () => {
+      const res = await app.inject({ method: "GET", url: "/api/estates", headers: { cookie } });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as { ingestion: { lastReceivedAt: string | null; lastProcessedAt: string | null; pending: number } }).ingestion;
+    };
+
+    // Nothing delivered yet — the "webhooks never arrived" diagnosis.
+    const before = await read();
+    expect(before.lastReceivedAt).toBeNull();
+    expect(before.pending).toBe(0);
+
+    // A delivery lands but nothing processes it — the "worker down" diagnosis.
+    const d = deps.dbh.db;
+    await d.insert(webhookDeliveries).values({ deliveryGuid: "g1", event: "issues" });
+    const pending = await read();
+    expect(pending.lastReceivedAt).not.toBeNull();
+    expect(pending.pending).toBe(1);
+
+    // The worker catches up.
+    await d.update(webhookDeliveries).set({ processedAt: new Date() }).where(eq(webhookDeliveries.deliveryGuid, "g1"));
+    const drained = await read();
+    expect(drained.pending).toBe(0);
+    expect(drained.lastProcessedAt).not.toBeNull();
   });
 });
 
