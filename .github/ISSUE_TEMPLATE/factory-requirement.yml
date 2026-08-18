@@ -1,0 +1,16 @@
+name: Factory requirement
+description: File a requirement for the software factory to build
+labels: ["factory:intake"]
+body:
+  - type: textarea
+    id: requirement
+    attributes:
+      label: What should be built?
+      description: Plain language. The intake analyst turns this into a spec.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / constraints
+      description: Anything the spec writer should know.
