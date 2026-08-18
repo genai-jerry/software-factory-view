@@ -99,10 +99,15 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
  * whether syncs run, without shelling into the server.
  */
 function IngestionLogSection() {
+  const qc = useQueryClient();
   const log = useQuery({
     queryKey: ["ops-ingestion"],
     queryFn: () => api.get<IngestionLog>("/api/ops/ingestion"),
     refetchInterval: 15_000,
+  });
+  const replay = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; queued: number }>("/api/ops/ingestion/replay"),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ops-ingestion"] }),
   });
   if (log.isError) return null; // not the App owner — the API said 403
   if (!log.data) return null;
@@ -126,7 +131,11 @@ function IngestionLogSection() {
         <div className={`banner ${summary.failing > 0 ? "error" : "stale"}`}>
           {summary.pending} deliver{summary.pending === 1 ? "y" : "ies"} not yet processed
           {summary.failing > 0 && ` — ${summary.failing} failing (see the error column)`}. If this number does not drop, the
-          worker or Redis is down.
+          worker or Redis is down. If the worker is back up but the number holds steady, these deliveries exhausted their
+          retries while it was down — replay them from the ledger:{" "}
+          <button disabled={replay.isPending} onClick={() => replay.mutate()} style={{ marginLeft: "0.4rem" }}>
+            {replay.isPending ? "Queuing…" : replay.isSuccess ? `Replayed ${replay.data.queued} ✓` : `Replay ${summary.pending} unprocessed`}
+          </button>
         </div>
       )}
       <p className="muted">

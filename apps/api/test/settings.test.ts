@@ -382,4 +382,27 @@ describe("GET /api/ops/ingestion", () => {
     expect(stuck).toMatchObject({ action: "labeled", repo: "acme/app", error: "no GitHub App registered" });
     expect(body.reconciles[0]).toMatchObject({ estateName: "acme", trigger: "on-demand", issuesSeen: 5 });
   });
+
+  it("replays only the unprocessed deliveries from the ledger, owner-only", async () => {
+    const added: Array<{ name: string; data: { deliveryGuid: string } }> = [];
+    deps.ingestQueue = { add: async (name: string, data: { deliveryGuid: string }) => void added.push({ name, data }) } as never;
+
+    const member = await app.inject({
+      method: "POST",
+      url: "/api/ops/ingestion/replay",
+      headers: { cookie: memberCookie, "x-console-csrf": "1" },
+    });
+    expect(member.statusCode).toBe(403);
+    expect(added).toHaveLength(0);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/ops/ingestion/replay",
+      headers: { cookie: ownerCookie, "x-console-csrf": "1" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, queued: 1 });
+    // d-ok is already processed; only the stuck delivery goes back on the queue.
+    expect(added.map((a) => a.data.deliveryGuid)).toEqual(["d-stuck"]);
+  });
 });
