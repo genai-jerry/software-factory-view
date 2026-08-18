@@ -27,7 +27,7 @@ import {
   orgs,
   type Db,
 } from "@console/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 
 /**
  * Projection functions. Every write is an idempotent upsert keyed by the
@@ -158,7 +158,10 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
         ghUpdatedAt,
         closedAt: gh.closed_at ? new Date(gh.closed_at) : null,
       },
-      setWhere: sql`${issues.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      // lte() binds the Date through the column's encoder; a raw sql`` param
+      // would reach postgres.js unserialized (drizzle patches its date
+      // serializers to pass-through) and throw a Buffer.byteLength TypeError.
+      setWhere: lte(issues.ghUpdatedAt, ghUpdatedAt),
     });
 
   const row = (await db.select({ id: issues.id, kind: issues.kind }).from(issues).where(eq(issues.ghNodeId, gh.node_id)).limit(1))[0]!;
@@ -269,7 +272,7 @@ export async function projectComment(
     .onConflictDoUpdate({
       target: comments.ghNodeId,
       set: { body: gh.body, consoleMarkers: markers, ghUpdatedAt },
-      setWhere: sql`${comments.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: lte(comments.ghUpdatedAt, ghUpdatedAt),
     });
 
   const commentRow = (await db.select({ id: comments.id }).from(comments).where(eq(comments.ghNodeId, gh.node_id)).limit(1))[0]!;
@@ -356,7 +359,7 @@ export async function projectPull(db: Db, repo: RepoRef, gh: GhPull): Promise<vo
         mergeCommitSha: gh.merge_commit_sha,
         ghUpdatedAt,
       },
-      setWhere: sql`${pullRequests.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: lte(pullRequests.ghUpdatedAt, ghUpdatedAt),
     });
 }
 
@@ -385,7 +388,7 @@ export async function projectRun(db: Db, repo: RepoRef, gh: GhWorkflowRun): Prom
     .onConflictDoUpdate({
       target: runs.ghNodeId,
       set: { status: gh.status, conclusion: gh.conclusion, ghUpdatedAt },
-      setWhere: sql`${runs.ghUpdatedAt} <= ${ghUpdatedAt}`,
+      setWhere: lte(runs.ghUpdatedAt, ghUpdatedAt),
     });
 
   // CI rollup: a completed run on a PR head branch updates that PR's ci_status.
