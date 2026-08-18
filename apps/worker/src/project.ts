@@ -7,6 +7,7 @@ import {
   isApprovedComment,
   isFactoryState,
   parseConsoleMarkers,
+  RELEASE_KIND_LABEL,
   type GhComment,
   type GhIssue,
   type GhPull,
@@ -109,14 +110,24 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
       .limit(1);
     parentIssueId = parent[0]?.id ?? null;
   }
-  const kind = deriveIssueKind({ labels, title: gh.title, hasParent: parentIssueId !== null });
+  let kind = deriveIssueKind({ labels, title: gh.title, hasParent: parentIssueId !== null });
   const ghUpdatedAt = new Date(gh.updated_at);
 
   const prev = await db
-    .select({ id: issues.id, factoryState: issues.factoryState, ghUpdatedAt: issues.ghUpdatedAt })
+    .select({ id: issues.id, kind: issues.kind, factoryState: issues.factoryState, ghUpdatedAt: issues.ghUpdatedAt })
     .from(issues)
     .where(eq(issues.ghNodeId, gh.node_id))
     .limit(1);
+
+  // Kind is sticky for open epics. An epic that loses every factory:* state
+  // label (a fast-track bail-out that removes the label and applies nothing,
+  // or any label drift) would re-derive as "plain" and silently vanish from
+  // the board, the tree and the attention queue — the Console must keep it
+  // visible (state null lands it in Held) rather than erase it. Release
+  // trackers are exempt: their kind marker deliberately keeps them off-board.
+  if (prev[0]?.kind === "epic" && kind === "plain" && gh.state === "open" && !labels.includes(RELEASE_KIND_LABEL)) {
+    kind = "epic";
+  }
 
   await db
     .insert(issues)

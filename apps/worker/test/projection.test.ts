@@ -72,6 +72,62 @@ describe("projection pipeline", () => {
     expect(s.historyCount).toBe(5);
   });
 
+  it("keeps an open epic's kind sticky when every factory:* label is removed", async () => {
+    const { db } = await testDb();
+    const repo = { node_id: "R_repo2", full_name: "acme/app2", default_branch: "main", private: true };
+    const base = {
+      id: 23,
+      node_id: "I_ft23",
+      number: 23,
+      title: "Factory profile action not running",
+      state: "open",
+      body: "The profile run stops at the first step.",
+      user: { login: "jerry" },
+      created_at: "2026-08-18T09:00:00Z",
+      closed_at: null,
+      html_url: "https://github.com/acme/app2/issues/23",
+    };
+    const jobs: WebhookJob[] = [
+      {
+        deliveryGuid: "sk-1",
+        event: "installation",
+        payload: { action: "created", installation: { id: 888, account: { login: "acme" } }, repositories: [repo] },
+      },
+      {
+        deliveryGuid: "sk-2",
+        event: "issues",
+        payload: {
+          action: "opened",
+          issue: { ...base, labels: [{ name: "factory:fast-track" }], updated_at: "2026-08-18T09:00:00Z" },
+          repository: repo,
+          installation: { id: 888 },
+          sender: { login: "jerry" },
+        },
+      },
+      // The fast lane bails out: label removed, nothing applied in its place.
+      {
+        deliveryGuid: "sk-3",
+        event: "issues",
+        payload: {
+          action: "unlabeled",
+          issue: { ...base, labels: [], updated_at: "2026-08-18T09:10:00Z" },
+          label: { name: "factory:fast-track" },
+          repository: repo,
+          installation: { id: 888 },
+          sender: { login: "claude[bot]" },
+        },
+      },
+    ];
+    for (const job of jobs) {
+      await ledgerInsert(db, job);
+      await processWebhook(db, cfg, auth, job);
+    }
+    const rows = (await db.select().from(issues)).map((i) => ({ number: i.number, kind: i.kind, state: i.factoryState }));
+    // Without sticky kind this re-derived to "plain" and vanished from the
+    // board and tree; it must stay an epic (state null → the Held column).
+    expect(rows).toEqual([{ number: 23, kind: "epic", state: null }]);
+  });
+
   it("is idempotent and order-tolerant: shuffled + duplicated replay converges to the same state", async () => {
     const forward = await testDb();
     for (const job of fixtureDeliveries()) {

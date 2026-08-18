@@ -1,6 +1,6 @@
 import { GATE_STATES } from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, or } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
 
 /**
@@ -14,6 +14,11 @@ import type { AppDeps, RequestCtx } from "./context.js";
  *   3  a task awaiting this user's implementation `Approved`
  *   4  factory:blocked with no ownership signal — the old broadcast entry,
  *      demoted so ownership always sorts above it
+ * An open epic with NO factory state at all (it once had one — kind stays
+ * epic — but every factory:* label was removed, e.g. a fast-track bail-out
+ * that applied nothing) is treated exactly like blocked: rank 1 for its
+ * assignee/author, rank 4 broadcast otherwise. Before this, such an issue
+ * simply vanished from the Console with nobody told.
  * Within a rank: age descending. Blocked ages count from the blocked label's
  * own history event, not ghUpdatedAt (which any comment resets).
  */
@@ -69,14 +74,20 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       and(
         inArray(issues.orgId, ctx.orgIds),
         eq(issues.state, "open"),
-        isNotNull(issues.factoryState),
+        // Stateless rows are admitted only when they are (ex-)epics: an epic
+        // stripped of every factory:* label must surface here, not vanish.
+        or(isNotNull(issues.factoryState), eq(issues.kind, "epic")),
         ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
       ),
     );
 
   // Blocked metadata, batched: when each issue was labelled blocked, the state
-  // it halted in, and the agent's stuck question.
-  const blockedIds = openFactoryIssues.filter((r) => r.issue.factoryState === "factory:blocked").map((r) => r.issue.id);
+  // it halted in, and the agent's stuck question. Stateless epics ride along:
+  // they have no blocked-label event, but the newest agent comment usually
+  // carries the bail-out explanation, which is the question worth showing.
+  const blockedIds = openFactoryIssues
+    .filter((r) => r.issue.factoryState === "factory:blocked" || r.issue.factoryState === null)
+    .map((r) => r.issue.id);
   const blockedMeta = await loadBlockedMeta(deps, blockedIds);
 
   // Fast-track issues have no gate — their one human step is merging the PR
@@ -106,9 +117,33 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
   const now = Date.now();
   for (const row of openFactoryIssues) {
     const { issue } = row;
-    const state = issue.factoryState!;
+    const state = issue.factoryState;
     const ageDays = Math.floor((now - issue.ghUpdatedAt.getTime()) / DAY_MS);
     const epicId = issue.parentIssueId ?? issue.id;
+
+    if (state === null) {
+      // An ex-factory epic: every factory:* label is gone but the issue is
+      // still open. Nobody is going to act on it — the pipeline only reacts
+      // to labels and comments — so it needs a human decision, and the person
+      // who filed it is the one to make it.
+      let whyYou: string | null = null;
+      if (issue.assignees.includes(ctx.login)) whyYou = "lost its factory state — assigned to you";
+      else if (issue.author === ctx.login) whyYou = "lost its factory state — you filed it";
+      entries.push({
+        kind: "blocked",
+        rank: whyYou ? 1 : 4,
+        whyYou: `${whyYou ?? "epic with no factory state — it left the pipeline without a hand-off"}; apply a factory label (or reply after labelling it factory:blocked) to put it back on a path`,
+        epicId,
+        issueId: issue.id,
+        title: `#${issue.number} ${issue.title}`,
+        repo: row.repoFullName,
+        state,
+        ageDays,
+        question: blockedMeta.get(issue.id)?.question ?? null,
+        link: `/epics/${epicId}`,
+      });
+      continue;
+    }
 
     if (state === "factory:blocked") {
       const meta = blockedMeta.get(issue.id);

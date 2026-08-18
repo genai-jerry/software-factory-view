@@ -182,6 +182,29 @@ beforeAll(async () => {
     ghUpdatedAt: new Date("2026-08-10T00:00:00Z"),
   });
 
+  // #21: an ex-factory epic — every factory:* label removed (the fast-track
+  // bail-out that used to make an issue vanish from the Console entirely).
+  // Kind stays "epic" (the projection keeps it sticky); state is null.
+  const exFactory = await mkIssue({
+    number: 21,
+    title: "profile action stalls",
+    kind: "epic",
+    factoryState: null,
+    labels: [],
+    author: "sam",
+  });
+  await d.insert(comments).values({
+    orgId: org.id,
+    issueId: exFactory.id,
+    ghNodeId: "C21",
+    ghId: 21,
+    author: "claude[bot]",
+    body: "Sized against the fast-track budget and it does not fit — bailing out.\n<!-- factory-agent -->",
+    isAgent: true,
+    ghCreatedAt: new Date("2026-08-10T00:01:00Z"),
+    ghUpdatedAt: new Date("2026-08-10T00:01:00Z"),
+  });
+
   // Foreign org data that must never appear for alice.
   const otherOrg = (await d.insert(orgs).values({ name: "other" }).returning())[0]!;
   const otherEstate = (await d.insert(estates).values({ orgId: otherOrg.id, name: "other", installationId: 2 }).returning())[0]!;
@@ -231,6 +254,19 @@ describe("/api/attention ranking", () => {
     expect(entries.find((e) => e.title === "#12 epic")!.rank).toBe(2);
     // Nothing from the foreign org.
     expect(entries.some((e) => e.title === "#1 foreign")).toBe(false);
+  });
+
+  it("surfaces an open epic that lost every factory:* label instead of dropping it", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/attention", headers: { cookie } });
+    const { entries } = res.json() as { entries: Array<Record<string, unknown>> };
+    const ex = entries.find((e) => e.title === "#21 profile action stalls")!;
+    expect(ex).toBeTruthy();
+    expect(ex.kind).toBe("blocked");
+    expect(ex.rank).toBe(4); // sam's issue — broadcast for alice; rank 1 for author/assignee
+    expect(ex.state).toBeNull();
+    expect(ex.whyYou).toContain("no factory state");
+    // The bail-out explanation the agent left is the question worth showing.
+    expect(ex.question).toContain("fast-track budget");
   });
 
   it("announces a fast-track PR awaiting merge at gate rank", async () => {
