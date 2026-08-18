@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__github__merge_pull_request",
+      "mcp__github__enable_pr_auto_merge"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "genai-jerry": {
+      "source": {
+        "source": "github",
+        "repo": "genai-jerry/claude-software-factory"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "factory@genai-jerry": true
+  }
+}
