@@ -133,7 +133,7 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
 
   await db
     .update(webhookDeliveries)
-    .set({ processedAt: new Date() })
+    .set({ processedAt: new Date(), error: null })
     .where(eq(webhookDeliveries.deliveryGuid, job.deliveryGuid));
 }
 

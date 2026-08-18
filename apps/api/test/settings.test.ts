@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@console/core";
-import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
+import { estates, githubAppConfig, issues, memberships, orgs, reconcileRuns, repos, sessions, users, webhookDeliveries } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
@@ -88,6 +88,7 @@ beforeAll(async () => {
       .returning()
   )[0]!;
   id.org = org.id;
+  id.estate = estate.id;
   id.epic = epic.id;
 });
 
@@ -328,5 +329,57 @@ describe("org secret write-through", () => {
     expect(body.name).toBe("CLAUDE_CODE_OAUTH_TOKEN");
     expect(body.results).toHaveLength(1);
     expect(body.results[0]).toMatchObject({ repo: "acme/app", ok: false });
+  });
+});
+
+describe("GET /api/ops/ingestion", () => {
+  it("403s everyone who is not the GitHub App owner", async () => {
+    // The store resolves env credentials, so setupAccess requires App
+    // ownership — with GitHub unreachable and no configured_by recorded,
+    // nobody qualifies yet.
+    const res = await app.inject({ method: "GET", url: "/api/ops/ingestion", headers: { cookie: memberCookie } });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("serves the delivery ledger and reconcile runs to the App owner", async () => {
+    const d = deps.dbh.db;
+    // GitHub is unreachable in tests, so ownership falls back to who
+    // registered the App in the Console: alice.
+    await d.insert(githubAppConfig).values({
+      appId: "1",
+      encryptedPrivateKey: "x",
+      encryptedWebhookSecret: "x",
+      clientId: "c",
+      encryptedClientSecret: "x",
+      configuredBy: "alice",
+    });
+    await d.insert(webhookDeliveries).values([
+      { deliveryGuid: "d-ok", event: "issues", processedAt: new Date(), payload: { action: "opened", repository: { full_name: "acme/app" } } },
+      { deliveryGuid: "d-stuck", event: "issues", error: "no GitHub App registered", payload: { action: "labeled", repository: { full_name: "acme/app" } } },
+    ]);
+    await d.insert(reconcileRuns).values({
+      estateId: id.estate,
+      trigger: "on-demand",
+      finishedAt: new Date(),
+      reposWalked: 1,
+      issuesSeen: 5,
+      pullsSeen: 2,
+      errors: [],
+    });
+
+    const member = await app.inject({ method: "GET", url: "/api/ops/ingestion", headers: { cookie: memberCookie } });
+    expect(member.statusCode).toBe(403);
+
+    const res = await app.inject({ method: "GET", url: "/api/ops/ingestion", headers: { cookie: ownerCookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      summary: { pending: number; failing: number; total: number };
+      deliveries: Array<{ deliveryGuid: string; action: string | null; repo: string | null; error: string | null }>;
+      reconciles: Array<{ estateName: string | null; trigger: string; issuesSeen: number }>;
+    };
+    expect(body.summary).toMatchObject({ pending: 1, failing: 1, total: 2 });
+    const stuck = body.deliveries.find((x) => x.deliveryGuid === "d-stuck")!;
+    expect(stuck).toMatchObject({ action: "labeled", repo: "acme/app", error: "no GitHub App registered" });
+    expect(body.reconciles[0]).toMatchObject({ estateName: "acme", trigger: "on-demand", issuesSeen: 5 });
   });
 });

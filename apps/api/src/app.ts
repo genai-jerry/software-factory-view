@@ -11,6 +11,7 @@ import { registerGateRoutes } from "./routes/gate.js";
 import { registerWriteRoutes } from "./routes/write.js";
 import { registerQaRoutes } from "./routes/qa.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
+import { registerOpsRoutes } from "./routes/ops.js";
 import { registerEstateRoutes } from "./routes/estates.js";
 import { registerSetupRoutes } from "./setup.js";
 import type { AppDeps } from "./context.js";
@@ -44,6 +45,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerWriteRoutes(app, deps);
   registerQaRoutes(app, deps);
   registerOnboardingRoutes(app, deps);
+  registerOpsRoutes(app, deps);
 
   return app;
 }

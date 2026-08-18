@@ -1,5 +1,5 @@
 import { CredentialStore, loadConfig } from "@console/core";
-import { connectDb, githubAppConfig, runMigrations } from "@console/db";
+import { connectDb, githubAppConfig, reconcileRuns, runMigrations, webhookDeliveries } from "@console/db";
 import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
@@ -39,10 +39,21 @@ async function main(): Promise<void> {
   const ingestWorker = new Worker<WebhookJob>(
     "ingest",
     async (job) => {
-      // Re-read on each job: registration may have happened since boot.
-      credentials.invalidate();
-      const auth = await credentials.requireAuth();
-      await processWebhook(db, cfg, auth, job.data);
+      try {
+        // Re-read on each job: registration may have happened since boot.
+        credentials.invalidate();
+        const auth = await credentials.requireAuth();
+        await processWebhook(db, cfg, auth, job.data);
+      } catch (err) {
+        // Stamp the failure on the delivery ledger so the Console's ingestion
+        // log can show it — the retries still run, and success clears it.
+        await db
+          .update(webhookDeliveries)
+          .set({ error: (err as Error).message })
+          .where(eq(webhookDeliveries.deliveryGuid, job.data.deliveryGuid))
+          .catch(() => undefined);
+        throw err;
+      }
     },
     { connection, concurrency: 4 },
   );
@@ -53,16 +64,40 @@ async function main(): Promise<void> {
   const reconcileWorker = new Worker<{ estateIds?: string[] }>(
     "reconcile",
     async (job) => {
-      credentials.invalidate();
-      const auth = await credentials.requireAuth();
-      const reports = await reconcileAll(db, cfg, auth, job.data.estateIds);
-      for (const r of reports) {
-        console.log(
-          `reconciled estate ${r.estateId}: repos=${r.reposWalked} issues=${r.issuesSeen} prs=${r.pullsSeen}` +
-            (r.errors.length ? ` errors=${JSON.stringify(r.errors)}` : ""),
-        );
+      const startedAt = new Date();
+      const trigger = job.name || "reconcile";
+      try {
+        credentials.invalidate();
+        const auth = await credentials.requireAuth();
+        const reports = await reconcileAll(db, cfg, auth, job.data.estateIds);
+        for (const r of reports) {
+          console.log(
+            `reconciled estate ${r.estateId}: repos=${r.reposWalked} issues=${r.issuesSeen} prs=${r.pullsSeen}` +
+              (r.errors.length ? ` errors=${JSON.stringify(r.errors)}` : ""),
+          );
+          // One row per estate walked, so the Console's ingestion log can show
+          // whether syncs run and what they tripped over.
+          await db.insert(reconcileRuns).values({
+            estateId: r.estateId,
+            trigger,
+            startedAt,
+            finishedAt: new Date(),
+            reposWalked: r.reposWalked,
+            issuesSeen: r.issuesSeen,
+            pullsSeen: r.pullsSeen,
+            errors: r.errors,
+          });
+        }
+        return reports;
+      } catch (err) {
+        // A run that died before producing reports (credentials, network) must
+        // still leave a trace, or a broken sync looks like no sync at all.
+        await db
+          .insert(reconcileRuns)
+          .values({ trigger, startedAt, finishedAt: new Date(), errors: [(err as Error).message] })
+          .catch(() => undefined);
+        throw err;
       }
-      return reports;
     },
     { connection, concurrency: 1 },
   );
