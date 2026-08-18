@@ -1,0 +1,15 @@
+{
+  "_comment": "Gate -> GitHub usernames. spec = G1; design = G2; implementation = who may start ready tasks; release = G3. Empty list = any collaborator.",
+  "spec": [
+    "genai-jerry"
+  ],
+  "design": [
+    "genai-jerry"
+  ],
+  "implementation": [
+    "genai-jerry"
+  ],
+  "release": [
+    "genai-jerry"
+  ]
+}
