@@ -1,5 +1,5 @@
 import { gateOfState, phaseOfState, NEXT_MOVER, stateSentence } from "@console/core";
-import { gateAssignments, issues, issueStateHistory, repos } from "@console/db";
+import { gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull, or, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention, loadBlockedMeta } from "../attention.js";
@@ -168,6 +168,20 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
       blocked = { since: meta?.since ?? null, question: meta?.question ?? null };
     }
 
+    // Open PRs tied to this issue by the factory's branch naming — for a
+    // fast-track issue this is the deliverable a human still has to merge.
+    const prRows = await db
+      .select({
+        number: pullRequests.number,
+        title: pullRequests.title,
+        kind: pullRequests.kind,
+        draft: pullRequests.draft,
+        ciStatus: pullRequests.ciStatus,
+        htmlUrl: pullRequests.htmlUrl,
+      })
+      .from(pullRequests)
+      .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.issueNumber, issue.number), eq(pullRequests.state, "open")));
+
     return {
       issue: {
         id: issue.id,
@@ -194,6 +208,7 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
           }
         : null,
       blocked,
+      prs: prRows,
       epicId: issue.parentIssueId ?? issue.id,
     };
   });

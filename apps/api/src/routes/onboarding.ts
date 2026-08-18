@@ -1,4 +1,4 @@
-import { FACTORY_LABELS, GitHubHttpError, InstallationClient, parseApproverFile } from "@console/core";
+import { FACTORY_KIND_LABELS, FACTORY_LABELS, GitHubHttpError, InstallationClient, parseApproverFile } from "@console/core";
 import { auditLog, estates, gateAssignments, memberships, onboardingRuns, pullRequests, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -86,7 +86,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     return { estateId: estate.id, repos: out };
   });
 
-  /** Step 1 — labels: create the 14 factory:* labels idempotently; report drift fixed. */
+  /** Step 1 — labels: create the full factory:* label set idempotently; report drift fixed. */
   app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/labels", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
@@ -98,7 +98,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     try {
       const existing = await client.listLabels(owner, name);
       const byName = new Map(existing.map((l) => [l.name, l]));
-      for (const label of FACTORY_LABELS) {
+      for (const label of [...FACTORY_LABELS, ...FACTORY_KIND_LABELS]) {
         const have = byName.get(label.name);
         if (have && have.color.toLowerCase() === label.color.toLowerCase() && have.description === label.description) {
           result.found++;
@@ -453,15 +453,16 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       // 1. Labels present and exact.
       const labels = await client.listLabels(owner, name);
       const byName = new Map(labels.map((l) => [l.name, l]));
-      const missing = FACTORY_LABELS.filter((l) => !byName.has(l.name)).map((l) => l.name);
-      const drifted = FACTORY_LABELS.filter((l) => {
+      const wanted = [...FACTORY_LABELS, ...FACTORY_KIND_LABELS];
+      const missing = wanted.filter((l) => !byName.has(l.name)).map((l) => l.name);
+      const drifted = wanted.filter((l) => {
         const have = byName.get(l.name);
         return have && (have.color.toLowerCase() !== l.color.toLowerCase() || have.description !== l.description);
       }).map((l) => l.name);
       push(
         "labels",
         missing.length === 0 && drifted.length === 0,
-        missing.length ? `missing: ${missing.join(", ")}` : drifted.length ? `drifted: ${drifted.join(", ")}` : "all 14 present and exact",
+        missing.length ? `missing: ${missing.join(", ")}` : drifted.length ? `drifted: ${drifted.join(", ")}` : `all ${wanted.length} present and exact`,
       );
 
       // 2. Stubs on default branch with permissions: intact and refs in sync.

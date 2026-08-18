@@ -8,6 +8,7 @@ import {
   issueStateHistory,
   memberships,
   orgs,
+  pullRequests,
   repos,
   sessions,
   taskDependencies,
@@ -153,6 +154,33 @@ beforeAll(async () => {
   // A closed epic that must not appear in the tree.
   await mkIssue({ number: 18, title: "done epic", kind: "epic", factoryState: "factory:deployed", state: "closed" });
 
+  // #19: a fast-track fix whose PR awaits a human merge — the fast lane has no
+  // gate, so the queue must announce the PR itself (the regression: this
+  // finished in silence and never showed up anywhere).
+  const fastTrack = await mkIssue({
+    number: 19,
+    title: "login required indicators",
+    kind: "epic",
+    factoryState: "factory:fast-track",
+    labels: ["factory:fast-track"],
+    author: "sam",
+  });
+  await d.insert(pullRequests).values({
+    orgId: org.id,
+    repoId: repo.id,
+    ghNodeId: "P20",
+    number: 20,
+    title: "feat(login): mark fields required",
+    kind: "task",
+    issueNumber: 19,
+    headRef: "factory/19-login-required",
+    baseRef: "main",
+    state: "open",
+    draft: false,
+    htmlUrl: "https://gh/pr/20",
+    ghUpdatedAt: new Date("2026-08-10T00:00:00Z"),
+  });
+
   // Foreign org data that must never appear for alice.
   const otherOrg = (await d.insert(orgs).values({ name: "other" }).returning())[0]!;
   const otherEstate = (await d.insert(estates).values({ orgId: otherOrg.id, name: "other", installationId: 2 }).returning())[0]!;
@@ -179,6 +207,7 @@ beforeAll(async () => {
   )[0]!;
 
   id.blockedMine = blockedMine.id;
+  id.fastTrack = fastTrack.id;
   id.epic = epic.id;
   id.waiting = waiting.id;
   id.blocker = blocker.id;
@@ -201,6 +230,16 @@ describe("/api/attention ranking", () => {
     expect(entries.find((e) => e.title === "#12 epic")!.rank).toBe(2);
     // Nothing from the foreign org.
     expect(entries.some((e) => e.title === "#1 foreign")).toBe(false);
+  });
+
+  it("announces a fast-track PR awaiting merge at gate rank", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/attention", headers: { cookie } });
+    const { entries } = res.json() as { entries: Array<Record<string, unknown>> };
+    const ft = entries.find((e) => e.title === "#19 login required indicators")!;
+    expect(ft).toBeTruthy();
+    expect(ft.kind).toBe("merge");
+    expect(ft.rank).toBe(2);
+    expect(ft.whyYou).toContain("fast-track PR #20 awaits review and merge");
   });
 });
 
@@ -235,6 +274,14 @@ describe("/api/issues/:id/peek", () => {
     const blocked = await app.inject({ method: "GET", url: `/api/issues/${id.blockedMine}/peek`, headers: { cookie } });
     const b = blocked.json() as { blocked: { question: string } };
     expect(b.blocked.question).toBe("Which currency should refunds use?");
+  });
+
+  it("lists the open PR awaiting merge on a fast-track issue", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/issues/${id.fastTrack}/peek`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { sentence: string; prs: Array<{ number: number; htmlUrl: string }> };
+    expect(body.sentence).toContain("fast lane");
+    expect(body.prs).toMatchObject([{ number: 20, htmlUrl: "https://gh/pr/20" }]);
   });
 
   it("404s a foreign-org issue", async () => {
@@ -272,6 +319,18 @@ describe("/api/flow", () => {
     const epic12 = noRelease.epics.find((e) => e.number === 12)!;
     expect(epic12.tasks.map((t) => t.number)).toEqual([13]);
     expect(epic12.tasks[0]!.blockedBy).toEqual([14]);
+  });
+
+  it("shows a fast-track epic with its open PR in the tree", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/flow", headers: { cookie } });
+    const { estates: flowEstates } = res.json() as {
+      estates: Array<{ milestones: Array<{ title: string; epics: Array<{ number: number; state: string; prs: Array<{ number: number; draft: boolean }> }> }> }>;
+    };
+    const noRelease = flowEstates[0]!.milestones.find((m) => m.title === "No release")!;
+    const ft = noRelease.epics.find((e) => e.number === 19)!;
+    expect(ft).toBeTruthy();
+    expect(ft.state).toBe("factory:fast-track");
+    expect(ft.prs).toMatchObject([{ number: 20, draft: false }]);
   });
 });
 

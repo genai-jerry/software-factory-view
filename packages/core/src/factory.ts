@@ -5,6 +5,10 @@
  */
 
 export const FACTORY_LABELS = [
+  { name: "factory:backlog", color: "8B949E", description: "Filed, waiting for its release milestone to be approved" },
+  { name: "factory:release-planning", color: "3F5D8A", description: "Awaiting `Plan release` on the tracker (nothing running)" },
+  { name: "factory:release-ready", color: "5C7CBF", description: "Release plan posted, awaiting gate G0 approval" },
+  { name: "factory:release-approved", color: "246B4A", description: "Release approved (G0); its issues enter intake" },
   { name: "factory:intake", color: "0E5A8A", description: "New requirement awaiting intake analysis" },
   { name: "factory:spec-ready", color: "4A90D9", description: "Spec PR open, awaiting gate G1 approval" },
   { name: "factory:spec-approved", color: "2E7D4F", description: "Spec approved (G1); released for planning" },
@@ -21,6 +25,20 @@ export const FACTORY_LABELS = [
   { name: "factory:incident", color: "7A1F1F", description: "Post-deploy regression under investigation" },
 ] as const;
 
+/**
+ * Kind/marker labels the factory also creates. Deliberately NOT states:
+ * `factory:release` marks a release tracker issue (which also carries one
+ * `factory:release-*` state), and `factory:in-progress` sits alongside the
+ * state label for the duration of an agent run. They are provisioned during
+ * onboarding but must never win state derivation.
+ */
+export const RELEASE_KIND_LABEL = "factory:release";
+
+export const FACTORY_KIND_LABELS = [
+  { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
+  { name: "factory:in-progress", color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
+] as const;
+
 export type FactoryState = (typeof FACTORY_LABELS)[number]["name"];
 
 export const FACTORY_STATE_NAMES: readonly FactoryState[] = FACTORY_LABELS.map((l) => l.name);
@@ -29,7 +47,11 @@ export function isFactoryState(label: string): label is FactoryState {
   return (FACTORY_STATE_NAMES as readonly string[]).includes(label);
 }
 
-/** Pipeline order for the board columns / stage rail. Blocked, fast-track and incident are off-rail. */
+/**
+ * Pipeline order for the board columns / stage rail. Backlog, the release-*
+ * tracker states, blocked, fast-track and incident are off-rail: fast-track
+ * gets its own board column, the rest land in Held.
+ */
 export const PIPELINE_ORDER: readonly FactoryState[] = [
   "factory:intake",
   "factory:spec-ready",

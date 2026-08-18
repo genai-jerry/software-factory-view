@@ -111,6 +111,7 @@ function EpicNode({ epic: e, onPeek }: { epic: FlowEpic; onPeek: (id: string) =>
           #{e.number} {e.title}
         </a>
         <span className="badge">{PHASE_LABELS[e.phase]}</span>
+        {e.state === "factory:fast-track" && <span className="badge state">fast track</span>}
         <RepoChip fullName={e.repo} />
         <span className="muted">
           {e.daysInState}d in state
@@ -118,6 +119,12 @@ function EpicNode({ epic: e, onPeek }: { epic: FlowEpic; onPeek: (id: string) =>
           {e.rollup.waiting > 0 && ` · ${e.rollup.waiting} waiting`}
           {waits && ` · waits on ${waits}`}
         </span>
+        {e.prs.map((pr) => (
+          <a className="muted" href={pr.htmlUrl} target="_blank" rel="noreferrer" key={pr.number} title={pr.title}>
+            PR #{pr.number} {pr.draft ? "in draft" : "awaiting merge"}
+            {pr.ciStatus && pr.ciStatus !== "success" && ` · CI ${pr.ciStatus}`}
+          </a>
+        ))}
         {e.blockedCount > 0 && <span className="badge blocked">{e.blockedCount} blocked</span>}
       </div>
       {open &&

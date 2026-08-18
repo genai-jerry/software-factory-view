@@ -153,6 +153,8 @@ export interface FlowEpic {
   rollup: TaskRollup;
   blockedCount: number;
   gate: { gate: string; label: string; approvers: string[] } | null;
+  /** Open PRs tied to this epic by the factory's branch naming — for a fast-track epic, the PR awaiting merge. */
+  prs: EpicPr[];
   tasks: Array<{
     issueId: string;
     number: number;
@@ -164,6 +166,15 @@ export interface FlowEpic {
     ageDays: number;
     blockedBy: number[];
   }>;
+}
+
+export interface EpicPr {
+  number: number;
+  title: string;
+  kind: string;
+  draft: boolean;
+  ciStatus: string | null;
+  htmlUrl: string;
 }
 
 export interface IssuePeekData {
@@ -186,6 +197,8 @@ export interface IssuePeekData {
   deps: { blockedBy: DepNode[]; blocks: DepNode[] };
   lastEvent: { at: string; detail: string; actor: string | null } | null;
   blocked: { since: string | null; question: string | null } | null;
+  /** Open PRs tied to this issue by the factory's branch naming (fast-track: the PR awaiting merge). */
+  prs: EpicPr[];
   epicId: string;
 }
 
