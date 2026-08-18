@@ -1,0 +1,79 @@
+{
+  "_doc": "Drafted by the Profiler on issue #21. Every command in `commands` was executed on a clean checkout in the repo's own Actions runner; every other field is cited to a file read or a command run in the PR body.",
+  "repo": "software-factory-view",
+  "estate_role": "Standalone. The Factory Console — a read-mostly lens and control panel over the Claude Software Factory (GitHub + OpenSpec). It has no sibling repos in this estate: it consumes GitHub's API and mirrors claude-software-factory's label/state contract in packages/core/src/factory.ts, but nothing in this estate depends on it, so there is no cross-repo merge order to honour.",
+  "stack": "TypeScript end-to-end (ES2022, module NodeNext, strict + noUncheckedIndexedAccess), Node >=20.19, pnpm 10.33 workspace. apps/api = Fastify 5 (@fastify/cookie, GitHub OAuth, REST, webhook endpoint); apps/worker = BullMQ 5 on ioredis (webhook projection, reconciler, OpenSpec scaffolding); apps/web = React 18 + Vite 6 SPA (react-router-dom 6, @tanstack/react-query 5); packages/core = factory constants, hidden-comment markers, state derivation, two-token GitHub REST client (jose + libsodium-wrappers), AES-256-GCM envelope crypto, zod env config; packages/db = Drizzle ORM 0.36 over Postgres 16 (postgres.js driver) with hand-rolled forward-only SQL migrations; packages/insight = Anthropic SDK plus OpenAI-compatible providers for cited, read-only Q&A. Deployed as Docker images (infra/Dockerfile.api, infra/Dockerfile.web) behind nginx and Traefik on a VPS.",
+  "branches": {
+    "default": "main",
+    "staging": null
+  },
+  "commands": {
+    "test": "pnpm test",
+    "build": "pnpm typecheck && pnpm build",
+    "lint": null
+  },
+  "conventions": [
+    "pnpm workspace, ESM only. Every package is `\"type\": \"module\"` and tsconfig is `module: NodeNext`, so relative imports MUST carry the `.js` extension even in TypeScript sources (`import { loadEpic } from \"./read.js\"`). Cross-package imports use the workspace aliases `@console/core`, `@console/db`, `@console/insight`.",
+    "API routes are `registerXRoutes(app: FastifyInstance, deps: AppDeps): void` in apps/api/src/routes/*.ts, wired once in apps/api/src/app.ts. Dependencies (config, db handle, credential store, BullMQ queues) are threaded through the `AppDeps` object — no module-level singletons, which is what lets the tests build the whole app against an in-process Postgres.",
+    "Every authenticated route starts with `const ctx = await requireAuth(deps, req, reply); if (!ctx) return;` and then scopes each query to `ctx.orgIds` at the data layer (`inArray(table.orgId, ctx.orgIds)`). Authorisation is a WHERE clause, not a post-filter. Errors are returned as `reply.code(N).send({ error: \"lowercase message\" })`.",
+    "Two-token model as a structural property (packages/core/src/github.ts): `InstallationClient` is the App's identity (reads, non-authoritative comments); `UserClient` is the human's OAuth identity. Anything carrying authority — approving, merging, labelling, filing issues — exists only on `UserClient` and is reached via `userClient(deps, ctx)`. Do not add an authoritative operation to `InstallationClient`.",
+    "Database access is Drizzle query-builder only (`db.select().from(x).where(and(eq(...)))`) — no raw SQL strings in app code. Schema lives in packages/db/src/schema.ts and is split by comment banner into GitHub PROJECTIONS (keyed by `gh_node_id`, guarded by `gh_updated_at`, rebuildable, never backed up) and CONSOLE-NATIVE tables. No table mixes the two.",
+    "Secrets are never stored in the clear: OAuth tokens, the GitHub App private key and cached repo content go through `encryptSecret`/`decryptSecret` (AES-256-GCM under `CONSOLE_MASTER_KEY`, `v1.iv.tag.ct` envelope). Environment variables are declared and validated in the zod schema in packages/core/src/config.ts and read as `cfg.X` — never `process.env` in app code.",
+    "Request bodies are validated by hand against Fastify's generic type parameters (`app.post<{ Body: {...} }>(...)` then explicit checks returning 400). zod is used for environment config only; do not introduce a second body-validation style without saying so in design.md.",
+    "Comments explain *why*, not what: most modules open with a block comment citing the plan/spec section it implements (`spec 01 §2.2`, `plan 02 §1a`). New modules follow that — a reader should be able to get from the code to the decision that shaped it.",
+    "Anything the Console writes back to GitHub is an ordinary comment carrying a hidden marker (`<!-- console:thread=… -->`, `<!-- console:decision=… -->`, packages/core/src/markers.ts). That is what keeps the projection rebuildable and non-Console users first-class; never invent a new storage location for state that belongs on GitHub."
+  ],
+  "review_checklist": [
+    "New or changed API route: does it call `requireAuth` and scope every query to `ctx.orgIds`? An unscoped `db.select()` in a route is a cross-tenant leak, and apps/api/test/memberships.test.ts exists because that boundary has been got wrong before.",
+    "State-changing route: it must be a non-GET method, so `requireAuth`'s CSRF-header check applies. A mutation behind `app.get` bypasses one of the two CSRF layers (there is deliberately no CORS — see the comment in apps/api/src/app.ts).",
+    "Authoritative GitHub operation (approve, merge, label, comment-as-user, file issue): must go through `userClient(deps, ctx)`, never `InstallationClient`. Check it also writes an `auditLog` row, as apps/api/src/routes/gate.ts and write.ts do.",
+    "Schema change: is there a new numbered file in packages/db/migrations/ (NNNN_name.sql, statements separated by `--> statement-breakpoint`)? The runner is forward-only and lexicographic — editing an already-applied migration is silently a no-op on any deployed database.",
+    "Projection change: does the write still guard on `gh_updated_at` (last-writer-wins) and key on `gh_node_id`? Webhook delivery is at-least-once and out of order; a projection write without the guard reintroduces flapping state.",
+    "Secrets: any new credential must be stored via `encryptSecret` and any new environment variable declared in the zod schema in packages/core/src/config.ts. A raw token column or a bare `process.env` read is a change request.",
+    "Factory label/state constants in packages/core/src/factory.ts mirror claude-software-factory's FACTORY.md §3. Changing them to make the UI nicer desynchronises the Console from the factory — the Console renders factory state, it never invents it.",
+    "Markdown from GitHub must stay sanitised server-side (apps/api/src/render.ts uses marked + sanitize-html). Rendering untrusted markdown anywhere else, or relaxing the sanitiser, is a change request."
+  ],
+  "qa_notes": [
+    "Vitest 2 throughout; `pnpm test` runs `pnpm -r test` across the workspace. Tests live in a `test/` directory beside `src/` (apps/api/test, apps/worker/test, packages/core/test, packages/insight/test), named `*.test.ts`.",
+    "apps/web, packages/db and packages/insight run vitest with `--passWithNoTests`; apps/api (11 files, 116 tests) and apps/worker (4 files) are where the real coverage is. Adding the first meaningful test to apps/web means no config change — the runner is already wired.",
+    "Integration tests boot a real in-process Postgres (`new PGlite()` from @electric-sql/pglite, drizzle-orm/pglite adapter) and apply every file in packages/db/migrations in `beforeAll`, then build the whole Fastify app via `buildApp(deps)`. See apps/api/test/security.test.ts for the canonical setup and apps/worker/test/helpers.ts for the worker equivalent. No Docker, no external database — a new suite should follow the same shape rather than mocking the database.",
+    "GitHub is never called for real: tests point `apiUrl` at `https://api.invalid` and inject fakes through `AppDeps` (e.g. `CredentialStore({ load: async () => null })` to exercise the environment fallback). Queues are replaced with in-memory arrays that record what was enqueued.",
+    "That PGlite warmup is why apps/api/vitest.config.ts and apps/worker/vitest.config.ts raise `testTimeout` to 30s (and the API's `hookTimeout` to 60s). A new suite that boots its own PGlite instance needs the same allowance.",
+    "CI (.github/workflows/ci.yml, and the identical gate in deploy.yml) runs `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm -r build`, `pnpm test` on every branch and PR. Typecheck is a real gate — a PR that compiles under `tsc --noEmit` in one package but not another still fails CI."
+  ],
+  "gotchas": [
+    "There is no linter or formatter in this repo — no eslint, prettier or biome config, and no package declares a `lint` script. The root `package.json` does have `\"lint\": \"pnpm -r lint\"`, but running it FAILS with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT` (verified, exit 1). `commands.lint` is null for that reason: treat a red `pnpm lint` as the absence of a gate, not as a defect introduced by your change.",
+    "`pnpm test` is slow — about 7 minutes wall clock, with apps/api alone taking ~128s, because most tests boot a fresh PGlite Postgres and replay every migration. It is not hung. Do not shorten it by cutting the vitest timeouts.",
+    "`pnpm install --frozen-lockfile` is required: pnpm-lock.yaml is committed and CI uses the frozen flag, so a dependency added without updating the lockfile fails CI at the install step, before any test output exists to explain it.",
+    "Relative imports need the `.js` extension (NodeNext). Omitting it typechecks in some editors but fails `tsc -p tsconfig.json` and at runtime — this is the single most common build break here.",
+    "packages/db's build copies `migrations/` into `dist/migrations` as a second step; a migration added without running `pnpm build` is invisible to `runMigrations` in a built (Docker) image even though the tests, which read the source directory directly, pass.",
+    "The api and worker both run `runMigrations` on boot and would race, so the runner takes a Postgres advisory lock (packages/db/src/migrate.ts). Do not 'simplify' that lock away — without it Postgres fails one process with a duplicate-key error on pg_type_typname_nsp_index.",
+    "The webhook route deliberately sits outside session/CSRF middleware and reads the raw body in `preParsing` for HMAC verification. Moving it behind the normal request pipeline, or letting JSON parsing consume the body first, breaks signature verification for every delivery.",
+    "GitHub forbids Actions secret names starting with `GITHUB_`, so the deploy workflow takes `GH_APP_*` / `GH_OAUTH_*` and writes them to the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`. Also: those values must come from `env_file` only — adding `${GITHUB_APP_*}` to a compose `environment:` block blanks them via empty interpolation (noted in the deploy workflow and infra/docker-compose.deploy.yml).",
+    "`DEV_FAKE_LOGIN=1` bypasses GitHub OAuth entirely. It is a local-development switch and must never reach a deployed environment.",
+    "This repo has no `staging` branch (verified against the GitHub branch list) and deploys to production on push to `main`. There is no release train to assemble: a task PR bases on `main`, and merging it deploys."
+  ],
+  "reuse_hotspots": [
+    "packages/core/src — before adding a helper, check here: factory.ts (label/state constants), markers.ts (hidden-comment parse/emit), derive.ts and phases.ts (factory state derivation), crypto.ts (envelope encrypt/decrypt), config.ts (env schema), github.ts (the whole REST surface, App JWT and OAuth), credentials.ts (App credential resolution, database-first with env fallback). It is re-exported wholesale from packages/core/src/index.ts.",
+    "apps/api/src/context.ts — `requireAuth`, `resolveSession`, `userClient` and the `AppDeps`/`RequestCtx` types. Any new route needs these rather than its own auth path.",
+    "apps/api/src/routes/read.ts — `loadEpic` and the epic/repo/org lookup helpers other route modules already import. apps/api/src/render.ts is the single markdown sanitiser.",
+    "packages/db/src/schema.ts — check for an existing table or column before adding one; several concerns that look separate (threads, decisions, gate views, audit log) already have homes here.",
+    "apps/worker/src/artifacts.ts and project.ts — projection and repair helpers (`refreshRepoProfile`, `repairDependencies`, `projectIssue`, `projectPull`, …) reused by both the ingest worker and the reconciler.",
+    "apps/web/src/api.ts (the fetch wrapper with the CSRF header), apps/web/src/lib/board.ts and lib/filter.tsx, and apps/web/src/components/ — the SPA's shared pieces; pages should compose these rather than re-implement fetching or filtering."
+  ],
+  "deploy": {
+    "health_checks": [
+      "curl -fsS https://sf.genaipeople.com/api/health   # expects {\"ok\":true,\"service\":\"console-api\"}",
+      "ssh $DEPLOY_USER@$DEPLOY_HOST 'docker inspect -f \"{{.State.Health.Status}}\" factory-console-api-1'   # expects: healthy",
+      "ssh $DEPLOY_USER@$DEPLOY_HOST 'cd ~/factory-console && docker compose ps'   # every service up; postgres and redis report healthy"
+    ],
+    "notes": [
+      "Deploy is .github/workflows/deploy.yml on push to main (or Run workflow): typecheck+build+test gate, then build both images, scp tarballs to the VPS, docker load, docker compose up in ~/factory-console. A merge to main IS the production deploy — there is no staging step to catch a bad change first.",
+      "The workflow's own gate polls the api container for `healthy` for 3 minutes and fails the deploy if it never gets there, dumping `docker compose ps` and the last 100 api log lines. That failure halts the release: the previous containers are already gone by then, so the site is down until it is fixed or rolled back.",
+      "Migrations run automatically at api and worker boot. A migration that fails leaves the api container unhealthy and the deploy red — check the api logs first when a deploy fails immediately after a schema change.",
+      "The deploy pre-flight refuses to run unless every one of DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY, CONSOLE_MASTER_KEY, DB_PASSWORD, PUBLIC_ORIGIN, GH_APP_ID, GH_APP_PRIVATE_KEY, GH_APP_WEBHOOK_SECRET, GH_OAUTH_CLIENT_ID and GH_OAUTH_CLIENT_SECRET is set on the `production` GitHub Environment.",
+      "CONSOLE_MASTER_KEY must never be rotated casually: it decrypts every stored OAuth token, the GitHub App private key and the artifact cache. Losing or changing it means every user must sign in again and the App must be re-registered.",
+      "Traefik routes Host(CONSOLE_HOST) on the shared `lighthouse-network` docker network to this stack's nginx. If that network or the Traefik instance is missing, the containers come up healthy and the site is still unreachable — check from outside, not only from the host."
+    ]
+  }
+}
