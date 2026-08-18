@@ -1,5 +1,5 @@
 import { estates, reconcileRuns, webhookDeliveries } from "@console/db";
-import { desc, eq, sql as dsql } from "drizzle-orm";
+import { asc, desc, eq, isNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { setupAccess } from "../setup.js";
 import type { AppDeps } from "../context.js";
@@ -72,5 +72,42 @@ export function registerOpsRoutes(app: FastifyInstance, deps: AppDeps): void {
         errors: run.errors,
       })),
     };
+  });
+
+  /**
+   * Re-enqueue every unprocessed delivery from the ledger, oldest first. A
+   * delivery whose retries were exhausted while the worker was down is
+   * otherwise stranded forever — GitHub got its 200 and will not redeliver.
+   * The ledger kept the full payload and projections are idempotent, so
+   * replaying is safe; a delivery that succeeds gets its processed_at stamp
+   * and drops out of the pending count.
+   */
+  app.post("/api/ops/ingestion/replay", async (req, reply) => {
+    const { allowed } = await setupAccess(deps, req);
+    if (!allowed) return reply.code(403).send({ error: "only the GitHub App owner can replay deliveries" });
+    if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
+
+    const pending = await db
+      .select({
+        deliveryGuid: webhookDeliveries.deliveryGuid,
+        event: webhookDeliveries.event,
+        payload: webhookDeliveries.payload,
+      })
+      .from(webhookDeliveries)
+      .where(isNull(webhookDeliveries.processedAt))
+      .orderBy(asc(webhookDeliveries.receivedAt))
+      .limit(1000);
+
+    let queued = 0;
+    for (const d of pending) {
+      if (!d.payload) continue; // nothing to replay from
+      await deps.ingestQueue.add(
+        "webhook-replay",
+        { deliveryGuid: d.deliveryGuid, event: d.event, payload: d.payload },
+        { removeOnComplete: 1000, removeOnFail: 5000, attempts: 5, backoff: { type: "exponential", delay: 2000 } },
+      );
+      queued++;
+    }
+    return { ok: true, queued, pending: pending.length };
   });
 }
