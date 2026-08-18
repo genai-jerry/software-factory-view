@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api, ApiError } from "../api.js";
 import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import { RepoChip } from "../components/RepoChip.js";
-import type { Me, OrgSettings, ProjectsData, SecretWriteResult, SetupStatus } from "../types.js";
+import type { IngestionLog, Me, OrgSettings, ProjectsData, SecretWriteResult, SetupStatus } from "../types.js";
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -38,6 +38,7 @@ export function SettingsPage({ me }: { me: Me }) {
     <div>
       <h1>Settings</h1>
       {setup.data?.canEditApp && setup.data && <GitHubAppSection status={setup.data} />}
+      {setup.data?.canEditApp && <IngestionLogSection />}
       {me.orgs.map((o) => (
         <OrgSettingsCard key={o.id} orgId={o.id} />
       ))}
@@ -86,6 +87,92 @@ function GitHubAppSection({ status }: { status: SetupStatus }) {
       ) : (
         <p className="muted">Only the GitHub App owner can change these credentials.</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The server-side pipeline, on the web (owner-only, like the App section):
+ * webhook deliveries with the worker's processing errors, and reconcile runs.
+ * This is the page to open when something "does not show up in the view" —
+ * it answers whether GitHub delivered, whether the worker projected, and
+ * whether syncs run, without shelling into the server.
+ */
+function IngestionLogSection() {
+  const log = useQuery({
+    queryKey: ["ops-ingestion"],
+    queryFn: () => api.get<IngestionLog>("/api/ops/ingestion"),
+    refetchInterval: 15_000,
+  });
+  if (log.isError) return null; // not the App owner — the API said 403
+  if (!log.data) return null;
+  const { summary, deliveries, reconciles } = log.data;
+  const when = (v: string | null) => (v ? new Date(v).toLocaleString() : "never");
+
+  return (
+    <div className="card">
+      <h2>Ingestion log</h2>
+      <p className="muted">
+        What the server is doing with GitHub's webhooks and the nightly/on-demand syncs. Auto-refreshes every 15s. If work is
+        missing from the views, this is where the pipeline says why.
+      </p>
+      {summary.total === 0 && (
+        <div className="banner error">
+          No webhook delivery has ever been recorded — check the GitHub App's webhook URL and secret, and that the Issues /
+          Pull requests / Workflow runs events are ticked in the App's subscriptions.
+        </div>
+      )}
+      {summary.pending > 0 && (
+        <div className={`banner ${summary.failing > 0 ? "error" : "stale"}`}>
+          {summary.pending} deliver{summary.pending === 1 ? "y" : "ies"} not yet processed
+          {summary.failing > 0 && ` — ${summary.failing} failing (see the error column)`}. If this number does not drop, the
+          worker or Redis is down.
+        </div>
+      )}
+      <p className="muted">
+        Last received: {when(summary.lastReceivedAt)} · last processed: {when(summary.lastProcessedAt)} · {summary.total} recorded
+      </p>
+
+      <h3>Webhook deliveries</h3>
+      {deliveries.length === 0 && <p className="muted">Nothing yet.</p>}
+      {deliveries.map((d) => (
+        <div className="check-row" key={d.deliveryGuid} title={d.deliveryGuid}>
+          <span className={`check-icon ${d.processedAt ? "ok" : d.error ? "fail" : ""}`}>
+            {d.processedAt ? "✓" : d.error ? "✗" : "…"}
+          </span>
+          <span style={{ minWidth: "11rem" }}>
+            {d.event}
+            {d.action ? `.${d.action}` : ""}
+          </span>
+          <span className="muted" style={{ minWidth: "16rem" }}>
+            {d.repo ?? "—"}
+          </span>
+          <span className="muted">{new Date(d.receivedAt).toLocaleString()}</span>
+          {d.error && <span className="muted" style={{ flex: 1 }}>{d.error}</span>}
+        </div>
+      ))}
+
+      <h3 style={{ marginTop: "1rem" }}>Reconcile runs</h3>
+      {reconciles.length === 0 && (
+        <p className="muted">
+          No reconcile has run since this log was added — connect an estate or press “Reconcile this organisation now” on
+          Onboarding, and the run lands here.
+        </p>
+      )}
+      {reconciles.map((r) => (
+        <div className="check-row" key={r.id}>
+          <span className={`check-icon ${r.errors.length ? "fail" : r.finishedAt ? "ok" : ""}`}>
+            {r.errors.length ? "✗" : r.finishedAt ? "✓" : "…"}
+          </span>
+          <span style={{ minWidth: "11rem" }}>{r.trigger}</span>
+          <span className="muted" style={{ minWidth: "10rem" }}>{r.estateName ?? "—"}</span>
+          <span className="muted">{new Date(r.startedAt).toLocaleString()}</span>
+          <span className="muted">
+            {r.reposWalked} repos · {r.issuesSeen} issues · {r.pullsSeen} PRs
+          </span>
+          {r.errors.length > 0 && <span className="muted" style={{ flex: 1 }}>{r.errors.join(" · ")}</span>}
+        </div>
+      ))}
     </div>
   );
 }

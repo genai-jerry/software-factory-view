@@ -317,7 +317,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
  * the first signed-in user, if nobody has connected an estate — may register
  * it so they are not locked out.
  */
-async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
+export async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
   const db = deps.dbh.db;
   const ctx = await resolveSession(db, deps.cfg, req);
   if (!ctx) return { allowed: false, ctx: null };

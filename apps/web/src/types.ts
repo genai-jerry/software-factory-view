@@ -51,6 +51,49 @@ export interface Me {
   orgs: Array<{ id: string; name: string; role: string }>;
 }
 
+/** The owner-only ingestion log (/api/ops/ingestion): the server-side pipeline, on the web. */
+export interface IngestionLog {
+  summary: {
+    lastReceivedAt: string | null;
+    lastProcessedAt: string | null;
+    /** Deliveries not yet projected. */
+    pending: number;
+    /** Pending deliveries whose last processing attempt errored. */
+    failing: number;
+    total: number;
+  };
+  deliveries: Array<{
+    deliveryGuid: string;
+    event: string;
+    action: string | null;
+    repo: string | null;
+    receivedAt: string;
+    processedAt: string | null;
+    error: string | null;
+  }>;
+  reconciles: Array<{
+    id: string;
+    estateName: string | null;
+    trigger: string;
+    startedAt: string;
+    finishedAt: string | null;
+    reposWalked: number;
+    issuesSeen: number;
+    pullsSeen: number;
+    errors: string[];
+  }>;
+}
+
+/** Webhook pipeline health, returned alongside /api/estates. */
+export interface IngestionHealth {
+  /** Newest webhook delivery received — null means GitHub has never reached this Console. */
+  lastReceivedAt: string | null;
+  /** Newest delivery the worker finished projecting. */
+  lastProcessedAt: string | null;
+  /** Deliveries recorded but not yet processed (a growing number means the worker or Redis is down). */
+  pending: number;
+}
+
 export interface EstateSummary {
   id: string;
   name: string;

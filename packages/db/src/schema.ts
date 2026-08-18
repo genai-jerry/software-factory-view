@@ -473,9 +473,32 @@ export const webhookDeliveries = pgTable(
     event: text("event").notNull(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
+    /** Last processing failure for this delivery; cleared when a retry succeeds. */
+    error: text("error"),
     payload: jsonb("payload").$type<Record<string, unknown>>(),
   },
   (t) => [index("webhook_deliveries_received").on(t.receivedAt)],
+);
+
+/**
+ * One row per reconcile walk of an estate — the worker's answer to "did the
+ * sync actually run, and what did it find?". estate_id is deliberately not a
+ * foreign key so the history survives an estate being disconnected.
+ */
+export const reconcileRuns = pgTable(
+  "reconcile_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    estateId: uuid("estate_id"),
+    trigger: text("trigger").notNull(), // nightly-reconcile | on-demand | initial-sync
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    reposWalked: integer("repos_walked").notNull().default(0),
+    issuesSeen: integer("issues_seen").notNull().default(0),
+    pullsSeen: integer("pulls_seen").notNull().default(0),
+    errors: jsonb("errors").$type<string[]>().notNull().default([]),
+  },
+  (t) => [index("reconcile_runs_started").on(t.startedAt)],
 );
 
 export const notifications = pgTable(
