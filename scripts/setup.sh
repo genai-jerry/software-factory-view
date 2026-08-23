@@ -55,39 +55,63 @@ pnpm -r build >/dev/null
 ok "build complete"
 
 # ---------------------------------------------------------------- infra
+# Host ports for Postgres/Redis (docker-compose publishes them on loopback).
+# Override in .env — DB_HOST_PORT=5433 sidesteps a Postgres that already
+# owns :5432 (Homebrew, Postgres.app, another project's compose).
+load_env
+DB_HOST_PORT="${DB_HOST_PORT:-5432}"
+REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
+DB_PASSWORD="${DB_PASSWORD:-console}"
+
 say "Starting Postgres and Redis"
 started=""
 if docker_up && compose up -d postgres redis >/dev/null 2>&1; then
   started="docker"
-  ok "postgres + redis running (docker compose)"
+  ok "postgres + redis running (docker compose, localhost:${DB_HOST_PORT})"
 else
-  dim "Docker unavailable — trying local services"
+  if docker_up && port_open "$DB_HOST_PORT"; then
+    dim "Docker is up but compose could not bind :${DB_HOST_PORT} — something already listens there."
+    dim "Using that existing Postgres; or set DB_HOST_PORT=5433 in .env and re-run to keep it separate."
+  else
+    dim "Docker unavailable — trying local services"
+  fi
   if have pg_ctlcluster || [ -d /etc/postgresql ]; then
     service postgresql start >/dev/null 2>&1 || sudo service postgresql start >/dev/null 2>&1 || true
   fi
   have redis-server && (redis-cli ping >/dev/null 2>&1 || redis-server --daemonize yes >/dev/null 2>&1) || true
 
-  if port_open 5432; then
+  if port_open "$DB_HOST_PORT"; then
     started="local"
-    # Make sure the console role/database exist.
+    # Make sure the console role/database exist. Try the Linux service
+    # account first, then the current user (Homebrew/Postgres.app superuser).
     if have psql; then
-      su postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='console'\"" 2>/dev/null | grep -q 1 \
-        || su postgres -c "psql -c \"CREATE ROLE console LOGIN PASSWORD 'console' CREATEDB;\"" >/dev/null 2>&1 || true
-      su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='console'\"" 2>/dev/null | grep -q 1 \
-        || su postgres -c "psql -c 'CREATE DATABASE console OWNER console;'" >/dev/null 2>&1 || true
+      role_exists() {
+        su postgres -c "psql -p $DB_HOST_PORT -tAc \"SELECT 1 FROM pg_roles WHERE rolname='console'\"" 2>/dev/null | grep -q 1 \
+          || psql -p "$DB_HOST_PORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='console'" 2>/dev/null | grep -q 1
+      }
+      db_exists() {
+        su postgres -c "psql -p $DB_HOST_PORT -tAc \"SELECT 1 FROM pg_database WHERE datname='console'\"" 2>/dev/null | grep -q 1 \
+          || psql -p "$DB_HOST_PORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='console'" 2>/dev/null | grep -q 1
+      }
+      role_exists \
+        || su postgres -c "psql -p $DB_HOST_PORT -c \"CREATE ROLE console LOGIN PASSWORD '$DB_PASSWORD' CREATEDB;\"" >/dev/null 2>&1 \
+        || psql -p "$DB_HOST_PORT" -d postgres -c "CREATE ROLE console LOGIN PASSWORD '$DB_PASSWORD' CREATEDB;" >/dev/null 2>&1 || true
+      db_exists \
+        || su postgres -c "psql -p $DB_HOST_PORT -c 'CREATE DATABASE console OWNER console;'" >/dev/null 2>&1 \
+        || psql -p "$DB_HOST_PORT" -d postgres -c "CREATE DATABASE console OWNER console;" >/dev/null 2>&1 || true
+      role_exists || warn "could not create the 'console' role — create it yourself: psql -d postgres -c \"CREATE ROLE console LOGIN PASSWORD '$DB_PASSWORD' CREATEDB;\""
     fi
-    ok "postgres + redis running (local services)"
+    ok "postgres + redis running (local services, localhost:${DB_HOST_PORT})"
   fi
 fi
 [ -n "$started" ] || die "Could not start Postgres. Start Docker, or install postgresql + redis, then re-run."
 
-wait_for_port 5432 postgres || die "Postgres did not come up on :5432"
-port_open 6379 || warn "Redis is not answering on :6379 — the worker queue will not run"
+wait_for_port "$DB_HOST_PORT" postgres || die "Postgres did not come up on :${DB_HOST_PORT}"
+port_open "$REDIS_HOST_PORT" || warn "Redis is not answering on :${REDIS_HOST_PORT} — the worker queue will not run"
 
 # ---------------------------------------------------------------- migrate
 say "Applying database migrations"
-load_env
-DATABASE_URL="${DATABASE_URL:-postgres://console:console@localhost:5432/console}" \
+DATABASE_URL="${DATABASE_URL:-postgres://console:${DB_PASSWORD}@localhost:${DB_HOST_PORT}/console}" \
   node packages/db/dist/migrate-cli.js
 ok "database ready"
 

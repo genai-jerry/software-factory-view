@@ -6,6 +6,12 @@ services:
       POSTGRES_USER: console
       POSTGRES_PASSWORD: ${DB_PASSWORD:-console}
       POSTGRES_DB: console
+    # Published on loopback so host-mode tools (scripts/setup.sh migrations,
+    # scripts/dev.sh, the orchestrator's CONSOLE_DATABASE_URL) can reach it.
+    # If another Postgres already owns 5432 on your machine, set
+    # DB_HOST_PORT=5433 in .env and the scripts follow along.
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
     volumes:
       - software-factory-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,6 +24,8 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - software-factory-redisdata:/data
     healthcheck:
