@@ -41,7 +41,9 @@ set_env_value() { # set_env_value KEY VALUE (adds or replaces in .env)
   touch "$file"
   if grep -q "^${key}=" "$file"; then
     local tmp; tmp="$(mktemp)"
-    grep -v "^${key}=" "$file" > "$tmp"
+    # `|| true`: grep exits 1 when it selects nothing, which happens when every
+    # line in .env is this key — under `set -e` that aborted the caller.
+    grep -v "^${key}=" "$file" > "$tmp" || true
     printf '%s=%s\n' "$key" "$value" >> "$tmp"
     mv "$tmp" "$file"
   else
@@ -55,6 +57,44 @@ port_open() {
   if have nc; then nc -z "$host" "$port" >/dev/null 2>&1
   else (exec 3<>"/dev/tcp/$host/$port") >/dev/null 2>&1
   fi
+}
+
+free_port() { # free_port START -> first free port at/after START
+  local port="$1" limit=$(( $1 + 50 ))
+  while [ "$port" -lt "$limit" ]; do
+    port_open "$port" || { printf '%s' "$port"; return 0; }
+    port=$((port + 1))
+  done
+  return 1
+}
+
+# ensure_host_port KEY SERVICE VAR — resolve a free host port for a compose
+# service, persist it to .env, and store it in VAR.
+#
+# Docker publishes Postgres and Redis on the host so the dev-mode API/worker
+# (and the orchestrator's CONSOLE_DATABASE_URL) can reach them. A Postgres or
+# Redis you already run then collides, and compose fails with "address already
+# in use" — so pick the next free port instead of stopping. A port our OWN
+# container already owns is kept: it is not a collision, it is the stack.
+ensure_host_port() {
+  local key="$1" service="$2" var="$3"
+  local current="${!key:-}"
+  [ -n "$current" ] || current="$(env_value "$key")"
+  [ -n "$current" ] || { printf -v "$var" '%s' ""; return 0; }
+
+  if docker_up && [ -n "$(compose ps --quiet "$service" 2>/dev/null)" ]; then
+    printf -v "$var" '%s' "$current"; return 0
+  fi
+  if ! port_open "$current"; then
+    printf -v "$var" '%s' "$current"; return 0
+  fi
+
+  local chosen
+  chosen="$(free_port $((current + 1)))" || die "No free port near $current for $service — set $key in .env to a port you know is free."
+  set_env_value "$key" "$chosen"
+  export "${key}=${chosen}"
+  warn "Port $current is already in use by something else — $service will use :$chosen instead ($key saved to .env)."
+  printf -v "$var" '%s' "$chosen"
 }
 
 wait_for_port() { # wait_for_port PORT LABEL [TIMEOUT]

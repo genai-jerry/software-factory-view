@@ -26,9 +26,22 @@ if [ -z "$origin" ]; then
   ok "PUBLIC_ORIGIN defaulted to http://localhost:8080"
 fi
 
-web_port="$(env_value WEB_HOST_PORT)"; web_port="${web_port:-8080}"
-if ! compose ps --quiet web 2>/dev/null | grep -q . && port_open "$web_port"; then
-  die "Port $web_port is already in use — stop it, or set WEB_HOST_PORT in .env to a free port"
+# Host ports: keep what is ours, move off what belongs to something else.
+# Postgres/Redis are published for dev-mode and the orchestrator; :8080 is
+# shared with the factory orchestrator's own dev server, so the web port
+# moves too — and PUBLIC_ORIGIN follows it when it names the local stack.
+DB_HOST_PORT="$(env_value DB_HOST_PORT)"; DB_HOST_PORT="${DB_HOST_PORT:-5432}"
+REDIS_HOST_PORT="$(env_value REDIS_HOST_PORT)"; REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
+ensure_host_port DB_HOST_PORT postgres DB_HOST_PORT
+ensure_host_port REDIS_HOST_PORT redis REDIS_HOST_PORT
+
+WEB_HOST_PORT="$(env_value WEB_HOST_PORT)"; WEB_HOST_PORT="${WEB_HOST_PORT:-8080}"
+was_web_port="$WEB_HOST_PORT"
+ensure_host_port WEB_HOST_PORT web WEB_HOST_PORT
+web_port="$WEB_HOST_PORT"
+if [ "$web_port" != "$was_web_port" ] && [ "$(env_value PUBLIC_ORIGIN)" = "http://localhost:$was_web_port" ]; then
+  set_env_value PUBLIC_ORIGIN "http://localhost:$web_port"
+  ok "PUBLIC_ORIGIN follows the web port: http://localhost:$web_port"
 fi
 
 # Production joins the VPS Traefik network (external: true). Create it locally

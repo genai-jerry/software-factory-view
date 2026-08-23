@@ -63,6 +63,10 @@ DB_HOST_PORT="${DB_HOST_PORT:-5432}"
 REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
 DB_PASSWORD="${DB_PASSWORD:-console}"
 
+# Move off ports another Postgres/Redis already holds, rather than failing.
+ensure_host_port DB_HOST_PORT postgres DB_HOST_PORT
+ensure_host_port REDIS_HOST_PORT redis REDIS_HOST_PORT
+
 say "Starting Postgres and Redis"
 started=""
 if docker_up && compose up -d postgres redis >/dev/null 2>&1; then
