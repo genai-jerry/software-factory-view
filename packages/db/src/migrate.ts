@@ -10,6 +10,20 @@ import postgres from "postgres";
  */
 export async function runMigrations(databaseUrl: string, migrationsDir?: string): Promise<string[]> {
   const dir = migrationsDir ?? join(dirname(fileURLToPath(import.meta.url)), "migrations");
+  // Read the directory before touching the database: a missing or empty
+  // migrations dir means a broken build/copy (the .sql files ride along via
+  // the package's build step), and silently reporting "up to date" against
+  // an empty schema is exactly the failure that surfaces later as
+  // `relation "sessions" does not exist`. Fail loudly here instead.
+  let files: string[];
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  } catch (err) {
+    throw new Error(`migrations directory not found at ${dir} — the @console/db build copies migrations/ into dist/; rebuild the package (pnpm -r build) or the image (./scripts/start.sh --rebuild)`, { cause: err });
+  }
+  if (files.length === 0) {
+    throw new Error(`no .sql migrations found in ${dir} — the build's migrations copy is incomplete; rebuild the package (pnpm -r build) or the image (./scripts/start.sh --rebuild)`);
+  }
   const sql = postgres(databaseUrl, { max: 1, onnotice: () => undefined });
   const applied: string[] = [];
   try {
@@ -21,7 +35,6 @@ export async function runMigrations(databaseUrl: string, migrationsDir?: string)
     await sql`SELECT pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
     try {
       await sql`CREATE TABLE IF NOT EXISTS _migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`;
-      const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
       for (const file of files) {
         const done = await sql`SELECT 1 FROM _migrations WHERE name = ${file}`;
         if (done.length > 0) continue;
