@@ -18,19 +18,22 @@ dim()  { printf '%s%s%s\n' "$c_dim" "$*" "$c_reset"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Load .env into the environment without clobbering anything already exported.
+# When a key appears more than once in the file, the LAST occurrence wins —
+# matching docker compose's dotenv semantics, so the scripts and compose can
+# never read two different values from the same file (an appended
+# `KEY=value` line behaves the same everywhere).
 load_env() {
   [ -f "$REPO_ROOT/.env" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue ;; esac
-    local key="${line%%=*}"
+  local key
+  while IFS= read -r key; do
     [ -n "${!key:-}" ] && continue
-    export "${key}=${line#*=}"
-  done < "$REPO_ROOT/.env"
+    export "${key}=$(env_value "$key")"
+  done < <(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO_ROOT/.env" | sort -u)
 }
 
-env_value() { # env_value KEY -> prints value from .env, empty if unset
+env_value() { # env_value KEY -> prints value from .env, empty if unset (last occurrence wins)
   [ -f "$REPO_ROOT/.env" ] || return 0
-  sed -n "s/^$1=//p" "$REPO_ROOT/.env" | head -1
+  sed -n "s/^$1=//p" "$REPO_ROOT/.env" | tail -1
 }
 
 set_env_value() { # set_env_value KEY VALUE (adds or replaces in .env)

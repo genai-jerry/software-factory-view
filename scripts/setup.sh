@@ -71,7 +71,10 @@ if docker_up && compose up -d postgres redis >/dev/null 2>&1; then
 else
   if docker_up && port_open "$DB_HOST_PORT"; then
     dim "Docker is up but compose could not bind :${DB_HOST_PORT} — something already listens there."
-    dim "Using that existing Postgres; or set DB_HOST_PORT=5433 in .env and re-run to keep it separate."
+    dim "Using that existing Postgres; or edit DB_HOST_PORT in .env to a free port (one line only) and re-run."
+  elif docker_up; then
+    warn "Docker is up but 'docker compose up postgres redis' failed — run it without the quiet flags to see why:"
+    warn "  docker compose up -d postgres redis"
   else
     dim "Docker unavailable — trying local services"
   fi
