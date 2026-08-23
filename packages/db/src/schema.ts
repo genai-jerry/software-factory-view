@@ -452,6 +452,28 @@ export const onboardingRuns = pgTable(
   (t) => [uniqueIndex("onboarding_step").on(t.repoId, t.step)],
 );
 
+/**
+ * Agent secrets retained for the orchestrator engine (FACTORY.md §2e).
+ * The Actions engine reads these from each repo's GitHub Actions secrets,
+ * which the Console writes through — but Actions secrets cannot be read
+ * back, so an external engine (the LangGraph orchestrator) reads these
+ * encrypted copies instead. Values are sealed with CONSOLE_MASTER_KEY
+ * (crypto.ts envelope) and never leave through the Console API; the
+ * orchestrator decrypts them with the same shared master key.
+ */
+export const orchestratorSecrets = pgTable(
+  "orchestrator_secrets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    name: text("name").notNull(), // ANTHROPIC_API_KEY | CLAUDE_CODE_OAUTH_TOKEN | FACTORY_CROSS_REPO_TOKEN
+    encryptedValue: text("encrypted_value").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("orchestrator_secret_org_name").on(t.orgId, t.name)],
+);
+
 export const auditLog = pgTable(
   "audit_log",
   {

@@ -3,6 +3,7 @@ import { auditLog, estates, gateAssignments, memberships, onboardingRuns, pullRe
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps, type RequestCtx } from "../context.js";
+import { retainOrchestratorSecret } from "./settings.js";
 
 /**
  * Onboarding (spec 03): idempotent steps that report found / created / fixed,
@@ -116,7 +117,12 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     }
   });
 
-  /** Step 2 — secrets: write-through to GitHub; the Console never stores the value. */
+  /**
+   * Step 2 — secrets: write-through to GitHub Actions, plus an org-scoped
+   * retained copy in orchestrator_secrets (sealed with CONSOLE_MASTER_KEY)
+   * so the LangGraph engine — which cannot read Actions secrets back — has
+   * the same credential. Values remain write-only through the API.
+   */
   app.post<{ Params: { id: string }; Body: { name: string; value: string } }>(
     "/api/repos/:id/onboarding/secret",
     async (req, reply) => {
@@ -132,10 +138,11 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       if (!allowed.includes(secretName)) {
         return reply.code(400).send({ error: `secret must be one of ${allowed.join(", ")}` });
       }
+      const retained = await retainOrchestratorSecret(deps, repo.orgId, secretName, value, ctx.login);
       try {
         await client.putActionsSecret(owner, name, secretName, value);
-        await recordStep(deps, repo, "secrets", "ok", { name: secretName, writtenAt: new Date().toISOString() });
-        return { ok: true, name: secretName };
+        await recordStep(deps, repo, "secrets", "ok", { name: secretName, writtenAt: new Date().toISOString(), retained });
+        return { ok: true, name: secretName, retained };
       } catch (err) {
         await recordStep(deps, repo, "secrets", "failed", { name: secretName, error: (err as Error).message });
         return reply.code(502).send({ error: (err as Error).message });

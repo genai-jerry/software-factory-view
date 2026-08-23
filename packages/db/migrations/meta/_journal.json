@@ -71,6 +71,13 @@
       "when": 1786300000007,
       "tag": "0009_ingestion_log",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786300000008,
+      "tag": "0010_orchestrator_secrets",
+      "breakpoints": true
     }
   ]
 }
