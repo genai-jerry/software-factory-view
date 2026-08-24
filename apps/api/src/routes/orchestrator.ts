@@ -19,9 +19,9 @@ import {
 import { loadEpic } from "./read.js";
 
 /**
- * Same-origin stand-in for the orchestrator's /runs JSON. The onboarding
- * card used to send the browser to PUBLIC_BASE_URL/runs/{id}; that is a raw
- * object. These routes keep the log inside the Console.
+ * Same-origin stand-in for the orchestrator's /runs JSON. GitHub comments
+ * link PUBLIC_BASE_URL/runs/{id}; the Console page at that path loads these
+ * routes so the browser never opens raw :8080 JSON.
  */
 export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.get<{ Querystring: { repo?: string; issue?: string } }>("/api/orchestrator/runs", async (req, reply) => {

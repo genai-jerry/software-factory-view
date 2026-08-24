@@ -120,10 +120,12 @@ the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`.
 - `GH_OAUTH_CLIENT_ID`
 - `GH_OAUTH_CLIENT_SECRET`
 - `ANTHROPIC_API_KEY` — optional, Ask the Factory
+- `ORCHESTRATOR_DISPATCH_TOKEN` — optional; Bearer matching the orchestrator's `DISPATCH_TOKEN`. When set, the Console forwards factory issues to the LangGraph engine on this VPS (`http://factory-orchestrator:8080`).
 
 **Variables**
 
 - `PUBLIC_ORIGIN` — the HTTPS URL browsers will use, e.g. `https://sf.genaipeople.com`. Traefik terminates TLS and routes that hostname to nginx. Do not use `:80` — Traefik already binds 80/443 on this VPS.
+- `ORCHESTRATOR_URL` — optional; default `http://factory-orchestrator:8080` when `ORCHESTRATOR_DISPATCH_TOKEN` is set. Public `https://factory.genaipeople.com` also works.
 
 The workflow builds `factory-console-app:latest` and `factory-console-web:latest`, copies [`infra/docker-compose.deploy.yml`](infra/docker-compose.deploy.yml) to `~/factory-console/docker-compose.yml`, and starts the stack. Images use `pull_policy: never` so the host does not try GHCR.
 
@@ -140,6 +142,10 @@ Full list: [`infra/cloud.env.example`](infra/cloud.env.example). Never set `DEV_
    - **Advanced → Danger zone → Make public.** A private App 404s on Sign in with GitHub for anyone who is not the owner. ("Where can this GitHub App be installed?" only appears when creating a new App.)
 
 The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger Docker Manager at it.
+
+### LangGraph orchestrator (same VPS)
+
+The factory engine is a second compose project on this VPS (`~/factory-orchestrator`), deployed from `claude-software-factory` the same way: GitHub Actions, Traefik, `lighthouse-network`. Set `ORCHESTRATOR_DISPATCH_TOKEN` here to match that stack's `DISPATCH_TOKEN`, then redeploy this Console so api/worker can reach `http://factory-orchestrator:8080`. GitHub webhooks stay on this Console. Runbook: `claude-software-factory/orchestrator/README.md` § Cloud deploy.
 
 ### Adopt your existing factory organisation
 

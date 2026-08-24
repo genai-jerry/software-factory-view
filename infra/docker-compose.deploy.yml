@@ -7,6 +7,8 @@
 # Traefik on lighthouse-network routes Host(${CONSOLE_HOST}) to web:80.
 # nginx in web proxies /api /auth /webhooks /setup/ to http://api:8787 on the
 # compose default network — do not publish host ports or Traefik-expose api.
+# api and worker also join lighthouse-network so they can reach the LangGraph
+# orchestrator at http://factory-orchestrator:8080 (ORCHESTRATOR_URL in .env).
 
 name: factory-console
 
@@ -67,6 +69,9 @@ services:
       timeout: 3s
       retries: 15
       start_period: 40s
+    networks:
+      - default
+      - lighthouse-network
 
   worker:
     image: factory-console-app:latest
@@ -85,6 +90,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - default
+      - lighthouse-network
 
   web:
     image: factory-console-web:latest

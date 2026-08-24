@@ -8,6 +8,8 @@
 #   DB_PASSWORD                              in-compose Postgres password
 #   GH_APP_ID / GH_APP_PRIVATE_KEY / GH_APP_WEBHOOK_SECRET
 #   GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET
+#   ORCHESTRATOR_DISPATCH_TOKEN              optional, match factory-orchestrator DISPATCH_TOKEN
+#   ORCHESTRATOR_URL                         optional variable, default http://factory-orchestrator:8080
 #
 # GitHub forbids secret names that start with GITHUB_. The GH_* secrets above
 # are written to the VPS .env as GITHUB_APP_* / GITHUB_OAUTH_*.
@@ -168,13 +170,15 @@ jobs:
           GITHUB_APP_WEBHOOK_SECRET: ${{ secrets.GH_APP_WEBHOOK_SECRET }}
           GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
           GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          ORCHESTRATOR_URL: ${{ vars.ORCHESTRATOR_URL }}
+          ORCHESTRATOR_DISPATCH_TOKEN: ${{ secrets.ORCHESTRATOR_DISPATCH_TOKEN }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           timeout: 60s
           command_timeout: 30m
-          envs: CONSOLE_HOST,PUBLIC_ORIGIN,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET
+          envs: CONSOLE_HOST,PUBLIC_ORIGIN,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET,ORCHESTRATOR_URL,ORCHESTRATOR_DISPATCH_TOKEN
           script: |
             set -euo pipefail
 
@@ -204,10 +208,14 @@ jobs:
             # interpolation would blank them (same gotcha as sales-os).
             touch .env
             chmod 600 .env
+            if [ -n "${ORCHESTRATOR_DISPATCH_TOKEN:-}" ] && [ -z "${ORCHESTRATOR_URL:-}" ]; then
+              ORCHESTRATOR_URL=http://factory-orchestrator:8080
+            fi
             for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD \
                        ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY \
                        GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID \
-                       GITHUB_OAUTH_CLIENT_SECRET; do
+                       GITHUB_OAUTH_CLIENT_SECRET ORCHESTRATOR_URL \
+                       ORCHESTRATOR_DISPATCH_TOKEN; do
               VALUE="${!KEY-}"
               [ -z "$VALUE" ] && continue
               TMP="$(mktemp)"

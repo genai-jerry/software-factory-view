@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError } from "./api.js";
 import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "./theme.js";
 import type { Me, SetupStatus } from "./types.js";
@@ -12,8 +12,14 @@ import { BlockedPage } from "./pages/Blocked.js";
 import { DecisionsPage } from "./pages/Decisions.js";
 import { OnboardingPage } from "./pages/Onboarding.js";
 import { SettingsPage } from "./pages/Settings.js";
+import { OrchestratorRunPage } from "./pages/OrchestratorRun.js";
+
+function isOrchestratorRunPath(pathname: string): boolean {
+  return /^\/runs\/[^/]+$/.test(pathname);
+}
 
 export function App() {
+  const location = useLocation();
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status"), retry: false });
   const me = useQuery<Me, ApiError>({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/me"), retry: false });
 
@@ -61,8 +67,31 @@ export function App() {
   const user = me.data ?? null;
   const signedIn = Boolean(user);
   const needsFrontDoor = !signedIn || user!.orgs.length === 0;
+  const onRunPath = isOrchestratorRunPath(location.pathname);
 
-  if (needsFrontDoor) {
+  if (!signedIn && onRunPath) {
+    return (
+      <div className="home">
+        <header className="home-bar">
+          <span className="home-mark">Factory Console</span>
+        </header>
+        <div className="home-body">
+          <h1>Orchestrator run</h1>
+          <p className="muted">
+            This URL is the live log for a Software Factory role. Sign in with GitHub to see the outcome, model, and
+            transcript.
+          </p>
+          <p>
+            <a href={`/auth/github/login?next=${encodeURIComponent(location.pathname)}`}>
+              <button className="primary">Sign in with GitHub</button>
+            </a>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (needsFrontDoor && !onRunPath) {
     return (
       <HomePage
         me={user}
@@ -115,6 +144,7 @@ export function App() {
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/runs/:runId" element={<OrchestratorRunPage />} />
           <Route path="/settings" element={setup.data?.canEditApp ? <SettingsPage me={user!} /> : <Navigate to="/" replace />} />
           <Route path="/setup" element={<Navigate to={setup.data?.canEditApp ? "/settings" : "/"} replace />} />
         </Routes>
