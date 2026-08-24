@@ -1,8 +1,21 @@
-import { FACTORY_KIND_LABELS, FACTORY_LABELS, GitHubHttpError, InstallationClient, parseApproverFile } from "@console/core";
-import { auditLog, estates, gateAssignments, memberships, onboardingRuns, pullRequests, repos } from "@console/db";
+import {
+  AGENT_SECRET_NAMES,
+  FACTORY_KIND_LABELS,
+  FACTORY_LABELS,
+  GitHubHttpError,
+  githubActionsEnabled,
+  InstallationClient,
+  isAgentSecretName,
+  parseApproverFile,
+  parseRepoOrchestratorEngine,
+  repoEngineName,
+} from "@console/core";
+import { auditLog, estates, gateAssignments, memberships, onboardingRuns, orgs, pullRequests, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps, type RequestCtx } from "../context.js";
+import { dispatchFactoryRole, syncDispatchStatus } from "../orchestrator-dispatch.js";
+import { orgHasRetainedAgentSecret, readRetainedAgentSecrets, retainOrchestratorSecret } from "../orchestrator-secrets.js";
 
 /**
  * Onboarding (spec 03): idempotent steps that report found / created / fixed,
@@ -72,10 +85,23 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       await db.select().from(estates).where(and(eq(estates.id, req.params.id), inArray(estates.orgId, ctx.orgIds))).limit(1)
     )[0];
     if (!estate) return reply.code(404).send({ error: "organisation not found" });
+    const org = (await db.select().from(orgs).where(eq(orgs.id, estate.orgId)).limit(1))[0]!;
+    const engine = org.orchestrator;
     const repoRows = await db.select().from(repos).where(eq(repos.estateId, estate.id));
     const out = [];
     for (const r of repoRows) {
-      const steps = await db.select().from(onboardingRuns).where(eq(onboardingRuns.repoId, r.id));
+      let steps = await db.select().from(onboardingRuns).where(eq(onboardingRuns.repoId, r.id));
+      const profile = steps.find((s) => s.step === "profile");
+      if (profile && (profile.status === "pending" || profile.status === "failed")) {
+        const sync = await syncDispatchStatus(deps.cfg, (profile.detail ?? {}) as Record<string, unknown>);
+        if (sync) {
+          await db
+            .update(onboardingRuns)
+            .set({ status: sync.status, detail: sync.detail, updatedAt: new Date() })
+            .where(eq(onboardingRuns.id, profile.id));
+          steps = await db.select().from(onboardingRuns).where(eq(onboardingRuns.repoId, r.id));
+        }
+      }
       out.push({
         repoId: r.id,
         fullName: r.fullName,
@@ -83,7 +109,14 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         steps: Object.fromEntries(steps.map((s) => [s.step, { status: s.status, detail: s.detail, updatedAt: s.updatedAt }])),
       });
     }
-    return { estateId: estate.id, repos: out };
+    return {
+      estateId: estate.id,
+      orchestrator: {
+        engine: engine === "software-factory" ? "software-factory" : "github-actions",
+        githubActionsEnabled: githubActionsEnabled(engine),
+      },
+      repos: out,
+    };
   });
 
   /** Step 1 — labels: create the full factory:* label set idempotently; report drift fixed. */
@@ -116,7 +149,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     }
   });
 
-  /** Step 2 — secrets: write-through to GitHub; the Console never stores the value. */
+  /** Step 2 — secrets: retained in the Console; written to Actions only when that engine is on. */
   app.post<{ Params: { id: string }; Body: { name: string; value: string } }>(
     "/api/repos/:id/onboarding/secret",
     async (req, reply) => {
@@ -124,18 +157,37 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       if (!ctx) return;
       const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
       if (!target) return;
-      const { repo, client, owner, name } = target;
+      const { repo, org, client, owner, name } = target;
       const secretName = req.body?.name;
       const value = req.body?.value;
       if (!secretName || !value) return reply.code(400).send({ error: "name and value required" });
-      const allowed = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FACTORY_CROSS_REPO_TOKEN"];
-      if (!allowed.includes(secretName)) {
-        return reply.code(400).send({ error: `secret must be one of ${allowed.join(", ")}` });
+      if (!isAgentSecretName(secretName)) {
+        return reply.code(400).send({ error: `secret must be one of ${AGENT_SECRET_NAMES.join(", ")}` });
+      }
+      const actions = githubActionsEnabled(org.orchestrator);
+      if (!actions && !deps.cfg.CONSOLE_MASTER_KEY) {
+        return reply.code(409).send({
+          error:
+            "GitHub Actions is disabled for this organisation, so the token must be stored in the Console — set CONSOLE_MASTER_KEY first",
+        });
       }
       try {
-        await client.putActionsSecret(owner, name, secretName, value);
-        await recordStep(deps, repo, "secrets", "ok", { name: secretName, writtenAt: new Date().toISOString() });
-        return { ok: true, name: secretName };
+        const { stored } = await retainOrchestratorSecret(deps, {
+          orgId: repo.orgId,
+          name: secretName,
+          value,
+          updatedBy: ctx.login,
+        });
+        if (actions) {
+          await client.putActionsSecret(owner, name, secretName, value);
+        }
+        await recordStep(deps, repo, "secrets", "ok", {
+          name: secretName,
+          writtenAt: new Date().toISOString(),
+          stored,
+          githubActions: actions,
+        });
+        return { ok: true, name: secretName, stored, githubActions: actions };
       } catch (err) {
         await recordStep(deps, repo, "secrets", "failed", { name: secretName, error: (err as Error).message });
         return reply.code(502).send({ error: (err as Error).message });
@@ -197,7 +249,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     if (!ctx) return;
     const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
     if (!target) return;
-    const { repo, client, owner, name } = target;
+    const { repo, org, client, owner, name } = target;
+    const actions = githubActionsEnabled(org.orchestrator);
 
     try {
       // Idempotence: re-running re-verifies rather than duplicating the PR —
@@ -206,39 +259,48 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       // omitting factory_repo makes the v1 pipeline clone the caller's OWN
       // repo at the factory ref (workflow_ref names the caller, not the
       // factory) — "Remote branch v1 not found", or a git username prompt
-      // when the caller repo is private.
-      const existingStub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
-      if (existingStub && stubIsCurrent(existingStub.content)) {
-        await recordStep(deps, repo, "stubs", "ok", { found: true });
-        return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
-      }
-      if (existingStub) {
-        const patched = rewriteCallerStub(existingStub.content);
-        if (patched === existingStub.content) {
-          await recordStep(deps, repo, "stubs", "ok", { found: true });
+      // when the caller repo is private. This path is GitHub Actions only:
+      // when Actions is disabled we never patch or require workflow stubs.
+      if (actions) {
+        const existingStub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
+        if (existingStub && stubIsCurrent(existingStub.content)) {
+          await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: true });
           return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
         }
-        const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
-        if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
-        const branch = "factory-console/fix-caller-stub";
-        if (!(await client.getBranchHeadSha(owner, name, branch))) {
-          await client.createBranch(owner, name, branch, headSha);
-        }
-        const current = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml", branch);
-        if (current?.content !== patched) {
-          await client.putFile(owner, name, ".github/workflows/factory-pipeline.yml", {
-            message: "factory: pass caller secrets and factory_repo into the reusable pipeline",
-            content: patched,
-            branch,
-            sha: current?.sha,
+        if (existingStub) {
+          const patched = rewriteCallerStub(existingStub.content);
+          if (patched === existingStub.content) {
+            await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: true });
+            return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
+          }
+          const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
+          if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
+          const branch = "factory-console/fix-caller-stub";
+          if (!(await client.getBranchHeadSha(owner, name, branch))) {
+            await client.createBranch(owner, name, branch, headSha);
+          }
+          const current = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml", branch);
+          if (current?.content !== patched) {
+            await client.putFile(owner, name, ".github/workflows/factory-pipeline.yml", {
+              message: "factory: pass caller secrets and factory_repo into the reusable pipeline",
+              content: patched,
+              branch,
+              sha: current?.sha,
+            });
+          }
+          const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
+            title: "Fix factory caller stub",
+            body: STUB_PATCH_PR_BODY,
           });
+          await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, patched: true, githubActions: true });
+          return { ok: true, prNumber: pr.number, prUrl: pr.html_url, patched: true };
         }
-        const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
-          title: "Fix factory caller stub",
-          body: STUB_PATCH_PR_BODY,
-        });
-        await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, patched: true });
-        return { ok: true, prNumber: pr.number, prUrl: pr.html_url, patched: true };
+      } else {
+        const existingCfg = await client.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
+        if (existingCfg && parseRepoOrchestratorEngine(existingCfg.content) === "langgraph") {
+          await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: false });
+          return { ok: true, found: true, message: "Software Factory orchestrator already claimed on this repo — nothing to do" };
+        }
       }
 
       const approverRows = await db.select().from(gateAssignments).where(eq(gateAssignments.estateId, repo.estateId));
@@ -258,7 +320,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       const existingBranch = await client.getBranchHeadSha(owner, name, branch);
       if (!existingBranch) await client.createBranch(owner, name, branch, headSha);
 
-      const files = stubFiles(approvers);
+      const files = stubFiles(approvers, org.orchestrator);
       for (const [path, content] of Object.entries(files)) {
         const current = await client.getFileAtRef(owner, name, path, branch);
         if (current?.content === content) continue;
@@ -272,9 +334,9 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
 
       const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
         title: "Enable the software factory",
-        body: STUB_PR_BODY,
+        body: stubPrBody(actions),
       });
-      await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url });
+      await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, githubActions: actions });
       return { ok: true, prNumber: pr.number, prUrl: pr.html_url };
     } catch (err) {
       await recordStep(deps, repo, "stubs", "failed", { error: (err as Error).message });
@@ -288,11 +350,10 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
    * The Console does not write this one and could not write it well: the
    * profile is the repo's stack facts, and deriving them means reading the
    * code, which is the one thing the Console has no business holding. So it
-   * asks instead. Filing an issue labelled `factory:profile` starts the
-   * Profiler role inside the repo's *own* Actions runner, where the code
-   * already is; it drafts the profile, verifies the commands by running them,
-   * and opens a PR for a human to merge. What comes back to the Console is a
-   * PR and, once merged, one file it already fetches.
+   * asks instead. Filing an issue labelled `factory:profile` is the ask. Under
+   * GitHub Actions that label starts the Profiler in the repo's own runner.
+   * Under Software Factory the Console App's webhook never reaches the
+   * orchestrator, so this route also POSTs /dispatch after filing.
    *
    * Filed under the signed-in user's identity, not the App's: the router
    * ignores bot-authored issues on `opened`, and this is a person asking.
@@ -302,7 +363,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     if (!ctx) return;
     const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
     if (!target) return;
-    const { repo, client, owner, name } = target;
+    const { repo, estate, org, client, owner, name } = target;
+    const actions = githubActionsEnabled(org.orchestrator);
 
     try {
       // A profile already on the default branch is the *current* draft, not a
@@ -310,24 +372,41 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       // code and open a correction PR if it disagrees — the way to fix a
       // stale or wrong profile without the Console ever reading the source.
 
-      // Preconditions, checked rather than assumed. Both failures would
-      // otherwise land as a red Actions run the Console can see the conclusion
-      // of but not the reason for, and the operator would be reading logs to
-      // learn something answerable here.
-      const stub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
-      if (!stub) {
-        return reply.code(409).send({
-          error:
-            "the enablement PR is not merged yet — GitHub only fires workflows that exist on the default branch, so nothing would start. Merge it, then run this step.",
-        });
-      }
-      const hasKey =
-        (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) ||
-        (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
-      if (!hasKey) {
-        return reply.code(409).send({
-          error: "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN on this repo — the agent run would fail before it read a line of code. Run the secret step first.",
-        });
+      // Preconditions, checked rather than assumed. GitHub Actions failures
+      // would otherwise land as a red run the Console can see the conclusion
+      // of but not the reason for. When Actions is disabled the Software
+      // Factory orchestrator is the motor, so we check its claim and the
+      // Console-retained credential instead of workflow stubs and Actions secrets.
+      if (actions) {
+        const stub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
+        if (!stub) {
+          return reply.code(409).send({
+            error:
+              "the enablement PR is not merged yet — GitHub only fires workflows that exist on the default branch, so nothing would start. Merge it, then run this step.",
+          });
+        }
+        const hasKey =
+          (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) ||
+          (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
+        if (!hasKey) {
+          return reply.code(409).send({
+            error: "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN on this repo — the agent run would fail before it read a line of code. Run the secret step first.",
+          });
+        }
+      } else {
+        const cfg = await client.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
+        if (!cfg || parseRepoOrchestratorEngine(cfg.content) !== "langgraph") {
+          return reply.code(409).send({
+            error:
+              "the enablement PR is not merged yet — the Software Factory orchestrator only claims a repo whose default branch has `.github/factory-orchestrator.json` with engine langgraph. Merge it, then run this step.",
+          });
+        }
+        if (!(await orgHasRetainedAgentSecret(deps, repo.orgId))) {
+          return reply.code(409).send({
+            error:
+              "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN stored in the Console — GitHub Actions is disabled, so the orchestrator cannot read a repo Actions secret. Run the secret step first.",
+          });
+        }
       }
 
       // Self-healing, the same way the pipeline creates factory:in-progress on
@@ -353,11 +432,13 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         // requestedAt is the attribution window: the worker only pins Actions
         // runs (and their failures) to this step when they started after it.
         // A fresh detail object on purpose — every ask starts a clean story.
-        await recordStep(deps, repo, "profile", "pending", {
+        const detail = {
           issueNumber: found.number,
           issueUrl: found.html_url,
           requestedAt: new Date().toISOString(),
-        });
+          ...(actions ? {} : await dispatchProfiler(deps, repo.orgId, estate.installationId, owner, name, found.number)),
+        };
+        await recordStep(deps, repo, "profile", "pending", detail);
         return { ok: true, issueNumber: found.number, issueUrl: found.html_url, rerun: true };
       }
 
@@ -366,11 +447,13 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         labels: [PROFILE_LABEL.name],
         body: PROFILE_ISSUE_BODY,
       });
-      await recordStep(deps, repo, "profile", "pending", {
+      const detail = {
         issueNumber: issue.number,
         issueUrl: issue.html_url,
         requestedAt: new Date().toISOString(),
-      });
+        ...(actions ? {} : await dispatchProfiler(deps, repo.orgId, estate.installationId, owner, name, issue.number)),
+      };
+      await recordStep(deps, repo, "profile", "pending", detail);
       return { ok: true, issueNumber: issue.number, issueUrl: issue.html_url, rerun: false };
     } catch (err) {
       await recordStep(deps, repo, "profile", "failed", { error: (err as Error).message });
@@ -444,7 +527,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     if (!ctx) return;
     const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
     if (!target) return;
-    const { repo, client, owner, name } = target;
+    const { repo, org, client, owner, name } = target;
+    const actions = githubActionsEnabled(org.orchestrator);
 
     const checks: Array<{ check: string; ok: boolean | null; detail: string }> = [];
     const push = (check: string, ok: boolean | null, detail: string) => checks.push({ check, ok, detail });
@@ -465,66 +549,86 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         missing.length ? `missing: ${missing.join(", ")}` : drifted.length ? `drifted: ${drifted.join(", ")}` : `all ${wanted.length} present and exact`,
       );
 
-      // 2. Stubs on default branch with permissions: intact and refs in sync.
-      const stub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
-      if (!stub) push("pipeline-stub", false, "not on the default branch — the pipeline cannot fire");
-      else {
-        const hasPermissions = /^permissions:/m.test(stub.content);
-        const usesRef = stub.content.match(/uses:\s*\S+@(\S+)/)?.[1];
-        const factoryRef = stub.content.match(/factory_ref:\s*(\S+)/)?.[1];
-        const refsSync = Boolean(usesRef && factoryRef && usesRef === factoryRef);
+      const orchestratorFile = await client.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
+      const claimed = parseRepoOrchestratorEngine(orchestratorFile?.content);
+      if (actions) {
+        // 2. Stubs on default branch with permissions: intact and refs in sync.
+        const stub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
+        if (!stub) push("pipeline-stub", false, "not on the default branch — the pipeline cannot fire");
+        else {
+          const hasPermissions = /^permissions:/m.test(stub.content);
+          const usesRef = stub.content.match(/uses:\s*\S+@(\S+)/)?.[1];
+          const factoryRef = stub.content.match(/factory_ref:\s*(\S+)/)?.[1];
+          const refsSync = Boolean(usesRef && factoryRef && usesRef === factoryRef);
+          push(
+            "pipeline-stub",
+            hasPermissions && refsSync,
+            !hasPermissions
+              ? "permissions: block missing — runs will die at startup_failure"
+              : !refsSync
+                ? `uses:@${usesRef} vs factory_ref:${factoryRef} — version skew`
+                : `present, permissions intact, pinned at ${usesRef}`,
+          );
+          push(
+            "pipeline-secrets",
+            stubPassesCallerSecrets(stub.content),
+            stubPassesCallerSecrets(stub.content)
+              ? "caller passes ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN by name"
+              : /secrets:\s*inherit/.test(stub.content)
+                ? "secrets: inherit does not forward secrets across GitHub accounts — re-run the stub-files step"
+                : "caller does not pass Anthropic secrets into the reusable workflow",
+          );
+          push(
+            "pipeline-factory-repo",
+            stubPassesFactoryRepo(stub.content),
+            stubPassesFactoryRepo(stub.content)
+              ? `caller passes factory_repo (${stub.content.match(/factory_repo:\s*(\S+)/)?.[1]})`
+              : "factory_repo missing — the pipeline clones this repo itself at the factory ref instead of the factory (`Remote branch v1 not found`). Re-run the stub-files step",
+          );
+        }
+        const guard = await client.getFileAtRef(owner, name, ".github/workflows/factory-branch-guard.yml");
+        push("branch-guard-stub", Boolean(guard), guard ? "present" : "missing — no factory:incident on direct main commits");
+
+        // 3. Repository-level secret exists (presence only).
+        const hasKey = (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) || (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
+        push("actions-secret", hasKey, hasKey ? "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN present" : "neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set as a repository secret");
+      } else {
         push(
-          "pipeline-stub",
-          hasPermissions && refsSync,
-          !hasPermissions
-            ? "permissions: block missing — runs will die at startup_failure"
-            : !refsSync
-              ? `uses:@${usesRef} vs factory_ref:${factoryRef} — version skew`
-              : `present, permissions intact, pinned at ${usesRef}`,
+          "orchestrator-config",
+          claimed === "langgraph",
+          claimed === "langgraph"
+            ? "`.github/factory-orchestrator.json` claims the Software Factory orchestrator"
+            : "GitHub Actions is disabled — merge an enablement PR that sets `.github/factory-orchestrator.json` engine to langgraph",
         );
+        const retained = await orgHasRetainedAgentSecret(deps, repo.orgId);
         push(
-          "pipeline-secrets",
-          stubPassesCallerSecrets(stub.content),
-          stubPassesCallerSecrets(stub.content)
-            ? "caller passes ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN by name"
-            : /secrets:\s*inherit/.test(stub.content)
-              ? "secrets: inherit does not forward secrets across GitHub accounts — re-run the stub-files step"
-              : "caller does not pass Anthropic secrets into the reusable workflow",
-        );
-        push(
-          "pipeline-factory-repo",
-          stubPassesFactoryRepo(stub.content),
-          stubPassesFactoryRepo(stub.content)
-            ? `caller passes factory_repo (${stub.content.match(/factory_repo:\s*(\S+)/)?.[1]})`
-            : "factory_repo missing — the pipeline clones this repo itself at the factory ref instead of the factory (`Remote branch v1 not found`). Re-run the stub-files step",
+          "console-secret",
+          retained,
+          retained
+            ? "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN stored in the Console for the orchestrator"
+            : "neither agent token is stored in the Console — GitHub Actions is disabled so Actions secrets are not used",
         );
       }
-      const guard = await client.getFileAtRef(owner, name, ".github/workflows/factory-branch-guard.yml");
-      push("branch-guard-stub", Boolean(guard), guard ? "present" : "missing — no factory:incident on direct main commits");
 
-      // 3. Repository-level secret exists (presence only).
-      const hasKey = (await client.getActionsSecret(owner, name, "ANTHROPIC_API_KEY")) || (await client.getActionsSecret(owner, name, "CLAUDE_CODE_OAUTH_TOKEN"));
-      push("actions-secret", hasKey, hasKey ? "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN present" : "neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set as a repository secret");
-
-      // 4. Claude GitHub App — recorded confirmation, not a probe: GitHub shows
-      // an App's installations to nobody but that App, and the Claude App is
-      // Anthropic's. Unconfirmed is "look before you run", not red — a repo
-      // adopted from an existing install may be working fine without the row.
-      const claudeApp = (
-        await db
-          .select()
-          .from(onboardingRuns)
-          .where(and(eq(onboardingRuns.repoId, repo.id), eq(onboardingRuns.step, "claude-app")))
-          .limit(1)
-      )[0];
-      const confirmedBy = claudeApp?.status === "ok" ? (claudeApp.detail as { confirmedBy?: unknown }).confirmedBy : null;
-      push(
-        "claude-github-app",
-        claudeApp?.status === "ok" ? true : null,
-        claudeApp?.status === "ok"
-          ? `installation confirmed${typeof confirmedBy === "string" ? ` by ${confirmedBy}` : ""} (the Console cannot see another App's installations, so this records the human check)`
-          : `not confirmable from the Console — agent runs exchange an OIDC token for the Claude App's credentials, and without the App installed every run fails with "Claude Code is not installed on this repository". Install it at ${CLAUDE_APP_URL}, then confirm the wizard step`,
-      );
+      // 4. Claude GitHub App — only required when GitHub Actions runs
+      // claude-code-action. The Software Factory orchestrator uses its own App.
+      if (actions) {
+        const claudeApp = (
+          await db
+            .select()
+            .from(onboardingRuns)
+            .where(and(eq(onboardingRuns.repoId, repo.id), eq(onboardingRuns.step, "claude-app")))
+            .limit(1)
+        )[0];
+        const confirmedBy = claudeApp?.status === "ok" ? (claudeApp.detail as { confirmedBy?: unknown }).confirmedBy : null;
+        push(
+          "claude-github-app",
+          claudeApp?.status === "ok" ? true : null,
+          claudeApp?.status === "ok"
+            ? `installation confirmed${typeof confirmedBy === "string" ? ` by ${confirmedBy}` : ""} (the Console cannot see another App's installations, so this records the human check)`
+            : `not confirmable from the Console — agent runs exchange an OIDC token for the Claude App's credentials, and without the App installed every run fails with "Claude Code is not installed on this repository". Install it at ${CLAUDE_APP_URL}, then confirm the wizard step`,
+        );
+      }
 
       // 5. profile.json parses and carries the schema's required keys.
       const profile = await client.getFileAtRef(owner, name, ".factory/profile.json");
@@ -600,8 +704,11 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       const template = await client.getFileAtRef(owner, name, ".github/ISSUE_TEMPLATE/factory-requirement.yml");
       push("issue-template", Boolean(template), template ? "present" : "missing — requesters have no entry point");
 
-      // 10. Cross-repo PAT probe — needs the repo-side secret value, which the Console never holds.
-      push("cross-repo-token", null, "not checkable from the Console (the secret value never leaves GitHub); verify via a canary run on a multi-repo epic");
+      // 10. Cross-repo PAT probe — Actions secrets are unreadable; Console-retained
+      // tokens are presence-only here (the value never leaves the API).
+      if (actions) {
+        push("cross-repo-token", null, "not checkable from the Console (the secret value never leaves GitHub); verify via a canary run on a multi-repo epic");
+      }
 
       const allOk = checks.every((c) => c.ok !== false);
       await recordStep(deps, repo, "validate", allOk ? "ok" : "failed", { checks });
@@ -760,9 +867,10 @@ async function loadAdminRepo(deps: AppDeps, ctx: RequestCtx, repoId: string, rep
     return null;
   }
   const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0]!;
+  const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0]!;
   const client = new InstallationClient(deps.cfg.GITHUB_API_URL, auth, estate.installationId);
   const [owner, name] = repo.fullName.split("/") as [string, string];
-  return { repo, estate, client, owner, name };
+  return { repo, estate, org, client, owner, name };
 }
 
 /** Whether the signed-in user's own GitHub identity administers the repo. */
@@ -774,6 +882,32 @@ async function isRepoAdminOnGitHub(deps: AppDeps, ctx: RequestCtx, fullName: str
   } catch {
     return false; // no OAuth token on file, or GitHub unreachable — fall back to the stored role
   }
+}
+
+async function dispatchProfiler(
+  deps: AppDeps,
+  orgId: string,
+  installationId: number,
+  owner: string,
+  repo: string,
+  issue: number,
+) {
+  let githubToken: string | undefined;
+  try {
+    const auth = await deps.credentials.auth();
+    if (auth) githubToken = await auth.installationToken(installationId);
+  } catch {
+    /* orchestrator can still mint its own JWT if it has a real App key */
+  }
+  const secrets = await readRetainedAgentSecrets(deps, orgId);
+  return dispatchFactoryRole(deps.cfg, {
+    owner,
+    repo,
+    role: "profiler",
+    issue,
+    githubToken,
+    ...secrets,
+  });
 }
 
 async function recordStep(
@@ -853,8 +987,11 @@ async function ensurePull(
 }
 
 /** The consuming repo's whole footprint (FACTORY.md §10), templated. */
-function stubFiles(approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] }): Record<string, string> {
-  return {
+function stubFiles(
+  approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] },
+  consoleEngine: string,
+): Record<string, string> {
+  const files: Record<string, string> = {
     ".github/workflows/factory-pipeline.yml": `name: Factory pipeline
 
 # Caller stub. All logic lives in the factory repo; this file owns only the
@@ -993,26 +1130,57 @@ body:
       description: Anything the spec writer should know.
 `,
   };
+  files[".github/factory-orchestrator.json"] = `${JSON.stringify(
+    {
+      engine: repoEngineName(consoleEngine),
+      endpoint: "",
+      runners: { max_parallel: 4 },
+    },
+    null,
+    2,
+  )}\n`;
+  if (!githubActionsEnabled(consoleEngine)) {
+    delete files[".github/workflows/factory-pipeline.yml"];
+    delete files[".github/workflows/factory-branch-guard.yml"];
+  }
+  return files;
 }
 
-const STUB_PR_BODY = `This PR carries the consuming repo's whole factory footprint. One line per file:
-
-- \`.github/workflows/factory-pipeline.yml\` — caller stub wiring GitHub events to the factory's reusable pipeline (permissions block intact — do not remove it).
+function stubPrBody(actions: boolean): string {
+  const files = actions
+    ? `- \`.github/workflows/factory-pipeline.yml\` — caller stub wiring GitHub events to the factory's reusable pipeline (permissions block intact — do not remove it).
 - \`.github/workflows/factory-branch-guard.yml\` — files a factory:incident issue if a commit lands on main without a PR.
+- \`.github/factory-orchestrator.json\` — engine \`github-actions\` (this org's Console setting).
+- \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
+- \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
+- \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
+- \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.`
+    : `- \`.github/factory-orchestrator.json\` — claims this repo for the Software Factory orchestrator (\`engine: langgraph\`). GitHub Actions is not used.
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.
 
+No workflow stubs — GitHub Actions is disabled for this organisation.`;
+
+  const firstRun = actions
+    ? `**Before the first agent run:** install the [Claude GitHub App](${CLAUDE_APP_URL}) on this repository (and include it under the App's repository access). Agent runs exchange an OIDC token for that App's credentials at run time; without it every run fails with \`Claude Code is not installed on this repository\` — installing the \`@anthropic-ai/claude-code\` npm package is not the same thing.
+
+**Merging this PR is the act that enables the factory** — workflow stubs only fire from the default branch.`
+    : `**Merging this PR is the act that enables the factory** — the Software Factory orchestrator claims the repo from the default branch.`;
+
+  return `This PR carries the consuming repo's whole factory footprint. One line per file:
+
+${files}
+
 Add \`.factory/profile.json\` before or after merging (see the factory handbook §2c) — it is the one file whose contents are genuinely yours.
 
-**Before the first agent run:** install the [Claude GitHub App](${CLAUDE_APP_URL}) on this repository (and include it under the App's repository access). Agent runs exchange an OIDC token for that App's credentials at run time; without it every run fails with \`Claude Code is not installed on this repository\` — installing the \`@anthropic-ai/claude-code\` npm package is not the same thing.
-
-**Merging this PR is the act that enables the factory** — workflow stubs only fire from the default branch.
+${firstRun}
 
 ---
 _Generated by [Factory Console](https://github.com/genai-jerry/software-factory-view)_
 `;
+}
 
 const STUB_PATCH_PR_BODY = `The factory pipeline is a reusable workflow in another repository. Two caller-stub mistakes make agent jobs fail before they start:
 
@@ -1058,6 +1226,7 @@ const FACTORY_RESET_FILES = [
   ".github/workflows/factory-pipeline.yml",
   ".github/workflows/factory-branch-guard.yml",
   ".github/workflows/factory-test.yml",
+  ".github/factory-orchestrator.json",
   ".github/factory-models.json",
   ".github/factory-approvers.json",
   ".github/factory-release.json",

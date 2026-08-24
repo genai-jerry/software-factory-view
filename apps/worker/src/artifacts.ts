@@ -1,4 +1,4 @@
-import { encryptSecret, parseApproverFile, parseChangePath, type GhPull, type GhWorkflowRun, type RepoReader } from "@console/core";
+import { encryptSecret, parseApproverFile, parseChangePath, repoHasFactoryEngine, type GhComment, type GhIssue, type GhPull, type GhWorkflowRun, type RepoReader } from "@console/core";
 import {
   artifactCache,
   changeArtifacts,
@@ -182,13 +182,36 @@ type ProfileStepDetail = {
   issueUrl?: string;
   /** Stamped by the API route at the moment of the ask — the attribution window's left edge. */
   requestedAt?: string;
-  run?: { id: number; htmlUrl: string; status: string; conclusion: string | null; createdAt: string };
+  run?: {
+    id: number | string;
+    htmlUrl: string;
+    status: string;
+    conclusion: string | null;
+    createdAt: string;
+    engine?: "github-actions" | "software-factory";
+  };
+  /** Live run marker (`factory:in-progress`) on the profile issue — no Actions run needed. */
+  inProgress?: boolean;
   prNumber?: number;
   prUrl?: string;
   prState?: "open" | "merged" | "closed";
   error?: string;
   [key: string]: unknown;
 };
+
+const AGENT_MARK = "<!-- factory-agent -->";
+const IN_PROGRESS_LABEL = "factory:in-progress";
+/** Orchestrator comments link `/runs/{id}` on PUBLIC_BASE_URL. */
+const ORCHESTRATOR_RUN_URL = /https?:\/\/[^\s)<>]+\/runs\/[A-Za-z0-9-]+/;
+
+function profileIssueMatches(detail: ProfileStepDetail, issueNumber: number): boolean {
+  return detail.issueNumber === issueNumber;
+}
+
+function stepStillWaiting(row: { status: string }, detail: ProfileStepDetail): boolean {
+  if (row.status !== "pending" && row.status !== "failed") return false;
+  return detail.prState !== "open" && detail.prState !== "merged";
+}
 
 async function profileStepRow(db: Db, repoId: string) {
   return (
@@ -247,10 +270,95 @@ export async function updateProfileStepFromRun(db: Db, repo: RepoRef, run: GhWor
   // Deliveries are unordered; keep the newest run, but always fold in updates
   // to the one already recorded (queued → in_progress → completed).
   if (detail.run && detail.run.id !== run.id && Date.parse(detail.run.createdAt) > createdAt) return;
-  detail.run = { id: run.id, htmlUrl: run.html_url, status: run.status, conclusion: run.conclusion, createdAt: run.created_at };
+  // An orchestrator start/fail comment is the live source under Software Factory;
+  // a coincidental Actions run must not overwrite it.
+  if (detail.run?.engine === "software-factory") return;
+  detail.run = { id: run.id, htmlUrl: run.html_url, status: run.status, conclusion: run.conclusion, createdAt: run.created_at, engine: "github-actions" };
   const failed = run.status === "completed" && ["failure", "timed_out", "cancelled", "startup_failure"].includes(run.conclusion ?? "");
   if (failed) {
     detail.error = "the Actions run carrying the Profiler did not finish — its log has the reason";
+  } else {
+    delete detail.error;
+  }
+  await db
+    .update(onboardingRuns)
+    .set({ status: failed ? "failed" : "pending", detail, updatedAt: new Date() })
+    .where(eq(onboardingRuns.id, row.id));
+}
+
+/**
+ * The Software Factory orchestrator has no `workflow_run`. Progress is the
+ * `factory:in-progress` label it puts on the profile issue, then the start /
+ * failure comment that links `/runs/{id}`. Same attribution window as Actions:
+ * only the recorded profile issue, only while the step is still waiting.
+ */
+export async function updateProfileStepFromIssue(db: Db, repo: RepoRef, issue: GhIssue, action?: string, label?: string): Promise<void> {
+  if (label !== IN_PROGRESS_LABEL) return;
+  const row = await profileStepRow(db, repo.id);
+  if (!row) return;
+  const detail = { ...(row.detail as ProfileStepDetail) };
+  if (!profileIssueMatches(detail, issue.number) || !stepStillWaiting(row, detail)) return;
+  if (action === "unlabeled") {
+    detail.inProgress = false;
+    if (detail.run && detail.run.status !== "completed") {
+      if (!detail.run.htmlUrl) {
+        delete detail.run;
+      } else if (detail.run.conclusion !== "failure") {
+        detail.run = { ...detail.run, status: "completed", conclusion: detail.run.conclusion ?? "success" };
+      }
+    }
+  } else {
+    detail.inProgress = true;
+    if (!detail.run) {
+      // Marker without a log URL yet — the start comment usually follows in
+      // the next delivery. Keep the card on "running" rather than "waiting".
+      detail.run = {
+        id: "in-progress",
+        htmlUrl: "",
+        status: "in_progress",
+        conclusion: null,
+        createdAt: issue.updated_at,
+        engine: "software-factory",
+      };
+    } else if (detail.run.status !== "completed") {
+      detail.run = { ...detail.run, status: "in_progress", engine: detail.run.engine ?? "software-factory" };
+    }
+    delete detail.error;
+  }
+  await db
+    .update(onboardingRuns)
+    .set({
+      status: row.status === "failed" && action === "unlabeled" ? "failed" : "pending",
+      detail,
+      updatedAt: new Date(),
+    })
+    .where(eq(onboardingRuns.id, row.id));
+}
+
+export async function updateProfileStepFromComment(db: Db, repo: RepoRef, issue: GhIssue, comment: GhComment): Promise<void> {
+  if (!comment.body.includes(AGENT_MARK)) return;
+  const match = comment.body.match(ORCHESTRATOR_RUN_URL);
+  if (!match) return;
+  const htmlUrl = match[0];
+  const runId = htmlUrl.split("/runs/").pop() ?? htmlUrl;
+  const failed = /run failed/i.test(comment.body) || /open the run log/i.test(comment.body);
+  const started = /is running/i.test(comment.body) || /watch the run/i.test(comment.body);
+  if (!failed && !started) return;
+  const row = await profileStepRow(db, repo.id);
+  if (!row) return;
+  const detail = { ...(row.detail as ProfileStepDetail) };
+  if (!profileIssueMatches(detail, issue.number) || !stepStillWaiting(row, detail)) return;
+  detail.run = {
+    id: runId,
+    htmlUrl,
+    status: failed ? "completed" : "in_progress",
+    conclusion: failed ? "failure" : null,
+    createdAt: comment.created_at,
+    engine: "software-factory",
+  };
+  detail.inProgress = !failed;
+  if (failed) {
+    detail.error = "the Software Factory Profiler did not finish — its run log has the reason";
   } else {
     delete detail.error;
   }
@@ -289,6 +397,7 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
   const [owner, name] = repo.fullName.split("/") as [string, string];
   const profile = await reader.getFileAtRef(owner, name, ".factory/profile.json");
   const stub = await reader.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
+  const orchestratorFile = await reader.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
   let stagingBranch: string | null = null;
   if (profile) {
     try {
@@ -303,7 +412,10 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
     .set({
       profileSha: profile?.sha ?? null,
       stagingBranch,
-      factoryEnabled: Boolean(profile && stub),
+      factoryEnabled: Boolean(
+        profile &&
+          repoHasFactoryEngine({ hasWorkflowStub: Boolean(stub), orchestratorFile: orchestratorFile?.content }),
+      ),
       lastSyncedAt: new Date(),
     })
     .where(eq(repos.id, repo.id));

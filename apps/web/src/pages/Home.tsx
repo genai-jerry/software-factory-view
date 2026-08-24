@@ -1,13 +1,15 @@
 import { type ReactNode } from "react";
-import { api } from "../api.js";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "../api.js";
+import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import type { Me, SetupStatus } from "../types.js";
 import { ConnectEstate } from "./Onboarding.js";
 
 /**
- * Front door for a SaaS factory. The GitHub App is a platform credential
- * (environment secrets, editable later by the GitHub App owner in Settings). New
- * users sign in with GitHub and connect an organisation. Returning users with
- * an organisation never see this; `/` is mission control for them.
+ * Front door for a SaaS factory. First run: paste the GitHub App credentials
+ * so sign-in can work. After that, new users sign in with GitHub and connect
+ * an organisation. The App owner can still rotate those credentials in Settings.
+ * Returning users with an organisation never see this; `/` is mission control.
  */
 export function HomePage({
   me,
@@ -18,8 +20,11 @@ export function HomePage({
   setup: SetupStatus | undefined;
   onConnected: () => void;
 }) {
+  const qc = useQueryClient();
   const signedIn = Boolean(me);
-  const current: StationId = !signedIn ? "signin" : "org";
+  const needsApp = Boolean(setup && !setup.configured && setup.canEditApp);
+  const current: StationId = needsApp ? "app" : !signedIn ? "signin" : "org";
+  const n = (step: number) => String(needsApp ? step : step - 1).padStart(2, "0");
 
   return (
     <div className="home">
@@ -45,9 +50,20 @@ export function HomePage({
       <div className="home-body">
         <section className="home-lede">
           <p className="home-kicker">Getting started</p>
-          <h1>{signedIn ? "Bring your organisations in." : "Sign in, then bring the repos."}</h1>
+          <h1>
+            {needsApp
+              ? "Register the GitHub App, then sign in."
+              : signedIn
+                ? "Bring your organisations in."
+                : "Sign in, then bring the repos."}
+          </h1>
           <p className="muted">
-            {signedIn ? (
+            {needsApp ? (
+              <>
+                Sign-in uses one GitHub App for this Console. Paste its App ID, private key, and OAuth credentials from
+                GitHub — or create one from a manifest. After it is saved, you sign in with GitHub and pick repositories.
+              </>
+            ) : signedIn ? (
               <>
                 Tick the repositories the factory should watch, then confirm the App on GitHub. GitHub will return you
                 here to connect those repositories and continue factory enablement. The first person to connect an
@@ -63,19 +79,35 @@ export function HomePage({
           </p>
         </section>
 
+        {setup?.appReset && (setup.source === "database" || Boolean(setup.credentialError)) && (
+          <ResetAppCredentials onReset={() => void qc.invalidateQueries({ queryKey: ["setup"] })} />
+        )}
+
         <ol className="ticket">
+          {needsApp && setup && (
+            <Station
+              n={n(1)}
+              id="app"
+              title="GitHub App"
+              current={current}
+              done={false}
+              status="your move"
+            >
+              <AppStation setup={setup} onSaved={() => void qc.invalidateQueries({ queryKey: ["setup"] })} />
+            </Station>
+          )}
           <Station
-            n="01"
+            n={n(2)}
             id="signin"
             title="Sign in with GitHub"
             current={current}
             done={signedIn}
-            status={signedIn ? `@${me!.login}` : "your move"}
+            status={signedIn ? `@${me!.login}` : needsApp ? "after the App" : "your move"}
           >
             {current === "signin" && <SignInStation setup={setup} />}
           </Station>
           <Station
-            n="02"
+            n={n(3)}
             id="org"
             title="Organisation and repositories"
             current={current}
@@ -85,7 +117,7 @@ export function HomePage({
             {current === "org" && me && <ConnectEstate onConnected={onConnected} title="Connect an organisation" />}
           </Station>
           <Station
-            n="03"
+            n={n(4)}
             id="enable"
             title="Enable the factory"
             current={current}
@@ -98,7 +130,7 @@ export function HomePage({
   );
 }
 
-type StationId = "signin" | "org" | "enable";
+type StationId = "app" | "signin" | "org" | "enable";
 
 function Station({
   n,
@@ -132,6 +164,38 @@ function Station({
   );
 }
 
+function ResetAppCredentials({ onReset }: { onReset: () => void }) {
+  const reset = useMutation({
+    mutationFn: () => api.del<{ ok: boolean }>("/api/setup/credentials"),
+    onSuccess: onReset,
+  });
+  return (
+    <div className="banner stale" style={{ marginTop: "1rem" }}>
+      <p className="muted" style={{ margin: "0 0 0.5rem" }}>
+        <code>APP_RESET</code> is on. This removes the stored GitHub App so you can paste the credentials again. Turn the
+        flag off when you are done.
+      </p>
+      <button
+        className="danger"
+        disabled={reset.isPending}
+        onClick={() => {
+          if (!window.confirm("Remove the stored GitHub App credentials? Sign-in will stop until you save them again.")) {
+            return;
+          }
+          reset.mutate();
+        }}
+      >
+        {reset.isPending ? "Resetting…" : "Reset GitHub App credentials"}
+      </button>
+      {reset.isError && (
+        <div className="banner error" style={{ marginTop: "0.5rem" }}>
+          {(reset.error as ApiError).message}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
   return (
     <div>
@@ -147,7 +211,7 @@ function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
         </p>
       )}
       {setup && !setup.configured && !setup.devLogin ? (
-        <p className="muted">Sign-in is not available yet. The factory is still being configured.</p>
+        <p className="muted">Sign-in is not available yet. Register the GitHub App in the step above.</p>
       ) : (
         <p>
           <a href="/auth/github/login">
@@ -160,6 +224,25 @@ function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
           Dev mode: <a href="/auth/dev-login">sign in without GitHub</a>
         </p>
       )}
+    </div>
+  );
+}
+
+function AppStation({ setup, onSaved }: { setup: SetupStatus; onSaved: () => void }) {
+  if (!setup.hasMasterKey) {
+    return (
+      <div className="banner error">
+        <code>CONSOLE_MASTER_KEY</code> is not set, so credentials cannot be stored. Run <code>./scripts/setup.sh</code>{" "}
+        and restart.
+      </div>
+    );
+  }
+  return (
+    <div>
+      <p className="muted">
+        Or create one on GitHub from a manifest: <a href="/setup/github-app">Create the GitHub App</a>.
+      </p>
+      <AppCredentialsForm status={setup} onSaved={onSaved} />
     </div>
   );
 }

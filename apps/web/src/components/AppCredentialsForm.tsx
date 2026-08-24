@@ -1,7 +1,54 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { SetupStatus } from "../types.js";
+
+const DRAFT_KEY = "factory-console.app-credentials-draft";
+
+type CredentialsDraft = {
+  appId: string;
+  slug: string;
+  privateKeyPem: string;
+  clientId: string;
+  clientSecret: string;
+  webhookSecret: string;
+};
+
+function loadDraft(): CredentialsDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CredentialsDraft>;
+    return {
+      appId: parsed.appId ?? "",
+      slug: parsed.slug ?? "",
+      privateKeyPem: parsed.privateKeyPem ?? "",
+      clientId: parsed.clientId ?? "",
+      clientSecret: parsed.clientSecret ?? "",
+      webhookSecret: parsed.webhookSecret ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistDraft(draft: CredentialsDraft): void {
+  try {
+    const empty = Object.values(draft).every((v) => !v);
+    if (empty) sessionStorage.removeItem(DRAFT_KEY);
+    else sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Private mode or quota — in-memory state still works until a remount.
+  }
+}
+
+function clearDraft(): void {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * GitHub App registration by hand: the five values from an App's settings page,
@@ -15,18 +62,21 @@ import type { SetupStatus } from "../types.js";
  * It doubles as the edit form. Once a registration is stored the identifiers
  * prefill and the secrets do not: the API keeps whatever is left blank, so
  * rotating a client secret is one field rather than five.
+ *
+ * Typed values are kept in sessionStorage so switching to GitHub to copy a
+ * PEM (or any remount) does not empty the form.
  */
 export function AppCredentialsForm({ status, onSaved }: { status: SetupStatus; onSaved: () => void }) {
   // Only a stored registration can be patched field by field. Credentials that
   // come from the environment, or a row that cannot be decrypted, need the full
   // set — entering it is what replaces them.
   const editing = status.source === "database";
-  const [appId, setAppId] = useState(status.appId ?? "");
-  const [privateKeyPem, setPrivateKeyPem] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
-  const [clientId, setClientId] = useState(status.clientId ?? "");
-  const [clientSecret, setClientSecret] = useState("");
-  const [slug, setSlug] = useState(status.appSlug ?? "");
+  const [appId, setAppId] = useState(() => loadDraft()?.appId || status.appId || "");
+  const [privateKeyPem, setPrivateKeyPem] = useState(() => loadDraft()?.privateKeyPem ?? "");
+  const [webhookSecret, setWebhookSecret] = useState(() => loadDraft()?.webhookSecret ?? "");
+  const [clientId, setClientId] = useState(() => loadDraft()?.clientId || status.clientId || "");
+  const [clientSecret, setClientSecret] = useState(() => loadDraft()?.clientSecret ?? "");
+  const [slug, setSlug] = useState(() => loadDraft()?.slug || status.appSlug || "");
 
   const save = useMutation({
     mutationFn: () =>
@@ -39,12 +89,21 @@ export function AppCredentialsForm({ status, onSaved }: { status: SetupStatus; o
         slug,
       }),
     onSuccess: () => {
+      clearDraft();
       setPrivateKeyPem("");
       setClientSecret("");
       setWebhookSecret("");
       onSaved();
     },
   });
+
+  useEffect(() => {
+    if (save.isSuccess) {
+      clearDraft();
+      return;
+    }
+    persistDraft({ appId, slug, privateKeyPem, clientId, clientSecret, webhookSecret });
+  }, [appId, slug, privateKeyPem, clientId, clientSecret, webhookSecret, save.isSuccess]);
 
   // Blanks keep the stored values, which is only ever right for the same App:
   // a different App ID needs its own key, a different client id its own secret.

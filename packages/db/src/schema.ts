@@ -55,8 +55,36 @@ export const orgs = pgTable("orgs", {
   insightModel: text("insight_model"),
   /** Per-org Anthropic API key (AES-GCM under CONSOLE_MASTER_KEY); null falls back to ANTHROPIC_API_KEY. */
   encryptedInsightApiKey: text("encrypted_insight_api_key"),
+  /**
+   * Which motor drives factory roles for this org's repos: `github-actions`
+   * (default) or `software-factory` (the LangGraph orchestrator). When
+   * software-factory is selected, the Console must not write Actions secrets
+   * or rely on workflow stubs.
+   */
+  orchestrator: text("orchestrator").notNull().default("github-actions"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Agent credentials retained for the Software Factory orchestrator. Write-only
+ * through the API (GET exposes name + updatedAt). Sealed with CONSOLE_MASTER_KEY
+ * in the same envelope as other Console secrets so the orchestrator can decrypt
+ * them from this table.
+ */
+export const orchestratorSecrets = pgTable(
+  "orchestrator_secrets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    encryptedValue: text("encrypted_value").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("orchestrator_secret_org_name").on(t.orgId, t.name)],
+);
 
 export const users = pgTable(
   "users",

@@ -35,10 +35,25 @@ const envSchema = z.object({
   /** Pinned @fission-ai/openspec version the onboarding worker installs (never `latest`: it executes on the Console host). */
   OPENSPEC_VERSION: z.string().default("1.8.0"),
 
+  /**
+   * Software Factory orchestrator the Console worker forwards GitHub events to
+   * (and that profile Re-run / Start factory run POST). Empty means the
+   * Console only projects the issue — silent under this engine, because
+   * Console App webhooks never reach :8080.
+   */
+  ORCHESTRATOR_URL: z.string().default(""),
+  /** Bearer token matching the orchestrator's DISPATCH_TOKEN. */
+  ORCHESTRATOR_DISPATCH_TOKEN: z.string().default(""),
+
   /** Staleness banner threshold, minutes since last successful sync. */
   STALENESS_THRESHOLD_MINUTES: z.coerce.number().default(15),
   /** Dev-only bypass: "1" allows login as a fixed dev user without GitHub OAuth. */
   DEV_FAKE_LOGIN: z.string().default("0"),
+  /**
+   * Local escape hatch: "true" (or "1") lets the home page wipe the stored
+   * GitHub App registration so it can be pasted again. Leave unset in production.
+   */
+  APP_RESET: z.string().default(""),
   NODE_ENV: z.string().default("development"),
 });
 
@@ -50,6 +65,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConsoleConfig 
     ...parsed,
     githubAppPrivateKeyPem: parsed.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n"),
   };
+}
+
+/** APP_RESET=true (or 1) in the environment — a local-only credentials wipe. */
+export function isAppResetEnabled(cfg: ConsoleConfig): boolean {
+  const v = cfg.APP_RESET.trim().toLowerCase();
+  return v === "true" || v === "1";
 }
 
 export function requireProductionSecrets(cfg: ConsoleConfig): string[] {

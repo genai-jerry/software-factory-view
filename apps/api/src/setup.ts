@@ -1,5 +1,5 @@
-import { AppAuth, buildAppManifest, encryptSecret, randomToken, toPkcs8 } from "@console/core";
-import { githubAppConfig, memberships, orgs, users } from "@console/db";
+import { AppAuth, buildAppManifest, encryptSecret, isAppResetEnabled, randomToken, toPkcs8 } from "@console/core";
+import { githubAppConfig, memberships, orgs, users, type Db } from "@console/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { resolveSession, userClient, type AppDeps, type RequestCtx } from "./context.js";
@@ -7,8 +7,8 @@ import { connectInstallation } from "./routes/estates.js";
 
 /**
  * GitHub App credentials for this SaaS Console. The platform App is pinned
- * with GITHUB_APP_* environment secrets; the GitHub App owner may also set or
- * rotate it from Settings after signing in.
+ * with GITHUB_APP_* environment secrets; on first run the operator pastes them
+ * into the front door, and the GitHub App owner may later rotate them in Settings.
  *
  * The same endpoint edits a stored registration (see setupAccess for who
  * may): rotating a secret or correcting the App ID is a patch over the stored
@@ -31,13 +31,14 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       // as "stored" and leaves them blank to keep.
       clientId: creds?.clientId ?? null,
       hasWebhookSecret: Boolean(creds?.webhookSecret),
-      /** Whether this caller could save a change from the setup screen. */
+      /** Whether this caller may register or edit the App (first-run, or its owner). */
       canEditApp: (await setupAccess(deps, req)).allowed,
       hasMasterKey,
       credentialError: deps.credentials.credentialError,
       publicOrigin: deps.cfg.PUBLIC_ORIGIN,
       insightEnabled: Boolean(deps.cfg.ANTHROPIC_API_KEY),
       devLogin: deps.cfg.DEV_FAKE_LOGIN === "1",
+      appReset: isAppResetEnabled(deps.cfg),
     };
   });
 
@@ -294,6 +295,31 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
     return { ok: true, appId, slug: slug || null, webhookVerification: Boolean(webhookSecret) };
   });
 
+  /**
+   * Wipe the stored GitHub App row so the home-page form can be filled again.
+   * Only when APP_RESET=true — this is a local recovery switch, not a product
+   * control. Environment-pinned GITHUB_APP_* still wins after the row is gone.
+   */
+  app.delete("/api/setup/credentials", async (req, reply) => {
+    if (!isAppResetEnabled(deps.cfg)) {
+      return reply.code(403).send({ error: "APP_RESET is not enabled" });
+    }
+    if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
+
+    const hadRow = (await db.select({ id: githubAppConfig.id }).from(githubAppConfig).limit(1)).length > 0;
+    await db.delete(githubAppConfig);
+    deps.credentials.invalidate();
+    const creds = await deps.credentials.resolve();
+    if (creds?.source === "environment") {
+      return reply.code(409).send({
+        error: hadRow
+          ? "the stored registration was removed, but GITHUB_APP_* is still set in the environment. Unset those and restart the API."
+          : "credentials come from GITHUB_APP_* in the environment. Unset those and restart the API.",
+      });
+    }
+    return { ok: true };
+  });
+
   /** Bootstrap the very first user as an owner when no memberships exist yet. */
   app.post("/api/setup/claim-owner", async (req, reply) => {
     const ctx = await resolveSession(db, deps.cfg, req);
@@ -311,28 +337,43 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 /**
  * Who may register or edit the factory's GitHub App — and who sees Settings.
  *
- * Never anonymous. Once the App is registered, only its GitHub owner (the
- * user who owns it, or an admin of the owning organisation) may change it or
- * open Settings. On a fresh Console with no App yet, an org owner/admin — or
- * the first signed-in user, if nobody has connected an estate — may register
- * it so they are not locked out.
+ * Once the App is registered, only its GitHub owner (the user who owns it, or
+ * an admin of the owning organisation) may change it. Sign-in itself needs
+ * those credentials, so a fresh Console with no App and no members yet lets
+ * the operator at the browser register it without a session. After the first
+ * member exists, an org owner/admin — or the first signed-in user, if nobody
+ * has connected an estate — may still register one so a Console that lost its
+ * credentials is not locked out.
  */
 export async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
   const db = deps.dbh.db;
   const ctx = await resolveSession(db, deps.cfg, req);
-  if (!ctx) return { allowed: false, ctx: null };
 
   if (await deps.credentials.isConfigured()) {
+    if (!ctx) return { allowed: false, ctx: null };
     return { allowed: await isGitHubAppOwner(deps, ctx), ctx };
   }
 
+  // APP_RESET is the recovery path after wiping a bad registration: members
+  // may already exist, so first-run anonymity would otherwise refuse the form.
+  if (isAppResetEnabled(deps.cfg)) return { allowed: true, ctx };
+
+  return { allowed: await isBootstrapOperator(db, ctx), ctx };
+}
+
+/** Org owner/admin, the first signed-in user on an empty Console, or — with no session — first-run bootstrap. */
+async function isBootstrapOperator(db: Db, ctx: RequestCtx | null): Promise<boolean> {
+  if (!ctx) {
+    const anyone = await db.select({ orgId: memberships.orgId }).from(memberships).limit(1);
+    return anyone.length === 0;
+  }
   const mine = await db.select({ role: memberships.role }).from(memberships).where(eq(memberships.userId, ctx.userId));
-  if (mine.some((m) => m.role === "owner" || m.role === "admin")) return { allowed: true, ctx };
+  if (mine.some((m) => m.role === "owner" || m.role === "admin")) return true;
   if (mine.length === 0) {
     const anyone = await db.select({ orgId: memberships.orgId }).from(memberships).limit(1);
-    return { allowed: anyone.length === 0, ctx };
+    return anyone.length === 0;
   }
-  return { allowed: false, ctx };
+  return false;
 }
 
 /** The GitHub user or org-admin who owns the registered App. */
@@ -357,7 +398,13 @@ async function isGitHubAppOwner(deps: AppDeps, ctx: RequestCtx): Promise<boolean
 
   // GitHub unreachable or GET /app had no owner — who registered it in the Console.
   const row = (await db.select({ configuredBy: githubAppConfig.configuredBy }).from(githubAppConfig).limit(1))[0];
-  return Boolean(row?.configuredBy && row.configuredBy.toLowerCase() === ctx.login.toLowerCase());
+  if (!row) return false; // env-pinned credentials, no stored registration to claim
+  if (row.configuredBy && row.configuredBy.toLowerCase() === ctx.login.toLowerCase()) return true;
+  // Anonymous first-run left the row unclaimed. The operator who can sign in
+  // next (org owner/admin, or the first user) may take it so Settings is not
+  // locked until GitHub answers GET /app.
+  if (!row.configuredBy) return isBootstrapOperator(db, ctx);
+  return false;
 }
 
 const manifestStates = new Map<string, number>();

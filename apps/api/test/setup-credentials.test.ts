@@ -138,7 +138,8 @@ describe("manual App registration", () => {
     expect(await deps.dbh.db.select().from(githubAppConfig)).toHaveLength(0);
   });
 
-  it("rejects anonymous writes; the App owner can register and later edit", async () => {
+  it("rejects anonymous writes once the Console already has members; the App owner can register and later edit", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/setup/status" })).json().canEditApp).toBe(false);
     expect((await post(VALID, { cookie: "" })).statusCode).toBe(403);
 
     expect((await post(VALID)).statusCode).toBe(200);
@@ -221,10 +222,54 @@ describe("editing a stored registration", () => {
     expect(res.json().error).toMatch(/GitHub App owner/);
   });
 
-  it("rejects anonymous edits even when nobody owns the Console yet", async () => {
+  it("allows a first-run anonymous write when nobody has signed in yet", async () => {
     await deps.dbh.db.delete(memberships);
-    expect((await post(VALID, { cookie: "" })).statusCode).toBe(403);
+
+    const before = (await app.inject({ method: "GET", url: "/api/setup/status" })).json();
+    expect(before.configured).toBe(false);
+    expect(before.canEditApp).toBe(true);
+
+    expect((await post(VALID, { cookie: "" })).statusCode).toBe(200);
+    expect((await deps.credentials.resolve())?.appId).toBe("123456");
+
+    const after = (await app.inject({ method: "GET", url: "/api/setup/status" })).json();
+    expect(after.configured).toBe(true);
+    expect(after.canEditApp).toBe(false);
+    expect((await post({ ...VALID, appId: "999" }, { cookie: "" })).statusCode).toBe(403);
+  });
+
+  it("reports appReset off by default and refuses a wipe", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/setup/status" })).json().appReset).toBe(false);
+    await post(VALID);
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/api/setup/credentials",
+      headers: { "x-console-csrf": "1" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/APP_RESET/);
+    expect((await deps.credentials.resolve())?.appId).toBe("123456");
+  });
+
+  it("wipes the stored App when APP_RESET is true so the form can be filled again", async () => {
     expect((await post(VALID)).statusCode).toBe(200);
+    deps.cfg = { ...deps.cfg, APP_RESET: "true" };
+
+    const noCsrf = await app.inject({ method: "DELETE", url: "/api/setup/credentials" });
+    expect(noCsrf.statusCode).toBe(403);
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/api/setup/credentials",
+      headers: { "x-console-csrf": "1" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await deps.credentials.isConfigured()).toBe(false);
+
+    const status = (await app.inject({ method: "GET", url: "/api/setup/status" })).json();
+    expect(status).toMatchObject({ configured: false, appReset: true, canEditApp: true });
+    expect((await post({ ...VALID, appId: "999" }, { cookie: "" })).statusCode).toBe(200);
+    expect((await deps.credentials.resolve())?.appId).toBe("999");
   });
 
   it("tells the setup screen what is stored, without the secrets", async () => {

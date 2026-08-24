@@ -1,6 +1,16 @@
-import type { AppAuth, ConsoleConfig, GhComment, GhIssue, GhPull, GhWorkflowRun } from "@console/core";
-import { InstallationClient } from "@console/core";
-import { estates, issues, orgs, repos, webhookDeliveries, type Db } from "@console/db";
+import {
+  decryptSecret,
+  githubActionsEnabled,
+  postOrchestratorGitHubEvent,
+  InstallationClient,
+  type AppAuth,
+  type ConsoleConfig,
+  type GhComment,
+  type GhIssue,
+  type GhPull,
+  type GhWorkflowRun,
+} from "@console/core";
+import { estates, issues, orchestratorSecrets, orgs, repos, webhookDeliveries, type Db } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import {
   ensureRepo,
@@ -15,6 +25,8 @@ import {
   importGateAssignments,
   refreshEpicArtifacts,
   refreshRepoProfile,
+  updateProfileStepFromComment,
+  updateProfileStepFromIssue,
   updateProfileStepFromPull,
   updateProfileStepFromRun,
 } from "./artifacts.js";
@@ -64,6 +76,7 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
           eventId: job.deliveryGuid,
           occurredAt: issue.updated_at,
         });
+        await updateProfileStepFromIssue(db, repo, issue, p.action, label);
       }
       // A state flip on an epic is the moment its artifacts are about to be
       // reviewed — prefetch them so the gate panel opens warm.
@@ -78,6 +91,7 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
       const issue = p["issue"] as GhIssue;
       await projectIssue(db, repo, issue);
       await projectComment(db, repo, issue.node_id, p["comment"] as GhComment);
+      await updateProfileStepFromComment(db, repo, issue, p["comment"] as GhComment);
       break;
     }
     case "pull_request": {
@@ -131,10 +145,75 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
       break; // events we consume but do not yet project (check_suite etc. covered by workflow_run rollup)
   }
 
+  await maybeForwardToOrchestrator(db, cfg, auth, job);
+
   await db
     .update(webhookDeliveries)
     .set({ processedAt: new Date(), error: null })
     .where(eq(webhookDeliveries.deliveryGuid, job.deliveryGuid));
+}
+
+const FORWARD_EVENTS = new Set(["issues", "issue_comment", "push", "milestone"]);
+
+/**
+ * GitHub delivers Console App webhooks to PUBLIC_ORIGIN. Under the Software
+ * Factory engine those events must also reach the LangGraph orchestrator or
+ * fast-track / intake / profile issues sit idle on the board.
+ */
+async function maybeForwardToOrchestrator(
+  db: Db,
+  cfg: ConsoleConfig,
+  auth: AppAuth,
+  job: WebhookJob,
+): Promise<void> {
+  if (!FORWARD_EVENTS.has(job.event)) return;
+  if (!cfg.ORCHESTRATOR_URL.trim()) return;
+  const repository = job.payload["repository"] as { node_id?: string } | undefined;
+  if (!repository?.node_id) return;
+  const repo = (await db.select().from(repos).where(eq(repos.ghNodeId, repository.node_id)).limit(1))[0];
+  if (!repo) return;
+  const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
+  if (!org || githubActionsEnabled(org.orchestrator)) return;
+
+  const installationId = (job.payload["installation"] as { id?: number } | undefined)?.id;
+  let githubToken: string | undefined;
+  if (installationId) {
+    try {
+      githubToken = await auth.installationToken(installationId);
+    } catch {
+      /* orchestrator can still mint its own JWT if it has a real App key */
+    }
+  }
+  const secrets = await agentSecretsForOrg(db, cfg, repo.orgId);
+  const result = await postOrchestratorGitHubEvent(cfg, {
+    event: job.event,
+    payload: job.payload,
+    deliveryGuid: job.deliveryGuid,
+    githubToken,
+    ...secrets,
+  });
+  if ("skipped" in result) return;
+  if ("error" in result) {
+    throw new Error(result.error);
+  }
+  console.log(
+    `forwarded ${job.event} ${job.deliveryGuid} to orchestrator queued=${result.queued}`,
+  );
+}
+
+async function agentSecretsForOrg(
+  db: Db,
+  cfg: ConsoleConfig,
+  orgId: string,
+): Promise<{ anthropicApiKey?: string; claudeCodeOauthToken?: string }> {
+  if (!cfg.CONSOLE_MASTER_KEY) return {};
+  const rows = await db.select().from(orchestratorSecrets).where(eq(orchestratorSecrets.orgId, orgId));
+  const out: { anthropicApiKey?: string; claudeCodeOauthToken?: string } = {};
+  for (const row of rows) {
+    if (row.name === "ANTHROPIC_API_KEY") out.anthropicApiKey = decryptSecret(row.encryptedValue, cfg.CONSOLE_MASTER_KEY);
+    if (row.name === "CLAUDE_CODE_OAUTH_TOKEN") out.claudeCodeOauthToken = decryptSecret(row.encryptedValue, cfg.CONSOLE_MASTER_KEY);
+  }
+  return out;
 }
 
 async function maybeRefreshArtifacts(

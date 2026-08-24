@@ -40,6 +40,7 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
+      APP_RESET: ${APP_RESET:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
@@ -47,6 +48,12 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
+      # Console in Docker must reach the host orchestrator. Match DISPATCH_TOKEN
+      # in claude-software-factory/orchestrator/.env (default dev-dispatch-token).
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://host.docker.internal:8080}
+      ORCHESTRATOR_DISPATCH_TOKEN: ${ORCHESTRATOR_DISPATCH_TOKEN:-dev-dispatch-token}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,6 +86,7 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEV_FAKE_LOGIN: ${DEV_FAKE_LOGIN:-0}
+      APP_RESET: ${APP_RESET:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
@@ -86,6 +94,10 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://host.docker.internal:8080}
+      ORCHESTRATOR_DISPATCH_TOKEN: ${ORCHESTRATOR_DISPATCH_TOKEN:-dev-dispatch-token}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

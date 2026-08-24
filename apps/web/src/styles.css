@@ -412,6 +412,33 @@ textarea { min-height: 5rem; resize: vertical; }
 .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
 
+.engine-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+.engine-card {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  padding: 0.9rem 1rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+  color: inherit;
+}
+.engine-card:disabled { cursor: default; opacity: 0.7; }
+.engine-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.engine-card .engine-name { font-weight: 600; display: block; }
+.engine-card .muted { margin: 0.35rem 0 0; }
+@media (max-width: 640px) {
+  .engine-grid { grid-template-columns: 1fr; }
+}
+
 /* ---- My work / peek drawer (plan 07 §4) ---- */
 
 .attention-entry.rank-1 { border-left: 3px solid var(--red); padding-left: 0.6rem; }
@@ -531,3 +558,59 @@ textarea { min-height: 5rem; resize: vertical; }
   flex-wrap: wrap;
 }
 .project-row:last-child { border-bottom: none; }
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  border-radius: 0;
+}
+button.link:hover {
+  text-decoration: underline;
+  border-color: transparent;
+}
+
+.run-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 1.5rem;
+}
+.run-modal {
+  width: min(640px, 96vw);
+  max-height: min(80vh, 720px);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 16px 48px var(--overlay);
+}
+.run-fields {
+  display: grid;
+  gap: 0.4rem 0;
+  margin: 0.85rem 0 0;
+}
+.run-fields > div {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+}
+.run-fields dt {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+.run-fields dd { margin: 0; }
+.run-modal pre.run-log {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 20rem;
+  font-size: 0.82rem;
+}

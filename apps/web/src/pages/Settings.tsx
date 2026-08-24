@@ -27,9 +27,9 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
 };
 
 /**
- * Org settings: each org names its own Ask-the-Factory model and API key,
- * and can write an agent token to every connected repo's GitHub Actions
- * secrets in one pass (the Console never stores that value).
+ * Org settings: each org picks its orchestrator (GitHub Actions or Software
+ * Factory), names its Ask-the-Factory model and API key, and can write an
+ * agent token. GitHub Actions secrets are only written when that engine is on.
  */
 export function SettingsPage({ me }: { me: Me }) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
@@ -200,6 +200,7 @@ function OrgSettingsCard({ orgId }: { orgId: string }) {
     <div className="card">
       <h2>{s.name}</h2>
       {!canEdit && <p className="muted">You have the {s.role} role here — settings are read-only for you.</p>}
+      <OrchestratorSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
       <InsightSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
       <ProjectsSection orgId={orgId} canEdit={canEdit} />
       <SecretsSection orgId={orgId} settings={s} canEdit={canEdit} />
@@ -294,6 +295,57 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function OrchestratorSection({
+  orgId,
+  settings: s,
+  canEdit,
+  onSaved,
+}: {
+  orgId: string;
+  settings: OrgSettings;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const save = useMutation({
+    mutationFn: (engine: OrgSettings["orchestrator"]["engine"]) =>
+      api.post<{ ok: boolean; engine: string; githubActionsEnabled: boolean }>(`/api/orgs/${orgId}/settings/orchestrator`, { engine }),
+    onSuccess: onSaved,
+  });
+  const engine = s.orchestrator.engine;
+  return (
+    <div style={{ marginBottom: "1.25rem" }}>
+      <h3>Orchestrator</h3>
+      <p className="muted">
+        Which motor runs factory roles for this organisation. GitHub Actions is the zero-infra default. Software Factory
+        is the Console&apos;s own orchestrator — when it is selected, GitHub Actions is not used (no Actions secrets, no
+        workflow stubs). Re-run the stub-files step on each repo after switching so{" "}
+        <code>.github/factory-orchestrator.json</code> matches.
+      </p>
+      <div className="engine-grid">
+        <button
+          type="button"
+          className={`engine-card ${engine === "github-actions" ? "selected" : ""}`}
+          disabled={!canEdit || save.isPending}
+          onClick={() => engine !== "github-actions" && save.mutate("github-actions")}
+        >
+          <span className="engine-name">GitHub Actions</span>
+          <p className="muted">Reusable workflow in each repo. Agent tokens are written as Actions secrets.</p>
+        </button>
+        <button
+          type="button"
+          className={`engine-card ${engine === "software-factory" ? "selected" : ""}`}
+          disabled={!canEdit || save.isPending}
+          onClick={() => engine !== "software-factory" && save.mutate("software-factory")}
+        >
+          <span className="engine-name">Software Factory</span>
+          <p className="muted">LangGraph orchestrator. Agent tokens stay in the Console; Actions is not used.</p>
+        </button>
+      </div>
+      {save.isError && <div className="banner error">{(save.error as ApiError).message}</div>}
     </div>
   );
 }
@@ -455,21 +507,42 @@ function InsightSection({
 }
 
 function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settings: OrgSettings; canEdit: boolean }) {
+  const qc = useQueryClient();
   const [name, setName] = useState(s.allowedSecrets[1] ?? "CLAUDE_CODE_OAUTH_TOKEN");
   const [value, setValue] = useState("");
   const write = useMutation({
     mutationFn: (vars: { name: string; value: string }) =>
       api.post<SecretWriteResult>(`/api/orgs/${orgId}/settings/secrets`, vars),
-    onSuccess: () => setValue(""),
+    onSuccess: () => {
+      setValue("");
+      void qc.invalidateQueries({ queryKey: ["org-settings", orgId] });
+    },
   });
+  const actions = s.orchestrator.githubActionsEnabled;
+  const retained = s.retainedSecrets.find((r) => r.name === name);
 
   return (
     <div>
-      <h3>Agent token → GitHub secrets</h3>
+      <h3>{actions ? "Agent token → GitHub secrets" : "Agent token"}</h3>
       <p className="muted">
-        Writes the token straight to every connected repo's GitHub Actions secrets — the value never touches the Console's
-        database. This is the credential the factory's agents run on (per-repo control lives in Onboarding → step 2).
+        {actions ? (
+          <>
+            Writes the token to every connected repo&apos;s GitHub Actions secrets and keeps a copy in the Console for
+            the Software Factory orchestrator. Per-repo control lives in Onboarding → step 2.
+          </>
+        ) : (
+          <>
+            GitHub Actions is disabled for this organisation, so this token is stored only in the Console for the
+            Software Factory orchestrator — it is never written as an Actions secret.
+          </>
+        )}
       </p>
+      {retained && (
+        <p className="muted">
+          {name} last stored {new Date(retained.updatedAt).toLocaleString()}
+          {retained.updatedBy ? ` by ${retained.updatedBy}` : ""}.
+        </p>
+      )}
       <div className="row">
         <select value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
           {s.allowedSecrets.map((n) => (
@@ -487,12 +560,14 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
           style={{ width: "18rem" }}
         />
         <button className="primary" disabled={!canEdit || !value || write.isPending} onClick={() => write.mutate({ name, value })}>
-          {write.isPending ? "Writing…" : "Write to all repos"}
+          {write.isPending ? "Saving…" : actions ? "Write to all repos" : "Store in Console"}
         </button>
       </div>
       {write.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(write.error as ApiError).message}</div>}
       {write.data && (
         <div style={{ marginTop: "0.5rem" }}>
+          {write.data.stored && <p className="muted">Stored in the Console.</p>}
+          {write.data.githubActions === false && <p className="muted">Not written to GitHub Actions.</p>}
           {write.data.results.map((r) => (
             <div className="check-row" key={r.repo}>
               <span className={`check-icon ${r.ok ? "ok" : "fail"}`}>{r.ok ? "✓" : "✗"}</span>
@@ -500,7 +575,7 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
               {r.error && <span className="muted">{r.error}</span>}
             </div>
           ))}
-          {write.data.results.length === 0 && <p className="muted">No connected repos in this org yet.</p>}
+          {write.data.githubActions && write.data.results.length === 0 && <p className="muted">No connected repos in this org yet.</p>}
         </div>
       )}
     </div>

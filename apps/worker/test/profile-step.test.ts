@@ -1,7 +1,14 @@
 import { estates, onboardingRuns, orgs, repos } from "@console/db";
-import type { GhPull, GhWorkflowRun, RepoReader } from "@console/core";
+import type { GhComment, GhIssue, GhPull, GhWorkflowRun, RepoReader } from "@console/core";
 import { describe, expect, it } from "vitest";
-import { refreshRepoProfile, repairProfileStep, updateProfileStepFromPull, updateProfileStepFromRun } from "../src/artifacts.js";
+import {
+  refreshRepoProfile,
+  repairProfileStep,
+  updateProfileStepFromComment,
+  updateProfileStepFromIssue,
+  updateProfileStepFromPull,
+  updateProfileStepFromRun,
+} from "../src/artifacts.js";
 import { testDb } from "./helpers.js";
 
 /**
@@ -321,5 +328,137 @@ describe("refreshRepoProfile", () => {
     // A profile that disappears is the validation suite's story to tell — this
     // job flipping the step back to pending would read as "the Console lost it".
     expect((await db.select().from(onboardingRuns))[0]).toMatchObject({ status: "ok" });
+  });
+
+  it("enables the repo from a langgraph claim without a GitHub Actions stub", async () => {
+    const { db, repoRef } = await seed();
+    await refreshRepoProfile(
+      db,
+      repoRef,
+      reader({
+        ".factory/profile.json": PROFILE,
+        ".github/factory-orchestrator.json": { content: JSON.stringify({ engine: "langgraph" }), sha: "o1" },
+      }),
+    );
+    expect((await db.select().from(repos))[0]).toMatchObject({ factoryEnabled: true, profileSha: "p1" });
+  });
+});
+
+const issue = (over: Partial<GhIssue> = {}): GhIssue =>
+  ({
+    id: 1,
+    node_id: "I_7",
+    number: 7,
+    title: "Factory: repo profile",
+    state: "open",
+    body: "",
+    user: { login: "factory-console[bot]" },
+    labels: [{ name: "factory:profile" }],
+    updated_at: "2026-08-17T10:02:00Z",
+    created_at: "2026-08-17T10:00:00Z",
+    closed_at: null,
+    html_url: "https://github.com/acme/api/issues/7",
+    ...over,
+  }) as GhIssue;
+
+const comment = (body: string, over: Partial<GhComment> = {}): GhComment =>
+  ({
+    id: 11,
+    node_id: "IC_11",
+    body,
+    user: { login: "factory-orchestrator[bot]" },
+    created_at: "2026-08-17T10:03:00Z",
+    updated_at: "2026-08-17T10:03:00Z",
+    html_url: "https://github.com/acme/api/issues/7#issuecomment-11",
+    ...over,
+  });
+
+describe("updateProfileStepFromIssue", () => {
+  it("marks the pending step in-progress when the orchestrator labels the profile issue", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await updateProfileStepFromIssue(db, repoRef, issue(), "labeled", "factory:in-progress");
+
+    const s = await step(db);
+    expect(s).toMatchObject({ status: "pending" });
+    expect(s!.detail).toMatchObject({ inProgress: true, run: { status: "in_progress", engine: "software-factory" } });
+  });
+
+  it("ignores the marker on some other issue", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+    await updateProfileStepFromIssue(db, repoRef, issue({ number: 99 }), "labeled", "factory:in-progress");
+    expect((await step(db))!.detail).not.toHaveProperty("inProgress");
+  });
+});
+
+describe("updateProfileStepFromComment", () => {
+  it("records the orchestrator run log when the Profiler starts", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await updateProfileStepFromComment(
+      db,
+      repoRef,
+      issue(),
+      comment("▶ The **profiler** is running under the Software Factory orchestrator — [watch the run](http://localhost:8080/runs/abc-1).\n\n<!-- factory-agent -->"),
+    );
+
+    const s = await step(db);
+    expect(s).toMatchObject({ status: "pending" });
+    expect(s!.detail).toMatchObject({
+      inProgress: true,
+      run: { id: "abc-1", htmlUrl: "http://localhost:8080/runs/abc-1", status: "in_progress", engine: "software-factory" },
+    });
+  });
+
+  it("fails the step from the orchestrator failure comment, keeping the log link", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+
+    await updateProfileStepFromComment(
+      db,
+      repoRef,
+      issue(),
+      comment("⚠️ The **profiler** run failed — [open the run log](http://localhost:8080/runs/abc-1) for the reason.\n\n<!-- factory-agent -->"),
+    );
+
+    const s = await step(db);
+    expect(s).toMatchObject({ status: "failed" });
+    expect(s!.detail).toMatchObject({
+      error: expect.stringContaining("did not finish"),
+      run: { htmlUrl: "http://localhost:8080/runs/abc-1", conclusion: "failure", engine: "software-factory" },
+    });
+  });
+
+  it("does not let a later Actions run overwrite an orchestrator run", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+    await updateProfileStepFromComment(
+      db,
+      repoRef,
+      issue(),
+      comment("▶ The **profiler** is running under the Software Factory orchestrator — [watch the run](http://localhost:8080/runs/abc-1).\n\n<!-- factory-agent -->"),
+    );
+
+    await updateProfileStepFromRun(db, repoRef, run({ status: "in_progress", conclusion: null }));
+
+    expect((await step(db))!.detail).toMatchObject({
+      run: { htmlUrl: "http://localhost:8080/runs/abc-1", engine: "software-factory" },
+    });
+  });
+
+  it("ignores comments without the agent marker or on the wrong issue", async () => {
+    const { db, repoRef } = await seed();
+    await seedStep(db, repoRef);
+    await updateProfileStepFromComment(db, repoRef, issue(), comment("watch the run http://localhost:8080/runs/abc-1"));
+    await updateProfileStepFromComment(
+      db,
+      repoRef,
+      issue({ number: 99 }),
+      comment("▶ The **profiler** is running — [watch the run](http://localhost:8080/runs/abc-1).\n\n<!-- factory-agent -->"),
+    );
+    expect((await step(db))!.detail).not.toHaveProperty("run");
   });
 });

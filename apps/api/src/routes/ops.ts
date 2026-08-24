@@ -15,8 +15,8 @@ export function registerOpsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
 
   app.get("/api/ops/ingestion", async (req, reply) => {
-    const { allowed } = await setupAccess(deps, req);
-    if (!allowed) return reply.code(403).send({ error: "only the GitHub App owner can view the ingestion log" });
+    const { allowed, ctx } = await setupAccess(deps, req);
+    if (!allowed || !ctx) return reply.code(403).send({ error: "only the GitHub App owner can view the ingestion log" });
 
     const summary = (
       await db
@@ -83,8 +83,8 @@ export function registerOpsRoutes(app: FastifyInstance, deps: AppDeps): void {
    * and drops out of the pending count.
    */
   app.post("/api/ops/ingestion/replay", async (req, reply) => {
-    const { allowed } = await setupAccess(deps, req);
-    if (!allowed) return reply.code(403).send({ error: "only the GitHub App owner can replay deliveries" });
+    const { allowed, ctx } = await setupAccess(deps, req);
+    if (!allowed || !ctx) return reply.code(403).send({ error: "only the GitHub App owner can replay deliveries" });
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
 
     const pending = await db

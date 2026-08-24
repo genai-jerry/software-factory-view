@@ -10,7 +10,7 @@ export interface SetupStatus {
   clientId: string | null;
   /** Whether a webhook secret is stored (the secret itself never leaves the API). */
   hasWebhookSecret: boolean;
-  /** Whether this signed-in user owns the GitHub App (and may open Settings). */
+  /** Whether this caller may register or edit the GitHub App (first-run bootstrap, or the signed-in App owner). */
   canEditApp: boolean;
   hasMasterKey: boolean;
   /** Set when a stored registration exists but cannot be decrypted. */
@@ -18,6 +18,8 @@ export interface SetupStatus {
   publicOrigin: string;
   insightEnabled: boolean;
   devLogin: boolean;
+  /** When true, the home page can wipe the stored GitHub App registration (APP_RESET=true). */
+  appReset: boolean;
 }
 
 export interface InstallationSummary {
@@ -300,6 +302,11 @@ export interface EpicWorkspace {
   artifacts: Array<{ id: string; kind: string; path: string; latestSha: string | null; mergedSha: string | null; diverged: boolean }>;
   threads: Array<{ id: string; topicKind: string; topicRef: string; title: string; status: string; entryCount: number }>;
   freshness: { lastSyncedAt: string | null; stale: boolean };
+  orchestrator: {
+    engine: "github-actions" | "software-factory";
+    githubActionsEnabled: boolean;
+    canStart: boolean;
+  };
 }
 
 export interface TimelineEvent {
@@ -406,6 +413,10 @@ export interface OrgSettings {
   id: string;
   name: string;
   role: string;
+  orchestrator: {
+    engine: "github-actions" | "software-factory";
+    githubActionsEnabled: boolean;
+  };
   insight: {
     provider: string;
     model: string | null;
@@ -415,6 +426,7 @@ export interface OrgSettings {
     providers: string[];
   };
   allowedSecrets: string[];
+  retainedSecrets: Array<{ name: string; updatedAt: string; updatedBy: string | null }>;
 }
 
 export interface ProjectsData {
@@ -424,6 +436,8 @@ export interface ProjectsData {
 
 export interface SecretWriteResult {
   name: string;
+  stored?: boolean;
+  githubActions?: boolean;
   results: Array<{ repo: string; ok: boolean; error?: string }>;
 }
 
@@ -435,6 +449,10 @@ export interface Citation {
 
 export interface OnboardingState {
   estateId: string;
+  orchestrator: {
+    engine: "github-actions" | "software-factory";
+    githubActionsEnabled: boolean;
+  };
   repos: Array<{
     repoId: string;
     fullName: string;

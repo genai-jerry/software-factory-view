@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@console/core";
-import { estates, githubAppConfig, issues, memberships, orgs, reconcileRuns, repos, sessions, users, webhookDeliveries } from "@console/db";
+import { auditLog, estates, githubAppConfig, issues, memberships, orgs, orchestratorSecrets, reconcileRuns, repos, sessions, users, webhookDeliveries } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
@@ -325,10 +325,79 @@ describe("org secret write-through", () => {
       payload: { name: "CLAUDE_CODE_OAUTH_TOKEN", value: "tok" },
     });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { name: string; results: Array<{ repo: string; ok: boolean }> };
+    const body = res.json() as { name: string; stored: boolean; githubActions: boolean; results: Array<{ repo: string; ok: boolean }> };
     expect(body.name).toBe("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(body.stored).toBe(true);
+    expect(body.githubActions).toBe(true);
     expect(body.results).toHaveLength(1);
     expect(body.results[0]).toMatchObject({ repo: "acme/app", ok: false });
+  });
+});
+
+describe("org orchestrator", () => {
+  it("defaults to GitHub Actions", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      orchestrator: { engine: "github-actions", githubActionsEnabled: true },
+    });
+  });
+
+  it("rejects an unknown engine and non-admins", async () => {
+    const bad = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/orchestrator`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { engine: "langgraph" },
+    });
+    expect(bad.statusCode).toBe(400);
+    const member = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/orchestrator`,
+      headers: { cookie: memberCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { engine: "software-factory" },
+    });
+    expect(member.statusCode).toBe(403);
+  });
+
+  it("selects Software Factory and then does not write GitHub Actions secrets", async () => {
+    const set = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/orchestrator`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { engine: "software-factory" },
+    });
+    expect(set.statusCode).toBe(200);
+    expect(set.json()).toMatchObject({ engine: "software-factory", githubActionsEnabled: false });
+
+    const got = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect(got.json()).toMatchObject({ orchestrator: { engine: "software-factory", githubActionsEnabled: false } });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/secrets`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { name: "ANTHROPIC_API_KEY", value: "sk-ant-from-console" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ stored: true, githubActions: false, results: [] });
+
+    const rows = await deps.dbh.db.select().from(orchestratorSecrets);
+    const ant = rows.find((r) => r.name === "ANTHROPIC_API_KEY");
+    expect(ant).toMatchObject({ orgId: id.org });
+    expect(decryptSecret(ant!.encryptedValue, MASTER_KEY)).toBe("sk-ant-from-console");
+
+    const meta = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    const retained = (meta.json() as { retainedSecrets: Array<{ name: string }> }).retainedSecrets;
+    expect(retained.map((r) => r.name)).toContain("ANTHROPIC_API_KEY");
+    expect(JSON.stringify(meta.json())).not.toContain("sk-ant-from-console");
+
+    await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/orchestrator`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { engine: "github-actions" },
+    });
   });
 });
 

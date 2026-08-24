@@ -33,7 +33,10 @@ export function App() {
     );
   }
 
-  if (setup.isLoading || me.isLoading || (!me.data && !me.isError)) {
+  // First settle only. Window-focus refetch of /api/me (a 401 until sign-in)
+  // used to flip this tree back to "Loading…", remount the front door, and
+  // wipe a PEM someone had just pasted after copying it from another tab.
+  if (!setup.isFetched || !me.isFetched) {
     return <div className="main">Loading…</div>;
   }
 

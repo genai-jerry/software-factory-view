@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api.js";
 import type { EstateSummary, InstallationSummary, OnboardingState, SetupStatus, ValidationResult } from "../types.js";
 
@@ -117,14 +117,20 @@ function resetOutcomeFromSteps(repo: OnboardingRepo): ResetOutcome | null {
 
 /**
  * What the webhook flow has recorded about the Profiler since the last ask
- * (worker: updateProfileStepFromRun / updateProfileStepFromPull). Everything
+ * (worker: updateProfileStepFromRun / updateProfileStepFromPull /
+ * updateProfileStepFromComment). Everything
  * is optional because it accumulates: first the issue, then the run, then the
  * PR, then the merge.
  */
 type ProfileProgress = {
   status: string;
+  repo: string;
   issueUrl?: string;
-  run?: { htmlUrl: string; status: string; conclusion: string | null };
+  issueNumber?: number;
+  inProgress?: boolean;
+  dispatched?: boolean;
+  dispatchError?: string;
+  run?: { id?: string; htmlUrl: string; status: string; conclusion: string | null; engine?: string };
   prNumber?: number;
   prUrl?: string;
   prState?: "open" | "merged" | "closed";
@@ -136,16 +142,23 @@ function profileProgress(repo: OnboardingRepo): ProfileProgress | null {
   const s = repo.steps["profile"];
   if (!s) return null;
   const d = s.detail as Record<string, unknown>;
-  const run = d["run"] as { htmlUrl?: unknown; status?: unknown; conclusion?: unknown } | undefined;
+  const run = d["run"] as { id?: unknown; htmlUrl?: unknown; status?: unknown; conclusion?: unknown; engine?: unknown } | undefined;
   return {
     status: s.status,
+    repo: repo.fullName,
     issueUrl: typeof d["issueUrl"] === "string" ? d["issueUrl"] : undefined,
+    issueNumber: typeof d["issueNumber"] === "number" ? d["issueNumber"] : undefined,
+    inProgress: d["inProgress"] === true,
+    dispatched: d["dispatched"] === true,
+    dispatchError: typeof d["dispatchError"] === "string" ? d["dispatchError"] : undefined,
     run:
-      run && typeof run.htmlUrl === "string"
+      run && typeof run.htmlUrl === "string" && run.htmlUrl.length > 0
         ? {
+            id: typeof run.id === "string" ? run.id : undefined,
             htmlUrl: run.htmlUrl,
             status: typeof run.status === "string" ? run.status : "",
             conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
+            engine: typeof run.engine === "string" ? run.engine : undefined,
           }
         : undefined,
     prNumber: typeof d["prNumber"] === "number" ? d["prNumber"] : undefined,
@@ -156,14 +169,27 @@ function profileProgress(repo: OnboardingRepo): ProfileProgress | null {
   };
 }
 
-/** True once a reset finished and no setup step has been run since. */
-function isRepoClean(repo: OnboardingRepo): boolean {
-  if (repo.steps["reset"]?.status !== "ok") return false;
-  return !repo.factoryEnabled && SETUP_STEPS.every((s) => !repo.steps[s]);
+/** Real orchestrator run ids (uuid or dispatch-*), not the "queued" / "in-progress" placeholders. */
+function orchestratorRunId(run?: { id?: string; htmlUrl?: string }): string | null {
+  const fromUrl = run?.htmlUrl?.match(/\/runs\/([^/?#]+)/)?.[1];
+  const raw = (run?.id && run.id !== "queued" && run.id !== "in-progress" ? run.id : undefined) ?? fromUrl;
+  if (!raw || raw === "runs") return null;
+  return raw;
 }
 
-const SETUP_STEPS = ["labels", "secrets", "claude-app", "openspec", "stubs", "profile", "validate"] as const;
-const STEP_TITLES: Record<(typeof SETUP_STEPS)[number], string> = {
+/** True once a reset finished and no setup step has been run since. */
+function isRepoClean(repo: OnboardingRepo, githubActions: boolean): boolean {
+  if (repo.steps["reset"]?.status !== "ok") return false;
+  return !repo.factoryEnabled && setupSteps(githubActions).every((s) => !repo.steps[s]);
+}
+
+function setupSteps(githubActions: boolean): readonly string[] {
+  return githubActions
+    ? ["labels", "secrets", "claude-app", "openspec", "stubs", "profile", "validate"]
+    : ["labels", "secrets", "openspec", "stubs", "profile", "validate"];
+}
+
+const STEP_TITLES: Record<string, string> = {
   labels: "Labels",
   secrets: "Secret",
   "claude-app": "Claude GitHub App",
@@ -177,20 +203,22 @@ function isRepoSetup(repo: OnboardingRepo): boolean {
   return repo.factoryEnabled;
 }
 
-function stepProgress(repo: OnboardingRepo): { done: number; total: number } {
-  const done = SETUP_STEPS.filter((s) => repo.steps[s]?.status === "ok").length;
-  return { done, total: SETUP_STEPS.length };
+function stepProgress(repo: OnboardingRepo, githubActions: boolean): { done: number; total: number } {
+  const steps = setupSteps(githubActions);
+  const done = steps.filter((s) => repo.steps[s]?.status === "ok").length;
+  return { done, total: steps.length };
 }
 
-function collapsedSummary(repo: OnboardingRepo): string {
-  if (isRepoClean(repo)) return "Factory removed — this repo is clean. Run the steps whenever you want to re-enable it.";
-  const failed = SETUP_STEPS.find((s) => repo.steps[s]?.status === "failed");
+function collapsedSummary(repo: OnboardingRepo, githubActions: boolean): string {
+  if (isRepoClean(repo, githubActions)) return "Factory removed — this repo is clean. Run the steps whenever you want to re-enable it.";
+  const steps = setupSteps(githubActions);
+  const failed = steps.find((s) => repo.steps[s]?.status === "failed");
   if (failed) {
     const err = repo.steps[failed]?.detail["error"];
     if (typeof err === "string" && err.trim()) return `${STEP_TITLES[failed]} failed — ${err}`;
     return `${STEP_TITLES[failed]} failed`;
   }
-  const next = SETUP_STEPS.find((s) => repo.steps[s]?.status !== "ok");
+  const next = steps.find((s) => repo.steps[s]?.status !== "ok");
   if (!next) return "All steps recorded — merge outstanding PRs or validate.";
   return repo.steps[next] ? `${STEP_TITLES[next]} in progress` : `Next: ${STEP_TITLES[next]}`;
 }
@@ -614,8 +642,9 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
     queryKey: ["onboarding", estateId],
     queryFn: () => api.get<OnboardingState>(`/api/estates/${estateId}/onboarding`),
     // Poll while anything is in flight elsewhere: the OpenSpec step runs async
-    // in the worker, and the profile step runs in the repo's own Actions with
-    // its progress arriving by webhook — both finish without another click here.
+    // in the worker, and the profile step runs in Actions or the Software Factory
+    // orchestrator with its progress arriving by webhook — both finish without
+    // another click here.
     refetchInterval: (q) =>
       q.state.data?.repos.some(
         (r) =>
@@ -630,12 +659,20 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
   });
   const onChanged = () => qc.invalidateQueries({ queryKey: ["onboarding", estateId] });
   const repos = state.data?.repos ?? [];
+  const githubActions = state.data?.orchestrator.githubActionsEnabled ?? true;
   const incomplete = repos.filter((r) => !isRepoSetup(r));
   const setup = repos.filter((r) => isRepoSetup(r));
 
   return (
     <div>
       {state.isLoading && <p className="muted">Loading repositories…</p>}
+      {state.data && !githubActions && (
+        <div className="banner info">
+          This organisation uses the <strong>Software Factory</strong> orchestrator. GitHub Actions is not used — agent
+          tokens stay in the Console, and enablement writes <code>.github/factory-orchestrator.json</code> instead of
+          workflow stubs. Change this in Settings.
+        </div>
+      )}
       {incomplete.length > 0 && (
         <>
           <h4 className="phase-head">Needs setup</h4>
@@ -647,13 +684,13 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
         </>
       )}
       {incomplete.map((r, i) => (
-        <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} defaultOpen={i === 0} />
+        <RepoOnboarding key={r.repoId} repo={r} githubActions={githubActions} onChanged={onChanged} defaultOpen={i === 0} />
       ))}
       {setup.length > 0 && (
         <>
           <h4 className="phase-head">Setup</h4>
           {setup.map((r) => (
-            <RepoOnboarding key={r.repoId} repo={r} onChanged={onChanged} />
+            <RepoOnboarding key={r.repoId} repo={r} githubActions={githubActions} onChanged={onChanged} />
           ))}
         </>
       )}
@@ -678,15 +715,17 @@ function EstateOnboarding({ estateId }: { estateId: string }) {
 
 function RepoOnboarding({
   repo,
+  githubActions,
   onChanged,
   defaultOpen,
 }: {
   repo: OnboardingRepo;
+  githubActions: boolean;
   onChanged: () => void;
   defaultOpen?: boolean;
 }) {
   const setup = isRepoSetup(repo);
-  const progress = stepProgress(repo);
+  const progress = stepProgress(repo, githubActions);
   const resetOutcome = resetOutcomeFromSteps(repo);
   const [open, setOpen] = useState(defaultOpen ?? !setup);
   const [error, setError] = useState<string | null>(null);
@@ -771,6 +810,11 @@ function RepoOnboarding({
     return <span className={`badge ${s.status === "ok" ? "merge" : s.status === "failed" ? "blocked" : ""}`}>{s.status}</span>;
   };
 
+  const stepNo = (() => {
+    let i = 0;
+    return () => ++i;
+  })();
+
   return (
     <div className="card">
       <div className="spread">
@@ -778,7 +822,7 @@ function RepoOnboarding({
           {repo.fullName}{" "}
           {setup ? (
             <span className="badge merge">Setup</span>
-          ) : isRepoClean(repo) ? (
+          ) : isRepoClean(repo, githubActions) ? (
             <span className="badge merge">Clean — factory removed</span>
           ) : (
             <span className="badge task-start">
@@ -799,18 +843,18 @@ function RepoOnboarding({
         <p className="muted" style={{ margin: "0.4rem 0 0" }}>
           {setup
             ? <>Factory-enabled. Open Correct setup to fix secrets, stubs, or re-draft <code>.factory/profile.json</code>.</>
-            : collapsedSummary(repo)}
+            : collapsedSummary(repo, githubActions)}
         </p>
       )}
       {error && open && <div className="banner error">{error}</div>}
-      {resetOutcome && (resetOutcome.mode === "pr" ? repo.steps["reset"]?.status === "pending" : isRepoClean(repo)) && (
+      {resetOutcome && (resetOutcome.mode === "pr" ? repo.steps["reset"]?.status === "pending" : isRepoClean(repo, githubActions)) && (
         <ResetOutcomePanel outcome={resetOutcome} />
       )}
       {open && (
         <>
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>1 · Labels</strong> — create the 14 <code>factory:*</code> labels (idempotent; fixes drift) {stepBadge("labels")}
+          <strong>{stepNo()} · Labels</strong> — create the 14 <code>factory:*</code> labels (idempotent; fixes drift) {stepBadge("labels")}
         </span>
         <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/labels`)} disabled={run.isPending}>
           Run
@@ -819,8 +863,18 @@ function RepoOnboarding({
 
       <div className="check-row" style={{ alignItems: "center" }}>
         <span style={{ flex: 1 }}>
-          <strong>2 · Secret</strong> — written straight to GitHub Actions under the name you pick (Claude Code OAuth and
-          the Anthropic API key are different credentials; the factory accepts either). The Console never stores it{" "}
+          <strong>{stepNo()} · Secret</strong> —{" "}
+          {githubActions ? (
+            <>
+              written to GitHub Actions under the name you pick (Claude Code OAuth and the Anthropic API key are different
+              credentials; the factory accepts either). Also kept in the Console for the Software Factory orchestrator.
+            </>
+          ) : (
+            <>
+              stored in the Console for the Software Factory orchestrator (Claude Code OAuth and the Anthropic API key
+              are different credentials). GitHub Actions is disabled, so this is never written as an Actions secret.
+            </>
+          )}{" "}
           {stepBadge("secrets")}
           {typeof repo.steps["secrets"]?.detail["name"] === "string" && (
             <span className="muted"> · wrote {String(repo.steps["secrets"]!.detail["name"])}</span>
@@ -839,13 +893,14 @@ function RepoOnboarding({
           style={{ width: "14rem" }}
         />
         <button onClick={() => putSecret.mutate({ name: secretName, value: secretValue })} disabled={!secretValue || putSecret.isPending}>
-          Write
+          {githubActions ? "Write" : "Store"}
         </button>
       </div>
 
+      {githubActions && (
       <div className="check-row" style={{ alignItems: "center" }}>
         <span style={{ flex: 1 }}>
-          <strong>3 · Claude GitHub App</strong> — agent runs exchange an OIDC token for this App's credentials at run
+          <strong>{stepNo()} · Claude GitHub App</strong> — agent runs exchange an OIDC token for this App's credentials at run
           time; without it on the repo every run fails with{" "}
           <em>"Claude Code is not installed on this repository"</em>. GitHub shows an App's installations only to its
           owner, so once it is installed (with this repo under its repository access), confirm here. {stepBadge("claude-app")}
@@ -860,10 +915,11 @@ function RepoOnboarding({
           {repo.steps["claude-app"]?.status === "ok" ? "Re-confirm" : "It's installed"}
         </button>
       </div>
+      )}
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>4 · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
+          <strong>{stepNo()} · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
           the enablement branch; no terminal needed {stepBadge("openspec")}
         </span>
         <button
@@ -888,7 +944,15 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>5 · Stub files PR</strong> — workflow stubs (permissions intact), models, approvers, issue template, settings.
+          <strong>{stepNo()} · Stub files PR</strong> —{" "}
+          {githubActions ? (
+            <>workflow stubs (permissions intact), models, approvers, issue template, settings.</>
+          ) : (
+            <>
+              <code>.github/factory-orchestrator.json</code> (engine langgraph), models, approvers, issue template,
+              settings. No GitHub Actions workflows.
+            </>
+          )}{" "}
           Merging the PR is the human act that enables the factory. {stepBadge("stubs")}
         </span>
         <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
@@ -904,27 +968,32 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>6 · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
+          <strong>{stepNo()} · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
           authoritative here. Re-run asks the <strong>Profiler</strong> to read the code again and open a correction PR if
           it disagrees — even when a profile is already merged. The Console never reads your source. {stepBadge("profile")}
         </span>
         <button
           onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/profile`)}
           disabled={run.isPending}
-          title="Starts the Profiler in this repo's Actions. Re-run is how you correct a stale or wrong profile."
+          title={
+            githubActions
+              ? "Starts the Profiler in this repo's Actions. Re-run is how you correct a stale or wrong profile."
+              : "Starts the Profiler via the Software Factory orchestrator. Re-run is how you correct a stale or wrong profile."
+          }
         >
           {repo.steps["profile"] || setup ? "Re-run" : "Draft it"}
         </button>
       </div>
       <ProfileStepFeedback
         progress={profileProgress(repo)}
+        githubActions={githubActions}
         merging={mergeProfilePr.isPending}
         onMerge={() => mergeProfilePr.mutate()}
       />
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>7 · Validation suite</strong> — ten checks, no writes on a healthy repo {stepBadge("validate")}
+          <strong>{stepNo()} · Validation suite</strong> — checks with no writes on a healthy repo {stepBadge("validate")}
         </span>
         <button onClick={() => validate.mutate()} disabled={validate.isPending}>
           {validate.isPending ? "Checking…" : "Validate"}
@@ -948,14 +1017,14 @@ function RepoOnboarding({
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>8 · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
+          <strong>{stepNo()} · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
           run date") and watch it traverse the pipeline in this workspace; your first gate approval happens there.
         </span>
       </div>
 
       <div className="check-row">
         <span style={{ flex: 1 }}>
-          <strong>Reset</strong> — delete factory workflows, OpenSpec, and <code>.factory/profile.json</code> from the
+          <strong>Reset</strong> — delete factory workflows, <code>.github/factory-orchestrator.json</code>, OpenSpec, and <code>.factory/profile.json</code> from the
           default branch and clear the recorded steps above (branch protection turns this into a PR you merge instead).
           Secrets, labels, and <code>CLAUDE.md</code> stay. {stepBadge("reset")}
         </span>
@@ -978,37 +1047,78 @@ function RepoOnboarding({
  */
 function ProfileStepFeedback({
   progress,
+  githubActions,
   merging,
   onMerge,
 }: {
   progress: ProfileProgress | null;
+  githubActions: boolean;
   merging: boolean;
   onMerge: () => void;
 }) {
+  const [runOpen, setRunOpen] = useState(false);
+  const factoryEngine = !githubActions || progress?.run?.engine === "software-factory";
+  const live = useLiveOrchestratorRun({
+    runId: orchestratorRunId(progress?.run),
+    repo: progress?.repo ?? "",
+    issueNumber: progress?.issueNumber,
+    enabled: Boolean(progress) && factoryEngine,
+  });
   if (!progress) return null;
   const issueLink = progress.issueUrl ? (
     <a href={progress.issueUrl} target="_blank" rel="noreferrer">
       profile issue
     </a>
   ) : null;
+  const factoryRun = progress.run?.engine === "software-factory" || !githubActions;
   const runLink = progress.run ? (
-    <a href={progress.run.htmlUrl} target="_blank" rel="noreferrer">
-      Actions run
-    </a>
+    factoryRun ? (
+      <button type="button" className="link" onClick={() => setRunOpen(true)}>
+        orchestrator run
+      </button>
+    ) : (
+      <a href={progress.run.htmlUrl} target="_blank" rel="noreferrer">
+        Actions run
+      </a>
+    )
+  ) : null;
+  const runModal = runOpen ? (
+    <OrchestratorRunModal
+      runId={orchestratorRunId(progress.run)}
+      repo={progress.repo}
+      issueNumber={progress.issueNumber}
+      onClose={() => setRunOpen(false)}
+    />
   ) : null;
 
+  const wrap = (node: ReactNode) => (
+    <>
+      {node}
+      {runModal}
+    </>
+  );
+
   if (progress.status === "failed") {
-    return (
+    return wrap(
       <div className="banner error" style={{ marginTop: "0.4rem" }}>
         <strong>Profiler failed.</strong> {progress.error ?? "The step did not finish."}
         {runLink && <> Open the {runLink} for the log.</>}
         {issueLink && <> Any agent-side detail is on the {issueLink}.</>} Fix the cause, then press Re-run.
-      </div>
+      </div>,
+    );
+  }
+
+  if (progress.dispatchError) {
+    return wrap(
+      <div className="banner error" style={{ marginTop: "0.4rem" }}>
+        <strong>The orchestrator did not start.</strong> {progress.dispatchError}{" "}
+        {issueLink && <>The {issueLink} is filed.</>}
+      </div>,
     );
   }
 
   if (progress.prState === "open" && progress.prUrl) {
-    return (
+    return wrap(
       <div className="banner info" style={{ marginTop: "0.4rem" }}>
         <strong>The Profiler opened a correction PR:</strong>{" "}
         <a href={progress.prUrl} target="_blank" rel="noreferrer">
@@ -1019,12 +1129,12 @@ function ProfileStepFeedback({
         <button className="primary" onClick={onMerge} disabled={merging} title="Squash-merges the PR on GitHub as you.">
           {merging ? "Merging…" : `Merge PR #${progress.prNumber}`}
         </button>
-      </div>
+      </div>,
     );
   }
 
   if (progress.prState === "closed" && progress.status !== "ok") {
-    return (
+    return wrap(
       <div className="banner stale" style={{ marginTop: "0.4rem" }}>
         The Profiler's{" "}
         {progress.prUrl ? (
@@ -1035,12 +1145,12 @@ function ProfileStepFeedback({
           "correction PR"
         )}{" "}
         was closed without merging, so the profile is unchanged. Press Re-run to have it draft a fresh one.
-      </div>
+      </div>,
     );
   }
 
   if (progress.status === "ok") {
-    return (
+    return wrap(
       <p className="muted">
         ✓ Profile merged{progress.mergedBy ? ` by ${progress.mergedBy}` : ""}
         {progress.prUrl && (
@@ -1054,33 +1164,221 @@ function ProfileStepFeedback({
           </>
         )}
         . Re-run any time to have the Profiler re-check it against the code.
-      </p>
+      </p>,
     );
   }
 
   // Still pending: distinguish "running", "ran and proposed nothing", and
   // "no run seen yet" — three states one chip could never carry.
-  if (progress.run && progress.run.status !== "completed") {
-    return (
+  const running = progress.inProgress || (progress.run && progress.run.status !== "completed");
+  if (running) {
+    const phase = runPhase(live.data);
+    const model = live.data?.model;
+    return wrap(
       <p className="muted">
-        → the Profiler is reading the repo in its {runLink}. Its findings land on the {issueLink ?? "profile issue"}, and
-        this card updates when its PR appears.
-      </p>
+        → the Profiler is reading the repo
+        {runLink ? <> in its {runLink}</> : githubActions ? " in its Actions run" : " in the Software Factory orchestrator"}
+        {model ? <> using <code>{model}</code></> : null}
+        {phase ? <> — {phase}</> : null}. Its findings land on the {issueLink ?? "profile issue"}, and this card updates
+        when its PR appears.
+      </p>,
     );
   }
   if (progress.run && progress.run.conclusion === "success") {
-    return (
+    return wrap(
       <p className="muted">
         → the {runLink} finished without opening a correction PR — the Profiler judged the current profile accurate (its
         note is on the {issueLink ?? "profile issue"}), or its PR is still arriving.
-      </p>
+      </p>,
     );
   }
-  return (
+  if (progress.dispatched) {
+    return wrap(
+      <p className="muted">
+        → handed to the Software Factory orchestrator
+        {runLink ? <> — {runLink}</> : null}. Progress comments land on the {issueLink ?? "profile issue"}; this card
+        updates when they arrive.
+      </p>,
+    );
+  }
+  return wrap(
     <p className="muted">
-      → waiting for the Profiler's Actions run to start. Progress appears here as it happens
-      {issueLink && <>; the run also reports on the {issueLink}</>}.
-    </p>
+      {githubActions ? (
+        <>
+          → waiting for the Profiler's Actions run to start. Progress appears here as it happens
+          {issueLink && <>; the run also reports on the {issueLink}</>}.
+        </>
+      ) : (
+        <>
+          → waiting for the Software Factory Profiler to pick up the {issueLink ?? "profile issue"}. The orchestrator
+          must be running and claimed; it comments on that issue and writes a run log at{" "}
+          <code>/runs</code> when it starts.
+        </>
+      )}
+    </p>,
+  );
+}
+
+type OrchestratorRunLog = {
+  id?: string;
+  repo?: string;
+  issue?: number;
+  role?: string;
+  trigger?: string;
+  model?: string | null;
+  model_fallbacks?: string[] | unknown;
+  started_at?: string;
+  finished_at?: string | null;
+  outcome?: string | null;
+  error?: string | null;
+  status?: string;
+  guards?: { phase?: string; fallbacks?: string[]; model?: string } | unknown;
+};
+
+function runPhase(run?: OrchestratorRunLog | null): string | undefined {
+  const g = run?.guards;
+  if (g && typeof g === "object" && "phase" in g && typeof g.phase === "string" && g.phase) return g.phase;
+  return undefined;
+}
+
+function runFallbacks(run?: OrchestratorRunLog | null): string[] {
+  const raw = run?.model_fallbacks;
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
+  const g = run?.guards;
+  if (g && typeof g === "object" && "fallbacks" in g && Array.isArray(g.fallbacks)) {
+    return g.fallbacks.filter((x): x is string => typeof x === "string");
+  }
+  return [];
+}
+
+function useLiveOrchestratorRun(opts: {
+  runId: string | null;
+  repo: string;
+  issueNumber?: number;
+  enabled: boolean;
+}) {
+  return useQuery({
+    queryKey: ["orchestrator-run", opts.runId, opts.repo, opts.issueNumber],
+    enabled: opts.enabled && Boolean(opts.runId || opts.issueNumber),
+    refetchInterval: (q) => {
+      const d = q.state.data as OrchestratorRunLog | undefined;
+      if (!d) return 2000;
+      return d.finished_at ? false : 2000;
+    },
+    queryFn: async (): Promise<OrchestratorRunLog> => {
+      if (opts.runId) return api.get<OrchestratorRunLog>(`/api/orchestrator/runs/${encodeURIComponent(opts.runId)}`);
+      if (!opts.issueNumber) throw new Error("no orchestrator run id yet");
+      const listed = await api.get<{ runs: OrchestratorRunLog[] }>(
+        `/api/orchestrator/runs?repo=${encodeURIComponent(opts.repo)}&issue=${opts.issueNumber}`,
+      );
+      const latest = listed.runs[0];
+      if (!latest) throw new Error("the orchestrator has not written a run log yet");
+      return latest;
+    },
+  });
+}
+
+function OrchestratorRunModal({
+  runId,
+  repo,
+  issueNumber,
+  onClose,
+}: {
+  runId: string | null;
+  repo: string;
+  issueNumber?: number;
+  onClose: () => void;
+}) {
+  const run = useLiveOrchestratorRun({ runId, repo, issueNumber, enabled: true });
+  const resolvedId = run.data?.id ?? runId;
+  const done = Boolean(run.data?.finished_at);
+  const transcript = useQuery({
+    queryKey: ["orchestrator-transcript", resolvedId],
+    enabled: Boolean(resolvedId),
+    refetchInterval: done ? false : 3000,
+    retry: false,
+    queryFn: async () => {
+      try {
+        return await api.get<{ transcript: string }>(
+          `/api/orchestrator/runs/${encodeURIComponent(resolvedId!)}/transcript`,
+        );
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return { transcript: "" };
+        throw err;
+      }
+    },
+  });
+
+  return (
+    <div className="run-overlay" onClick={onClose} role="presentation">
+      <div className="run-modal" role="dialog" aria-labelledby="run-modal-title" onClick={(e) => e.stopPropagation()}>
+        <div className="spread">
+          <h3 id="run-modal-title" style={{ margin: 0 }}>
+            Orchestrator run
+          </h3>
+          <button type="button" onClick={onClose} title="Close">
+            ✕
+          </button>
+        </div>
+        {run.isLoading && <p className="muted">Loading the run log…</p>}
+        {run.isError && (
+          <div className="banner error" style={{ marginTop: "0.75rem" }}>
+            {(run.error as Error).message}
+          </div>
+        )}
+        {run.data && <OrchestratorRunBody run={run.data} />}
+        {!done && run.data && <p className="muted">This log refreshes while the run is in progress.</p>}
+        {transcript.data?.transcript ? (
+          <>
+            <h4 style={{ margin: "1rem 0 0.4rem" }}>Transcript</h4>
+            <pre className="run-log">{transcript.data.transcript}</pre>
+          </>
+        ) : (
+          !done && run.data && <p className="muted">Claude's transcript appears here when the run writes it.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
+  const phase = runPhase(run);
+  const fallbacks = runFallbacks(run);
+  const outcome =
+    run.outcome === "running" || (!run.outcome && !run.finished_at)
+      ? "in progress"
+      : (run.outcome ?? "—");
+  const rows: Array<[string, string]> = [
+    ["Outcome", outcome],
+    ["Role", run.role ?? "—"],
+    ["Repo", run.issue != null ? `${run.repo ?? ""}#${run.issue}` : (run.repo ?? "—")],
+    ["Model", run.model ?? (phase ? "choosing…" : "none")],
+    ["Started", run.started_at ?? "—"],
+    ["Finished", run.finished_at ?? "—"],
+  ];
+  if (run.trigger) rows.splice(2, 0, ["Trigger", run.trigger]);
+  if (phase && !run.finished_at) rows.splice(1, 0, ["Now", phase]);
+  return (
+    <>
+      {run.error && (
+        <div className="banner error" style={{ marginTop: "0.75rem" }}>
+          {run.error}
+        </div>
+      )}
+      {fallbacks.length > 0 && (
+        <div className="banner stale" style={{ marginTop: "0.75rem" }}>
+          {fallbacks.join(", ")} was not reachable with this credential — using {run.model ?? "the next model in the chain"}.
+        </div>
+      )}
+      <dl className="run-fields">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </>
   );
 }
 

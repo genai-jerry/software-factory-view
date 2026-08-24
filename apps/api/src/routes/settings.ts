@@ -1,21 +1,27 @@
-import { decryptSecret, encryptSecret, InstallationClient } from "@console/core";
+import {
+  AGENT_SECRET_NAMES,
+  decryptSecret,
+  encryptSecret,
+  githubActionsEnabled,
+  InstallationClient,
+  isAgentSecretName,
+  isConsoleOrchestrator,
+  normalizeConsoleOrchestrator,
+} from "@console/core";
 import { INSIGHT_PROVIDERS, isInsightProvider, listModels } from "@console/insight";
 import { auditLog, estates, memberships, onboardingRuns, orgs, repos } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
+import { listRetainedSecretMeta, retainOrchestratorSecret } from "../orchestrator-secrets.js";
 
 /**
- * Org settings: each org names its own Ask-the-Factory model and Anthropic
- * API key (encrypted at rest, write-only — falling back to the instance-wide
- * ANTHROPIC_API_KEY / INSIGHT_DEEP_MODEL when unset), and can write an agent
- * token to every connected repo's GitHub Actions secrets in one pass. Secret
- * values are never stored by the Console except the insight key, which the
- * Console itself needs to call the API on the org's behalf.
+ * Org settings: each org names its orchestrator (GitHub Actions or Software
+ * Factory), its Ask-the-Factory model and API key, and an agent token. When
+ * GitHub Actions is selected the token is written through to Actions secrets;
+ * when it is disabled the token is retained only in the Console for the
+ * Software Factory orchestrator.
  */
-
-/** Actions secrets the Console will write — the factory pipeline's inputs. */
-const ALLOWED_SECRETS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FACTORY_CROSS_REPO_TOKEN"];
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
@@ -25,10 +31,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
     if (!ctx) return;
     const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: false });
     if (!found) return;
+    const engine = normalizeConsoleOrchestrator(found.org.orchestrator);
     return {
       id: found.org.id,
       name: found.org.name,
       role: found.membership.role,
+      orchestrator: {
+        engine,
+        githubActionsEnabled: githubActionsEnabled(engine),
+      },
       insight: {
         provider: found.org.insightProvider ?? "anthropic",
         model: found.org.insightModel,
@@ -37,9 +48,38 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
         globalKeyConfigured: Boolean(deps.cfg.ANTHROPIC_API_KEY),
         providers: INSIGHT_PROVIDERS,
       },
-      allowedSecrets: ALLOWED_SECRETS,
+      allowedSecrets: [...AGENT_SECRET_NAMES],
+      retainedSecrets: await listRetainedSecretMeta(deps, found.org.id),
     };
   });
+
+  /**
+   * Pick which engine drives this org's factory pipeline. Switching does not
+   * rewrite repos; re-run the stub-files onboarding step so each repo's
+   * `.github/factory-orchestrator.json` matches.
+   */
+  app.post<{ Params: { id: string }; Body: { engine?: string } }>(
+    "/api/orgs/:id/settings/orchestrator",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: true });
+      if (!found) return;
+      const engine = req.body?.engine?.trim();
+      if (!isConsoleOrchestrator(engine)) {
+        return reply.code(400).send({ error: "engine must be github-actions or software-factory" });
+      }
+      await db.update(orgs).set({ orchestrator: engine }).where(eq(orgs.id, found.org.id));
+      await db.insert(auditLog).values({
+        orgId: found.org.id,
+        actorUserId: ctx.userId,
+        action: "settings.orchestrator",
+        target: found.org.name,
+        payload: { engine },
+      });
+      return { ok: true, engine, githubActionsEnabled: githubActionsEnabled(engine) };
+    },
+  );
 
   /**
    * Set the org's insight provider, model and/or API key. The key must be a
@@ -160,9 +200,9 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
   );
 
   /**
-   * Write an agent token to every connected repo's GitHub Actions secrets in
-   * one pass (the same write-through as the per-repo onboarding step — the
-   * Console never stores the value). Per-repo results, never all-or-nothing.
+   * Write an agent token. Always retained in the Console (when a master key
+   * is set) for the Software Factory orchestrator. Written through to GitHub
+   * Actions secrets only when that engine is selected for the org.
    */
   app.post<{ Params: { id: string }; Body: { name: string; value: string } }>(
     "/api/orgs/:id/settings/secrets",
@@ -174,37 +214,65 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
       const name = req.body?.name;
       const value = req.body?.value;
       if (!name || !value) return reply.code(400).send({ error: "name and value required" });
-      if (!ALLOWED_SECRETS.includes(name)) {
-        return reply.code(400).send({ error: `secret must be one of ${ALLOWED_SECRETS.join(", ")}` });
+      if (!isAgentSecretName(name)) {
+        return reply.code(400).send({ error: `secret must be one of ${AGENT_SECRET_NAMES.join(", ")}` });
       }
-      const auth = await deps.credentials.auth();
-      if (!auth) return reply.code(409).send({ error: "no GitHub App registered — complete setup first" });
+      const actions = githubActionsEnabled(found.org.orchestrator);
+      if (!actions && !deps.cfg.CONSOLE_MASTER_KEY) {
+        return reply.code(409).send({
+          error:
+            "GitHub Actions is disabled for this organisation, so the token must be stored in the Console — set CONSOLE_MASTER_KEY first",
+        });
+      }
+      const { stored } = await retainOrchestratorSecret(deps, {
+        orgId: found.org.id,
+        name,
+        value,
+        updatedBy: ctx.login,
+      });
 
-      const estateRows = await db.select().from(estates).where(eq(estates.orgId, found.org.id));
       const results: Array<{ repo: string; ok: boolean; error?: string }> = [];
-      for (const estate of estateRows) {
-        const client = new InstallationClient(deps.cfg.GITHUB_API_URL, auth, estate.installationId);
-        const repoRows = await db.select().from(repos).where(eq(repos.estateId, estate.id));
-        for (const repo of repoRows) {
-          const [owner, repoName] = repo.fullName.split("/") as [string, string];
-          try {
-            await client.putActionsSecret(owner, repoName, name, value);
-            results.push({ repo: repo.fullName, ok: true });
-            await recordSecretStep(deps, repo, "ok", { name, writtenAt: new Date().toISOString(), via: "org-settings" });
-          } catch (err) {
-            results.push({ repo: repo.fullName, ok: false, error: (err as Error).message });
-            await recordSecretStep(deps, repo, "failed", { name, error: (err as Error).message, via: "org-settings" });
+      if (actions) {
+        const auth = await deps.credentials.auth();
+        if (!auth) return reply.code(409).send({ error: "no GitHub App registered — complete setup first" });
+        const estateRows = await db.select().from(estates).where(eq(estates.orgId, found.org.id));
+        for (const estate of estateRows) {
+          const client = new InstallationClient(deps.cfg.GITHUB_API_URL, auth, estate.installationId);
+          const repoRows = await db.select().from(repos).where(eq(repos.estateId, estate.id));
+          for (const repo of repoRows) {
+            const [owner, repoName] = repo.fullName.split("/") as [string, string];
+            try {
+              await client.putActionsSecret(owner, repoName, name, value);
+              results.push({ repo: repo.fullName, ok: true });
+              await recordSecretStep(deps, repo, "ok", {
+                name,
+                writtenAt: new Date().toISOString(),
+                via: "org-settings",
+                stored,
+                githubActions: true,
+              });
+            } catch (err) {
+              results.push({ repo: repo.fullName, ok: false, error: (err as Error).message });
+              await recordSecretStep(deps, repo, "failed", {
+                name,
+                error: (err as Error).message,
+                via: "org-settings",
+                stored,
+                githubActions: true,
+              });
+            }
           }
         }
       }
+
       await db.insert(auditLog).values({
         orgId: found.org.id,
         actorUserId: ctx.userId,
         action: "settings.secret",
         target: found.org.name,
-        payload: { name, repos: results.map((r) => ({ repo: r.repo, ok: r.ok })) },
+        payload: { name, stored, githubActions: actions, repos: results.map((r) => ({ repo: r.repo, ok: r.ok })) },
       });
-      return { name, results };
+      return { name, stored, githubActions: actions, results };
     },
   );
 }

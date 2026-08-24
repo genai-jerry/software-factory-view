@@ -1,4 +1,4 @@
-import { decryptSecret, GATE_STATES, PIPELINE_ORDER } from "@console/core";
+import { decryptSecret, factoryRunIsPending, GATE_STATES, githubActionsEnabled, PIPELINE_ORDER } from "@console/core";
 import {
   artifactCache,
   changeArtifacts,
@@ -212,7 +212,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
+    const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
+    const actions = githubActionsEnabled(org?.orchestrator);
+    const pending = factoryRunIsPending({ open: epic.state === "open", labels: epic.labels });
 
     return {
       epic: {
@@ -254,6 +257,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       freshness: {
         lastSyncedAt: estate?.lastSyncedAt ?? null,
         stale: !estate?.lastSyncedAt || Date.now() - estate.lastSyncedAt.getTime() > staleMs,
+      },
+      orchestrator: {
+        engine: actions ? "github-actions" : "software-factory",
+        githubActionsEnabled: actions,
+        canStart: !actions && pending,
       },
     };
   });

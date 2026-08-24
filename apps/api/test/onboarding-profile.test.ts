@@ -3,6 +3,7 @@ import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { auditLog, estates, memberships, orgs, repos, sessions, users, onboardingRuns } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
+import { eq } from "drizzle-orm";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,7 @@ const PKCS8 = generateKeyPairSync("rsa", {
 let deps: AppDeps;
 let app: Awaited<ReturnType<typeof buildApp>>;
 let repoId: string;
+let orgId: string;
 /** Every GitHub request the route made, in order: "METHOD /path". */
 let calls: string[];
 /** path-substring → response, consulted in insertion order. */
@@ -76,6 +78,7 @@ beforeEach(async () => {
       .returning()
   )[0]!;
   const org = (await deps.dbh.db.insert(orgs).values({ name: "acme" }).returning())[0]!;
+  orgId = org.id;
   await deps.dbh.db.insert(memberships).values({ orgId: org.id, userId: user.id, role: "owner" });
   await deps.dbh.db.insert(sessions).values({ id: "sess-1", userId: user.id, expiresAt: new Date(Date.now() + 3600_000) });
   const estate = (
@@ -165,6 +168,48 @@ describe("the profile step", () => {
     const res = await post();
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/ANTHROPIC_API_KEY/);
+    expect(calls.some((c) => c.includes("/repos/") && c.startsWith("POST"))).toBe(false);
+  });
+
+  it("when Software Factory is selected, starts from a langgraph claim and a Console-stored token", async () => {
+    await deps.dbh.db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, orgId));
+    const secret = await app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/secret`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { name: "ANTHROPIC_API_KEY", value: "sk-ant-console" },
+    });
+    expect(secret.statusCode).toBe(200);
+    expect(secret.json()).toMatchObject({ stored: true, githubActions: false });
+    expect(calls.some((c) => c.includes("/actions/secrets"))).toBe(false);
+
+    reply(
+      "factory-orchestrator.json",
+      { content: Buffer.from(JSON.stringify({ engine: "langgraph" })).toString("base64"), sha: "o1", encoding: "base64" },
+    );
+
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, issueNumber: 7 });
+    expect(calls.some((c) => c.includes("factory-pipeline.yml"))).toBe(false);
+    expect(calls.some((c) => c.includes("/actions/secrets"))).toBe(false);
+    const profile = (await deps.dbh.db.select().from(onboardingRuns)).find((s) => s.step === "profile");
+    expect((profile!.detail as { dispatchError?: string }).dispatchError).toMatch(/ORCHESTRATOR_URL is not set/);
+  });
+
+  it("when Software Factory is selected, refuses before the langgraph claim is on the default branch", async () => {
+    await deps.dbh.db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, orgId));
+    await app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/secret`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { name: "ANTHROPIC_API_KEY", value: "sk-ant-console" },
+    });
+    reply("factory-orchestrator.json", { message: "Not Found" }, 404);
+
+    const res = await post();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/factory-orchestrator.json/);
     expect(calls.some((c) => c.includes("/repos/") && c.startsWith("POST"))).toBe(false);
   });
 
