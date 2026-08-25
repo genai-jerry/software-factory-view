@@ -57,6 +57,29 @@ host_from_url() {
   printf '%s' "$u"
 }
 
+# Empty $1 = current repo. Non-empty = git -C <root> (orchestrator lives one dir down).
+check_git_for_deploy() {
+  local g=(git)
+  [[ -n "${1:-}" ]] && g=(git -C "$1")
+  log "Verifying checkout against origin/${GIT_BRANCH}..."
+  "${g[@]}" fetch origin "$GIT_BRANCH"
+  [[ -z "$("${g[@]}" status --porcelain)" ]] || \
+    die "Working tree has uncommitted changes. Commit/stash them or pass --skip-git-check."
+  local head remote
+  head="$("${g[@]}" rev-parse HEAD)"
+  remote="$("${g[@]}" rev-parse "origin/${GIT_BRANCH}")"
+  if [[ "$head" == "$remote" ]]; then
+    :
+  elif "${g[@]}" merge-base --is-ancestor "$remote" "$head"; then
+    warn "HEAD is $("${g[@]}" rev-list --count "$remote..HEAD") commit(s) ahead of origin/${GIT_BRANCH} — deploying this checkout (not yet on GitHub). git push when you want origin to match."
+  elif "${g[@]}" merge-base --is-ancestor "$head" "$remote"; then
+    die "HEAD is behind origin/${GIT_BRANCH}. Run: git checkout ${GIT_BRANCH} && git pull origin ${GIT_BRANCH}"
+  else
+    die "HEAD has diverged from origin/${GIT_BRANCH}. Rebase or merge, or pass --skip-git-check."
+  fi
+  log "OK — deploying $("${g[@]}" rev-parse --short HEAD) ($("${g[@]}" log -1 --format=%s))"
+}
+
 TARGET_ENV="production"
 SECRETS_FILE=""
 INIT_SECRETS=false
@@ -141,14 +164,7 @@ if $INIT_SECRETS; then
 fi
 
 if ! $SKIP_GIT_CHECK; then
-  log "Verifying checkout matches latest origin/${GIT_BRANCH}..."
-  git fetch origin "$GIT_BRANCH"
-  [[ -z "$(git status --porcelain)" ]] || \
-    die "Working tree has uncommitted changes. Commit/stash them or pass --skip-git-check."
-  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${GIT_BRANCH}")" ]]; then
-    die "HEAD is not at origin/${GIT_BRANCH}. Run: git checkout ${GIT_BRANCH} && git pull origin ${GIT_BRANCH} (or pass --skip-git-check)."
-  fi
-  log "OK — deploying $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
+  check_git_for_deploy
 fi
 
 FETCHED_VARS=""
