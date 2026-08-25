@@ -121,10 +121,10 @@ GH_SECRET_NAMES=(DEPLOY_HOST DEPLOY_USER DEPLOY_KEY CONSOLE_MASTER_KEY DB_PASSWO
                  GH_APP_ID GH_APP_PRIVATE_KEY GH_APP_WEBHOOK_SECRET
                  GH_OAUTH_CLIENT_ID GH_OAUTH_CLIENT_SECRET ANTHROPIC_API_KEY
                  ORCHESTRATOR_DISPATCH_TOKEN)
-GH_VAR_NAMES=(PUBLIC_ORIGIN ORCHESTRATOR_URL CONSOLE_HOST)
-REQUIRED=(DEPLOY_HOST DEPLOY_USER CONSOLE_MASTER_KEY DB_PASSWORD PUBLIC_ORIGIN
-          GH_APP_ID GH_APP_PRIVATE_KEY GH_APP_WEBHOOK_SECRET
-          GH_OAUTH_CLIENT_ID GH_OAUTH_CLIENT_SECRET)
+GH_VAR_NAMES=(PUBLIC_ORIGIN ORCHESTRATOR_URL CONSOLE_HOST APP_RESET)
+# GH_APP_* / GH_OAUTH_* are optional: paste them in the Console UI when
+# APP_RESET=true (a GitHub variable), or leave existing VPS .env / DB rows.
+REQUIRED=(DEPLOY_HOST DEPLOY_USER CONSOLE_MASTER_KEY DB_PASSWORD PUBLIC_ORIGIN)
 
 if $INIT_SECRETS; then
   [[ -e "$SECRETS_FILE" ]] && die "Refusing to overwrite existing ${SECRETS_FILE}"
@@ -144,20 +144,23 @@ if $INIT_SECRETS; then
     echo "CONSOLE_MASTER_KEY="
     echo "DB_PASSWORD="
     echo
-    echo "# SaaS GitHub App. PEM as a single line with \\n for newlines."
-    echo "GH_APP_ID="
-    echo "GH_APP_PRIVATE_KEY="
-    echo "GH_APP_WEBHOOK_SECRET="
-    echo "GH_OAUTH_CLIENT_ID="
-    echo "GH_OAUTH_CLIENT_SECRET="
+    echo "# Optional GitHub App. Omit when APP_RESET=true on the GitHub Environment"
+    echo "# (paste credentials in the Console UI) or when the VPS .env / DB already"
+    echo "# has them. PEM as a single line with \\n for newlines."
+    echo "#GH_APP_ID="
+    echo "#GH_APP_PRIVATE_KEY="
+    echo "#GH_APP_WEBHOOK_SECRET="
+    echo "#GH_OAUTH_CLIENT_ID="
+    echo "#GH_OAUTH_CLIENT_SECRET="
     echo
     echo "# Optional — empty values are skipped by the host .env upsert:"
     echo "#ANTHROPIC_API_KEY="
     echo "#ORCHESTRATOR_DISPATCH_TOKEN="
     echo
-    echo "# Variables (fetched from GitHub unless you set them here):"
+    echo "# Variables are fetched from GitHub (repo + environment). Override here:"
     echo "#PUBLIC_ORIGIN=https://sf.genaipeople.com"
     echo "#ORCHESTRATOR_URL=http://factory-orchestrator:8080"
+    echo "#APP_RESET=true"
   } > "$SECRETS_FILE"
   log "Template written to ${SECRETS_FILE} — fill in the values, then re-run the deploy."
   exit 0
@@ -192,6 +195,7 @@ if $FETCH_VARS; then
   fetch_var_endpoint "repos/${REPO}/actions/variables"
   fetch_var_endpoint "repos/${REPO}/environments/${TARGET_ENV}/variables"
   log "Fetched variables: ${FETCHED_VARS:-none}"
+  log "PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-<unset>}  APP_RESET=${APP_RESET:-<unset>}  ORCHESTRATOR_URL=${ORCHESTRATOR_URL:-<unset>}"
 else
   log "Skipping GitHub variable fetch (--no-fetch-vars)."
 fi
@@ -237,7 +241,10 @@ GH_OAUTH_CLIENT_SECRET="${GH_OAUTH_CLIENT_SECRET:-${GITHUB_OAUTH_CLIENT_SECRET:-
 if [[ -z "${CONSOLE_HOST:-}" && -n "${PUBLIC_ORIGIN:-}" ]]; then
   CONSOLE_HOST="$(host_from_url "$PUBLIC_ORIGIN")"
 fi
-export CONSOLE_HOST PUBLIC_ORIGIN
+CONSOLE_HOST="${CONSOLE_HOST:-}"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
+APP_RESET="${APP_RESET:-}"
+export CONSOLE_HOST PUBLIC_ORIGIN APP_RESET
 
 missing=""
 for var in "${REQUIRED[@]}"; do
@@ -247,7 +254,7 @@ done
 [[ -n "${CONSOLE_HOST:-}" ]] || missing="${missing} CONSOLE_HOST|PUBLIC_ORIGIN"
 if [[ -n "$missing" ]]; then
   echo "Missing required configuration for ${TARGET_ENV}:${missing}" >&2
-  echo "Secrets go in ${SECRETS_FILE}; variables come from GitHub (or the same file)." >&2
+  echo "Secrets go in ${SECRETS_FILE}; variables (PUBLIC_ORIGIN, APP_RESET, ORCHESTRATOR_URL) come from GitHub (or the same file)." >&2
   if command -v gh >/dev/null 2>&1; then
     echo "Secret names configured in GitHub for reference (values are NOT retrievable):" >&2
     gh api "repos/${REPO}/environments/${TARGET_ENV}/secrets" --jq '.secrets[].name' 2>/dev/null | sed 's/^/  - /' >&2 || true
@@ -255,16 +262,25 @@ if [[ -n "$missing" ]]; then
   exit 1
 fi
 
+if [[ -z "${GH_APP_ID:-}" || -z "${GH_APP_PRIVATE_KEY:-}" || -z "${GH_APP_WEBHOOK_SECRET:-}" ||
+      -z "${GH_OAUTH_CLIENT_ID:-}" || -z "${GH_OAUTH_CLIENT_SECRET:-}" ]]; then
+  if [[ "${APP_RESET:-}" == "true" || "${APP_RESET:-}" == "1" ]]; then
+    log "GH_* App secrets omitted — APP_RESET=${APP_RESET} so the Console UI can register the GitHub App."
+  else
+    warn "GH_* App secrets omitted. Existing VPS .env / stored App row is left as-is. Set APP_RESET=true on the GitHub Environment to paste credentials in the UI."
+  fi
+fi
+
 if [[ -n "${GH_APP_PRIVATE_KEY:-}" ]]; then
   GH_APP_PRIVATE_KEY="$(
     PEM="$GH_APP_PRIVATE_KEY" python3 -c 'import os; print(os.environ["PEM"].replace("\\n","\n").replace("\r\n","\n").strip().replace("\n","\\n"))'
   )"
 fi
-export GITHUB_APP_ID="$GH_APP_ID"
-export GITHUB_APP_PRIVATE_KEY="$GH_APP_PRIVATE_KEY"
-export GITHUB_APP_WEBHOOK_SECRET="$GH_APP_WEBHOOK_SECRET"
-export GITHUB_OAUTH_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
-export GITHUB_OAUTH_CLIENT_SECRET="$GH_OAUTH_CLIENT_SECRET"
+export GITHUB_APP_ID="${GH_APP_ID:-}"
+export GITHUB_APP_PRIVATE_KEY="${GH_APP_PRIVATE_KEY:-}"
+export GITHUB_APP_WEBHOOK_SECRET="${GH_APP_WEBHOOK_SECRET:-}"
+export GITHUB_OAUTH_CLIENT_ID="${GH_OAUTH_CLIENT_ID:-}"
+export GITHUB_OAUTH_CLIENT_SECRET="${GH_OAUTH_CLIENT_SECRET:-}"
 
 if $SHOW_CONFIG; then
   echo "Resolved configuration for ${TARGET_ENV}:"
@@ -273,6 +289,7 @@ if $SHOW_CONFIG; then
     [[ -n "${!name:-}" ]] && printf '  %-32s= <set>\n' "$name" || printf '  %-32s= <empty>\n' "$name"
   done
   printf '  %-32s= %s\n' "DEPLOY_KEY_FILE" "${DEPLOY_KEY_FILE:-}"
+  printf '  %-32s= %s\n' "APP_RESET" "${APP_RESET:-}"
   exit 0
 fi
 
@@ -319,7 +336,7 @@ scp "${SSH_OPTS[@]}" -P "$DEPLOY_PORT" \
   "${WORK_DIR}/docker-compose.yml" \
   "${DEPLOY_USER}@${DEPLOY_HOST}:factory-console/docker-compose.yml"
 
-REMOTE_ENVS=(CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD
+REMOTE_ENVS=(CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD APP_RESET
              ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY
              GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID
              GITHUB_OAUTH_CLIENT_SECRET ORCHESTRATOR_URL
@@ -357,7 +374,7 @@ chmod 600 .env
 if [ -n "${ORCHESTRATOR_DISPATCH_TOKEN:-}" ] && [ -z "${ORCHESTRATOR_URL:-}" ]; then
   ORCHESTRATOR_URL=http://factory-orchestrator:8080
 fi
-for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD \
+for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD APP_RESET \
            ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY \
            GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID \
            GITHUB_OAUTH_CLIENT_SECRET ORCHESTRATOR_URL \

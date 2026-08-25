@@ -4,10 +4,11 @@
 # GitHub Environment "production"
 #   DEPLOY_HOST / DEPLOY_USER / DEPLOY_KEY   same SSH trio as lighthouse-sales
 #   PUBLIC_ORIGIN                            https://sf.genaipeople.com
+#   APP_RESET                                optional variable; true = paste App in the UI
 #   CONSOLE_MASTER_KEY                       openssl rand -base64 32
 #   DB_PASSWORD                              in-compose Postgres password
-#   GH_APP_ID / GH_APP_PRIVATE_KEY / GH_APP_WEBHOOK_SECRET
-#   GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET
+#   GH_APP_ID / GH_APP_PRIVATE_KEY / GH_APP_WEBHOOK_SECRET   optional when APP_RESET
+#   GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET              optional when APP_RESET
 #   ORCHESTRATOR_DISPATCH_TOKEN              optional, match factory-orchestrator DISPATCH_TOKEN
 #   ORCHESTRATOR_URL                         optional variable, default http://factory-orchestrator:8080
 #
@@ -61,6 +62,7 @@ jobs:
           CONSOLE_MASTER_KEY: ${{ secrets.CONSOLE_MASTER_KEY }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          APP_RESET: ${{ vars.APP_RESET }}
           GH_APP_ID: ${{ secrets.GH_APP_ID }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
           GH_APP_WEBHOOK_SECRET: ${{ secrets.GH_APP_WEBHOOK_SECRET }}
@@ -74,11 +76,15 @@ jobs:
           [ -n "$CONSOLE_MASTER_KEY" ] || missing="$missing CONSOLE_MASTER_KEY"
           [ -n "$DB_PASSWORD" ] || missing="$missing DB_PASSWORD"
           [ -n "$PUBLIC_ORIGIN" ] || missing="$missing PUBLIC_ORIGIN"
-          [ -n "$GH_APP_ID" ] || missing="$missing GH_APP_ID"
-          [ -n "$GH_APP_PRIVATE_KEY" ] || missing="$missing GH_APP_PRIVATE_KEY"
-          [ -n "$GH_APP_WEBHOOK_SECRET" ] || missing="$missing GH_APP_WEBHOOK_SECRET"
-          [ -n "$GH_OAUTH_CLIENT_ID" ] || missing="$missing GH_OAUTH_CLIENT_ID"
-          [ -n "$GH_OAUTH_CLIENT_SECRET" ] || missing="$missing GH_OAUTH_CLIENT_SECRET"
+          app_ok=0
+          [ -n "$GH_APP_ID" ] && [ -n "$GH_APP_PRIVATE_KEY" ] && [ -n "$GH_APP_WEBHOOK_SECRET" ] && \
+            [ -n "$GH_OAUTH_CLIENT_ID" ] && [ -n "$GH_OAUTH_CLIENT_SECRET" ] && app_ok=1
+          case "$(echo "${APP_RESET:-}" | tr '[:upper:]' '[:lower:]')" in
+            true|1) app_ok=1 ;;
+          esac
+          if [ "$app_ok" -ne 1 ]; then
+            missing="$missing GH_APP_* (or set variable APP_RESET=true to paste the App in the UI)"
+          fi
           if [ -n "$missing" ]; then
             echo "::error::Set these on the GitHub Environment 'production':$missing"
             echo "DEPLOY_HOST / DEPLOY_USER / DEPLOY_KEY — copy from lighthouse-sales"
@@ -93,7 +99,7 @@ jobs:
         id: appkey
         env:
           PEM: ${{ secrets.GH_APP_PRIVATE_KEY }}
-        run: python3 -c 'import os; pem=os.environ["PEM"].replace("\r\n","\n").strip(); flat=pem.replace("\n","\\n"); open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write("pem<<ENDPEM\n"+flat+"\nENDPEM\n")'
+        run: python3 -c 'import os; pem=os.environ.get("PEM","").replace("\r\n","\n").strip(); flat=pem.replace("\n","\\n"); open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write("pem<<ENDPEM\n"+flat+"\nENDPEM\n")'
 
       - name: Hostname for Traefik
         id: host
@@ -162,6 +168,7 @@ jobs:
         env:
           CONSOLE_HOST: ${{ steps.host.outputs.console_host }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          APP_RESET: ${{ vars.APP_RESET }}
           CONSOLE_MASTER_KEY: ${{ secrets.CONSOLE_MASTER_KEY }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -178,7 +185,7 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           timeout: 60s
           command_timeout: 30m
-          envs: CONSOLE_HOST,PUBLIC_ORIGIN,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET,ORCHESTRATOR_URL,ORCHESTRATOR_DISPATCH_TOKEN
+          envs: CONSOLE_HOST,PUBLIC_ORIGIN,APP_RESET,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET,ORCHESTRATOR_URL,ORCHESTRATOR_DISPATCH_TOKEN
           script: |
             set -euo pipefail
 
@@ -211,7 +218,7 @@ jobs:
             if [ -n "${ORCHESTRATOR_DISPATCH_TOKEN:-}" ] && [ -z "${ORCHESTRATOR_URL:-}" ]; then
               ORCHESTRATOR_URL=http://factory-orchestrator:8080
             fi
-            for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD \
+            for KEY in CONSOLE_HOST PUBLIC_ORIGIN CONSOLE_MASTER_KEY DB_PASSWORD APP_RESET \
                        ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY \
                        GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID \
                        GITHUB_OAUTH_CLIENT_SECRET ORCHESTRATOR_URL \

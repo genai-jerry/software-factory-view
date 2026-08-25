@@ -7,8 +7,11 @@ Actions minutes are spent:
 
 1. Verifies your checkout is the **latest `origin/main`** (production) or
    `origin/staging` (staging).
-2. Fetches GitHub **variables** (`PUBLIC_ORIGIN`, `ORCHESTRATOR_URL`) via `gh`.
-3. Loads **secrets** from a local env file (see below for why).
+2. Fetches GitHub **variables** (`PUBLIC_ORIGIN`, `ORCHESTRATOR_URL`,
+   `APP_RESET`) via `gh` from repo-level and the environment.
+3. Loads **secrets** from a local env file (see below for why). `GH_APP_*` /
+   `GH_OAUTH_*` are optional — omit them when `APP_RESET=true` and paste the
+   GitHub App in the Console UI.
 4. Builds `linux/amd64` **app** and **web** images (`infra/Dockerfile.api`
    `--target api`, `infra/Dockerfile.web`), SCPs the tarballs plus
    `infra/docker-compose.deploy.yml` to `~/factory-console` on the VPS, and
@@ -51,11 +54,13 @@ Useful flags: `--show-config`, `--build-only`, `--no-fetch-vars`,
 **Variables** (`PUBLIC_ORIGIN`, `ORCHESTRATOR_URL`) **are readable** and are
 exported automatically. Environment-level values override repo-level ones.
 
-**Secrets** (`DEPLOY_*`, `CONSOLE_MASTER_KEY`, `DB_PASSWORD`, `GH_APP_*`,
-`GH_OAUTH_*`, `ORCHESTRATOR_DISPATCH_TOKEN`) **cannot be fetched**. They live
-in `~/.lighthouse-deploy/factory-console.<env>.env` (`chmod 600`, outside the
-repo). Empty optional keys are skipped on the host so existing `.env` entries
-survive.
+**Secrets** (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_KEY`, `CONSOLE_MASTER_KEY`,
+`DB_PASSWORD`) **cannot be fetched**. They live in
+`~/.lighthouse-deploy/factory-console.<env>.env`. GitHub App secrets
+(`GH_APP_*`, `GH_OAUTH_*`) are optional: leave them commented out when
+`APP_RESET=true` (a GitHub variable this script writes through to the VPS) so
+you can paste the App in the Console UI. Empty optional keys are skipped on
+the host so existing `.env` entries survive.
 
 Resolution order (later wins): shell environment → GitHub variables → secrets
 file.

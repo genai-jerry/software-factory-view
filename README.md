@@ -116,7 +116,7 @@ the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`.
 - `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_KEY` — copy from lighthouse-sales (SSH to the VPS)
 - `CONSOLE_MASTER_KEY` — `openssl rand -base64 32` (back this up)
 - `DB_PASSWORD` — password for the in-compose Postgres
-- `GH_APP_ID` — the SaaS GitHub App's numeric id
+- `GH_APP_ID` — the SaaS GitHub App's numeric id (optional when `APP_RESET=true`)
 - `GH_APP_PRIVATE_KEY` — the App's PEM (newlines can be stored as `\n`)
 - `GH_APP_WEBHOOK_SECRET`
 - `GH_OAUTH_CLIENT_ID`
@@ -127,6 +127,7 @@ the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`.
 **Variables**
 
 - `PUBLIC_ORIGIN` — the HTTPS URL browsers will use, e.g. `https://sf.genaipeople.com`. Traefik terminates TLS and routes that hostname to nginx. Do not use `:80` — Traefik already binds 80/443 on this VPS.
+- `APP_RESET` — optional; `true` lets the home page wipe/re-enter the GitHub App. Deploy writes this onto the VPS `.env`. `GH_APP_*` secrets may then be omitted.
 - `ORCHESTRATOR_URL` — optional; default `http://factory-orchestrator:8080` when `ORCHESTRATOR_DISPATCH_TOKEN` is set. Public `https://factory.genaipeople.com` also works.
 
 The workflow builds `factory-console-app:latest` and `factory-console-web:latest`, copies [`infra/docker-compose.deploy.yml`](infra/docker-compose.deploy.yml) to `~/factory-console/docker-compose.yml`, and starts the stack. Images use `pull_policy: never` so the host does not try GHCR.
