@@ -101,7 +101,9 @@ Same path as Sales OS: GitHub Actions builds images, scps them to the VPS,
 `docker load`s, then `docker compose up` in `~/factory-console`. Postgres and
 Redis are in that compose file. Traefik on `lighthouse-network` routes
 `Host(CONSOLE_HOST)` to nginx. The workflow runs on push to `main` and from
-**Actions → Deploy → Run workflow**.
+**Actions → Deploy → Run workflow**. To ship the same images from a laptop
+instead (no Actions minutes), see [`docs/LOCAL_DEPLOYMENT.md`](docs/LOCAL_DEPLOYMENT.md)
+— `./scripts/local-deploy.sh production`, matching lighthouse-backend.
 
 ### GitHub Environment `production`
 
