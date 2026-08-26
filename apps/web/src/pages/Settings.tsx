@@ -407,7 +407,8 @@ function InsightSection({
       <p className="muted">
         Pick the provider, enter its <strong>API key</strong>, then load the models that key can use and choose one. For
         Anthropic, a Claude Code OAuth token authenticates the factory's agents, not API calls, and will be rejected.
-        {s.insight.globalKeyConfigured && " Without an org key, the Console's instance-wide Anthropic key is used."}
+        With no dedicated insight key, Ask the Factory uses the instance Anthropic key or the{" "}
+        <code>ANTHROPIC_API_KEY</code> stored for factory runs.
       </p>
       <div className="row">
         <label style={{ minWidth: "4.5rem" }}>Provider</label>

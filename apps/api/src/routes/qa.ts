@@ -16,6 +16,7 @@ import {
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
+import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadDependencies, loadEpic, loadIssue } from "./read.js";
 
 /**
@@ -31,7 +32,12 @@ export function registerQaRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!ctx) return;
     const found = await loadEpic(deps, ctx, req.params.id);
     if (!found) return reply.code(404).send({ error: "epic not found" });
-    return listConversations(deps, ctx, and(eq(qaConversations.epicIssueId, found.epic.id), isNull(qaConversations.scopeIssueId)));
+    return listConversations(
+      deps,
+      ctx,
+      and(eq(qaConversations.epicIssueId, found.epic.id), isNull(qaConversations.scopeIssueId)),
+      found.epic.orgId,
+    );
   });
 
   app.get<{ Params: { id: string } }>("/api/issues/:id/qa", async (req, reply) => {
@@ -39,7 +45,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!ctx) return;
     const found = await loadIssue(deps, ctx, req.params.id);
     if (!found) return reply.code(404).send({ error: "issue not found" });
-    return listConversations(deps, ctx, eq(qaConversations.scopeIssueId, found.issue.id));
+    return listConversations(deps, ctx, eq(qaConversations.scopeIssueId, found.issue.id), found.issue.orgId);
   });
 
   app.post<{ Params: { id: string }; Body: { question: string; conversationId?: string } }>(
@@ -89,27 +95,47 @@ export function registerQaRoutes(app: FastifyInstance, deps: AppDeps): void {
  * only, so the org's provider choice never sends its model name to the wrong
  * vendor's endpoint.
  */
-function resolveInsight(
+async function resolveInsight(
   deps: AppDeps,
   org: typeof orgs.$inferSelect | undefined,
-): { provider: InsightProvider; apiKey: string; model: string } {
-  if (org?.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
-    const provider = (org.insightProvider ?? "anthropic") as InsightProvider;
-    return {
-      provider,
-      apiKey: decryptSecret(org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY),
-      model: org.insightModel || deps.cfg.INSIGHT_DEEP_MODEL,
-    };
-  }
+): Promise<{ provider: InsightProvider; apiKey: string; model: string }> {
   const orgModelIsAnthropic = (org?.insightProvider ?? "anthropic") === "anthropic";
-  return {
-    provider: "anthropic",
-    apiKey: deps.cfg.ANTHROPIC_API_KEY,
-    model: (orgModelIsAnthropic && org?.insightModel) || deps.cfg.INSIGHT_DEEP_MODEL,
-  };
+  const anthropicModel = (orgModelIsAnthropic && org?.insightModel) || deps.cfg.INSIGHT_DEEP_MODEL;
+
+  if (org?.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
+    try {
+      const provider = (org.insightProvider ?? "anthropic") as InsightProvider;
+      return {
+        provider,
+        apiKey: decryptSecret(org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY),
+        model: org.insightModel || deps.cfg.INSIGHT_DEEP_MODEL,
+      };
+    } catch {
+      /* fall through to env / factory-run key */
+    }
+  }
+  if (deps.cfg.ANTHROPIC_API_KEY) {
+    return { provider: "anthropic", apiKey: deps.cfg.ANTHROPIC_API_KEY, model: anthropicModel };
+  }
+  if (org) {
+    try {
+      const retained = await readRetainedAgentSecrets(deps, org.id);
+      if (retained.anthropicApiKey) {
+        return { provider: "anthropic", apiKey: retained.anthropicApiKey, model: anthropicModel };
+      }
+    } catch {
+      /* no usable factory key */
+    }
+  }
+  return { provider: "anthropic", apiKey: "", model: anthropicModel };
 }
 
-async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnType<typeof eq> | ReturnType<typeof and>) {
+async function listConversations(
+  deps: AppDeps,
+  ctx: RequestCtx,
+  where: ReturnType<typeof eq> | ReturnType<typeof and>,
+  orgId: string,
+) {
   const { db } = deps.dbh;
   const convs = await db
     .select()
@@ -125,8 +151,8 @@ async function listConversations(deps: AppDeps, ctx: RequestCtx, where: ReturnTy
       messages: msgs.map((m) => ({ role: m.role, body: m.body, citations: m.citations, createdAt: m.createdAt })),
     });
   }
-  const org = (await db.select().from(orgs).where(inArray(orgs.id, ctx.orgIds)).limit(1))[0];
-  const insight = resolveInsight(deps, org);
+  const org = (await db.select().from(orgs).where(eq(orgs.id, orgId)).limit(1))[0];
+  const insight = await resolveInsight(deps, org);
   return {
     conversations: out,
     enabled: Boolean(insight.apiKey),
@@ -156,7 +182,7 @@ async function runAsk(
 
   // Per-org budget: a paid product shows its costs (spec 01 §5).
   const org = (await db.select().from(orgs).where(eq(orgs.id, opts.orgId)).limit(1))[0]!;
-  const insight = resolveInsight(deps, org);
+  const insight = await resolveInsight(deps, org);
   if (!insight.apiKey) {
     return reply
       .code(503)

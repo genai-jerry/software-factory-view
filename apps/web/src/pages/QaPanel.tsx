@@ -15,9 +15,9 @@ const CANNED: Record<QaScope["kind"], string[]> = {
     "What changed since the spec was approved?",
   ],
   issue: [
+    "Summarise this issue and the discussion so far.",
+    "What has the factory done, and what should a human do next?",
     "Why is this blocked?",
-    "What has to happen before this moves?",
-    "Summarise the blocker's current state.",
     "Who is expected to act next?",
   ],
 };
@@ -41,27 +41,39 @@ export function QaPanel({ scope }: { scope: QaScope }) {
   });
 
   const conv = qa.data?.conversations.find((c) => c.id === conversationId) ?? qa.data?.conversations[0];
+  const enabled = Boolean(qa.data?.enabled);
+  const placeholder =
+    scope.kind === "epic"
+      ? "Ask about this epic's artifacts, threads, PRs and runs — cited, private by default."
+      : "Ask about this issue, its comments, and what the factory did — cited, private by default.";
 
   return (
     <div className="card">
       <h3>Ask the Factory</h3>
-      {qa.data && !qa.data.enabled && (
-        <p className="muted">
+      <p className="muted" style={{ marginTop: 0 }}>
+        Grounded in this {scope.kind === "epic" ? "epic" : "issue"} and the discussion around it.
+      </p>
+      {qa.isLoading && <p className="muted">Loading…</p>}
+      {qa.isError && (
+        <div className="banner error">Could not load Ask the Factory: {(qa.error as ApiError).message}</div>
+      )}
+      {qa.data && !enabled && (
+        <div className="banner info">
           Not configured —{" "}
           {setup.data?.canEditApp ? (
             <>
-              set this org's model and API key in <a href="/settings">Settings</a>
+              set an Anthropic <strong>API key</strong> in <a href="/settings">Settings → Ask the Factory</a>, or store{" "}
+              <code>ANTHROPIC_API_KEY</code> for factory runs (OAuth tokens cannot call this panel).
             </>
           ) : (
             <>the GitHub App owner can set this org's model and API key in Settings</>
-          )}{" "}
-          (or ANTHROPIC_API_KEY on the API).
-        </p>
+          )}
+        </div>
       )}
       {qa.data?.budget && (
         <p className="muted">
           org budget: {Math.round((qa.data.budget.used / Math.max(qa.data.budget.total, 1)) * 100)}% used
-          {qa.data.enabled && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
+          {enabled && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
         </p>
       )}
       {conv && (
@@ -82,28 +94,27 @@ export function QaPanel({ scope }: { scope: QaScope }) {
           ))}
         </div>
       )}
-      {qa.data?.enabled && (
+      {qa.data && (
         <>
-          <div style={{ marginBottom: "0.4rem" }}>
-            {CANNED[scope.kind].map((c) => (
-              <button key={c} className="chip" style={{ cursor: "pointer" }} disabled={ask.isPending} onClick={() => ask.mutate(c)}>
-                {c}
-              </button>
-            ))}
-          </div>
+          {enabled && (
+            <div style={{ marginBottom: "0.4rem" }}>
+              {CANNED[scope.kind].map((c) => (
+                <button key={c} className="chip" style={{ cursor: "pointer" }} disabled={ask.isPending} onClick={() => ask.mutate(c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder={
-              scope.kind === "epic"
-                ? "Grounded in this epic's artifacts, threads, PRs and runs — cited, private by default."
-                : "Grounded in this issue, its blockers and dependents, and the epic's plan — cited, private by default."
-            }
+            placeholder={enabled ? placeholder : "Configure an Anthropic API key in Settings to ask about this issue."}
+            disabled={!enabled || ask.isPending}
             style={{ minHeight: "3.5rem" }}
           />
           {ask.isError && <div className="banner error">{(ask.error as ApiError).message}</div>}
           <div className="row" style={{ marginTop: "0.4rem" }}>
-            <button className="primary" disabled={!question.trim() || ask.isPending} onClick={() => ask.mutate(question)}>
+            <button className="primary" disabled={!enabled || !question.trim() || ask.isPending} onClick={() => ask.mutate(question)}>
               {ask.isPending ? "Thinking…" : "Ask"}
             </button>
             {conversationId && (

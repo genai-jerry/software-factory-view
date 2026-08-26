@@ -32,6 +32,8 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
     const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: false });
     if (!found) return;
     const engine = normalizeConsoleOrchestrator(found.org.orchestrator);
+    const retainedSecrets = await listRetainedSecretMeta(deps, found.org.id);
+    const hasRetainedAnthropic = retainedSecrets.some((r) => r.name === "ANTHROPIC_API_KEY");
     return {
       id: found.org.id,
       name: found.org.name,
@@ -45,11 +47,11 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
         model: found.org.insightModel,
         hasKey: Boolean(found.org.encryptedInsightApiKey),
         defaultModel: deps.cfg.INSIGHT_DEEP_MODEL,
-        globalKeyConfigured: Boolean(deps.cfg.ANTHROPIC_API_KEY),
+        globalKeyConfigured: Boolean(deps.cfg.ANTHROPIC_API_KEY) || hasRetainedAnthropic,
         providers: INSIGHT_PROVIDERS,
       },
       allowedSecrets: [...AGENT_SECRET_NAMES],
-      retainedSecrets: await listRetainedSecretMeta(deps, found.org.id),
+      retainedSecrets,
     };
   });
 

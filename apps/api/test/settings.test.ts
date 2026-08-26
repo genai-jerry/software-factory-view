@@ -153,6 +153,21 @@ describe("org insight settings", () => {
     const qa2 = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/qa`, headers: { cookie: ownerCookie } });
     expect((qa2.json() as { enabled: boolean }).enabled).toBe(false);
   });
+
+  it("enables QA from the retained factory ANTHROPIC_API_KEY", async () => {
+    await deps.dbh.db.insert(orchestratorSecrets).values({
+      orgId: id.org,
+      name: "ANTHROPIC_API_KEY",
+      encryptedValue: encryptSecret("sk-ant-from-factory", MASTER_KEY),
+      updatedBy: "alice",
+      updatedAt: new Date(),
+    });
+    const qa = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/qa`, headers: { cookie: ownerCookie } });
+    expect(qa.json()).toMatchObject({ enabled: true, provider: "anthropic" });
+    const settings = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect((settings.json() as { insight: { globalKeyConfigured: boolean } }).insight.globalKeyConfigured).toBe(true);
+    await deps.dbh.db.delete(orchestratorSecrets).where(eq(orchestratorSecrets.orgId, id.org));
+  });
 });
 
 describe("provider selection", () => {
