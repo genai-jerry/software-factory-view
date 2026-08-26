@@ -35,7 +35,13 @@ export function BlockedPage() {
         state and re-runs the stage with the whole thread in context.
       </p>
       <div className="card">
-        {blocked.data?.issues.length === 0 && <p className="muted">Nothing is blocked.</p>}
+        {blocked.data?.issues.length === 0 && (
+          <p className="muted">
+            {focus.repo || focus.project
+              ? "Nothing is blocked in this focus. Clear Focus in the top bar to see halted issues in other repositories."
+              : "Nothing is blocked."}
+          </p>
+        )}
         {blocked.data?.issues.map((i) => (
           <div key={i.id} className="attention-entry" style={{ display: "block" }}>
             <div className="spread">

@@ -41,9 +41,10 @@ export function Shell({
   const [themePref, setThemePref] = useState<ThemePref>(getThemePref());
   const location = useLocation();
   const showSettings = canReachSettings(me, setup);
+  const focus = useFocus();
   const inbox = useQuery({
-    queryKey: ["blocked-count"],
-    queryFn: () => api.get<{ issues: BlockedIssue[] }>("/api/blocked"),
+    queryKey: ["blocked", focus.key],
+    queryFn: () => api.get<{ issues: BlockedIssue[] }>(`/api/blocked${focus.qs}`),
   });
   const inboxCount = inbox.data?.issues.length ?? 0;
 
