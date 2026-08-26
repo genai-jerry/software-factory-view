@@ -5,6 +5,37 @@ import { AppCredentialsForm } from "../components/AppCredentialsForm.js";
 import { RepoChip } from "../components/RepoChip.js";
 import type { IngestionLog, Me, OrgSettings, ProjectsData, SecretWriteResult, SetupStatus } from "../types.js";
 
+function SecretField({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="secret-field">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        spellCheck={false}
+        style={{ fontFamily: "var(--font-mono)" }}
+      />
+      <button type="button" onClick={() => setShow((s) => !s)} aria-pressed={show}>
+        {show ? "Hide" : "Show"}
+      </button>
+    </div>
+  );
+}
+
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -422,17 +453,15 @@ function InsightSection({
       </div>
       <div className="row" style={{ marginTop: "0.4rem" }}>
         <label style={{ minWidth: "4.5rem" }}>API key</label>
-        <input
-          type="password"
+        <SecretField
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          onChange={setApiKey}
           placeholder={
             s.insight.hasKey && provider === s.insight.provider
               ? "key is set — enter a new one to replace it"
               : (KEY_PLACEHOLDERS[provider] ?? "api key")
           }
           disabled={!canEdit}
-          style={{ width: "18rem" }}
         />
         <button disabled={!canLoad || loadModels.isPending} onClick={() => loadModels.mutate()}>
           {loadModels.isPending ? "Loading…" : "Load models"}
@@ -487,7 +516,7 @@ function InsightSection({
       </div>
       {save.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(save.error as ApiError).message}</div>}
       {canEdit && (
-        <div className="row" style={{ marginTop: "0.6rem" }}>
+        <div className="row settings-save" style={{ marginTop: "0.6rem" }}>
           <button
             className="primary"
             disabled={save.isPending || (provider !== "anthropic" && !model)}

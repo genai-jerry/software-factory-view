@@ -15,7 +15,10 @@ export function DecisionsPage() {
       <h1>Decision log</h1>
       <p className="muted">Every decision is also a structured comment on its epic — this is the index, GitHub is the record.</p>
       <div className="card">
-        <input placeholder="Search decisions…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <label className="sr-only" htmlFor="decision-search">
+          Search decisions
+        </label>
+        <input id="decision-search" placeholder="Search decisions…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {decisions.data?.decisions.map((d) => (
         <DecisionCard key={d.id} d={d} />
@@ -28,13 +31,11 @@ export function DecisionsPage() {
 export function DecisionCard({ d }: { d: Decision }) {
   return (
     <div className="card" style={d.status === "superseded" ? { opacity: 0.55 } : undefined}>
-      <div className="spread">
-        <h3 style={{ margin: 0 }}>{d.title}</h3>
-        <span className="muted">
-          {d.status === "superseded" && <span className="badge">superseded</span>} @{d.decidedBy} ·{" "}
-          {new Date(d.createdAt).toLocaleDateString()}
-        </span>
-      </div>
+      <h3 style={{ margin: 0 }}>{d.title}</h3>
+      <p className="muted">
+        {d.status === "superseded" && <span className="badge">superseded</span>} @{d.decidedBy} ·{" "}
+        {new Date(d.createdAt).toLocaleDateString()}
+      </p>
       {d.context && <p className="muted" style={{ whiteSpace: "pre-wrap" }}>{d.context}</p>}
       {d.options.length > 0 && (
         <ul>

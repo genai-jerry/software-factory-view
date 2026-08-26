@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import { FilterBar } from "../components/FilterBar.js";
 import { RepoChip } from "../components/RepoChip.js";
+import { GitHubLink } from "../components/GitHubLink.js";
+import { ActionBar } from "../components/ActionBar.js";
 import { useFocus } from "../lib/filter.js";
 import type { BlockedIssue } from "../types.js";
 
@@ -28,8 +29,7 @@ export function BlockedPage() {
 
   return (
     <div>
-      <h1>Blocked issues</h1>
-      <FilterBar />
+      <h1>Inbox</h1>
       <p className="muted">
         A reply here is an ordinary GitHub comment under your identity — the factory's own comment trigger clears the blocked
         state and re-runs the stage with the whole thread in context.
@@ -40,22 +40,25 @@ export function BlockedPage() {
           <div key={i.id} className="attention-entry" style={{ display: "block" }}>
             <div className="spread">
               <span>
-                <span className="badge blocked">blocked {i.ageDays}d</span>{" "}
+                <span className="badge blocked">Agent halted {i.ageDays}d</span>{" "}
                 <Link to={`/epics/${i.epicId}`}>
                   #{i.number} {i.title}
                 </Link>{" "}
                 <RepoChip fullName={i.repo} />
-                <a className="raw-link" href={i.htmlUrl} target="_blank" rel="noreferrer">
-                  ≡ raw
-                </a>
+                <GitHubLink href={i.htmlUrl} />
               </span>
               <button onClick={() => setReplyFor(replyFor === i.id ? null : i.id)}>Reply</button>
             </div>
             {replyFor === i.id && (
               <div style={{ marginTop: "0.5rem" }}>
-                <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Answer the agent's question…" />
+                <textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="Answer the agent's question…"
+                  enterKeyHint="send"
+                />
                 {reply.isError && <div className="banner error">{(reply.error as Error).message}</div>}
-                <div className="row" style={{ marginTop: "0.4rem" }}>
+                <ActionBar>
                   <button
                     className="primary"
                     disabled={!body.trim() || reply.isPending}
@@ -63,7 +66,7 @@ export function BlockedPage() {
                   >
                     {reply.isPending ? "Posting…" : "Post reply & unblock"}
                   </button>
-                </div>
+                </ActionBar>
               </div>
             )}
           </div>

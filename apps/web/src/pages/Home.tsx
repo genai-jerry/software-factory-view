@@ -204,11 +204,14 @@ function SignInStation({ setup }: { setup: SetupStatus | undefined }) {
         can pick where to install the factory.
       </p>
       {setup?.configured && (
-        <p className="muted">
-          If GitHub shows a 404, the factory App is still private or its Callback URL is not exactly{" "}
-          <code>{setup.publicOrigin}/auth/github/callback</code>. Callback URL is under Identifying and authorizing
-          users. To let other GitHub users sign in: left sidebar → Advanced → Danger zone → Make public.
-        </p>
+        <details className="banner-tech">
+          <summary>If GitHub shows a 404</summary>
+          <p className="muted">
+            The factory App may still be private or its Callback URL is not exactly{" "}
+            <code>{setup.publicOrigin}/auth/github/callback</code>. Callback URL is under Identifying and authorizing
+            users. To let other GitHub users sign in: left sidebar → Advanced → Danger zone → Make public.
+          </p>
+        </details>
       )}
       {setup && !setup.configured && !setup.devLogin ? (
         <p className="muted">Sign-in is not available yet. Register the GitHub App in the step above.</p>

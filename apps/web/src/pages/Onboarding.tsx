@@ -200,6 +200,59 @@ const STEP_TITLES: Record<string, string> = {
   validate: "Validation suite",
 };
 
+function stepTitle(id: string): string {
+  return STEP_TITLES[id] ?? id;
+}
+
+function useCompactViewport(maxWidth = 767): boolean {
+  const [compact, setCompact] = useState(() =>
+    typeof window === "undefined" ? true : window.matchMedia(`(max-width: ${maxWidth}px)`).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${maxWidth}px)`);
+    const onChange = () => setCompact(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [maxWidth]);
+  return compact;
+}
+
+function SetupStep({
+  id,
+  current,
+  compact,
+  n,
+  title,
+  badge,
+  children,
+}: {
+  id: string;
+  current: string;
+  compact: boolean;
+  n: number;
+  title: string;
+  badge: ReactNode;
+  children: ReactNode;
+}) {
+  const status =
+    current === id ? "now" : current === "done" ? "done" : "later";
+  return (
+    <details
+      className="onboarding-step"
+      data-step={id}
+      open={!compact || current === id}
+    >
+      <summary>
+        <span>
+          {n} · {title} {badge}
+        </span>
+        <span className="muted">{status}</span>
+      </summary>
+      <div className="onboarding-step-body">{children}</div>
+    </details>
+  );
+}
+
 function isRepoSetup(repo: OnboardingRepo): boolean {
   return repo.factoryEnabled;
 }
@@ -216,12 +269,12 @@ function collapsedSummary(repo: OnboardingRepo, githubActions: boolean): string 
   const failed = steps.find((s) => repo.steps[s]?.status === "failed");
   if (failed) {
     const err = repo.steps[failed]?.detail["error"];
-    if (typeof err === "string" && err.trim()) return `${STEP_TITLES[failed]} failed — ${err}`;
-    return `${STEP_TITLES[failed]} failed`;
+    if (typeof err === "string" && err.trim()) return `${stepTitle(failed)} failed — ${err}`;
+    return `${stepTitle(failed)} failed`;
   }
   const next = steps.find((s) => repo.steps[s]?.status !== "ok");
   if (!next) return "All steps recorded — merge outstanding PRs or validate.";
-  return repo.steps[next] ? `${STEP_TITLES[next]} in progress` : `Next: ${STEP_TITLES[next]}`;
+  return repo.steps[next] ? `${stepTitle(next)} in progress` : `Next: ${stepTitle(next)}`;
 }
 
 export function OnboardingPage() {
@@ -570,6 +623,7 @@ function AccountRepos({
           ))}
         </div>
       )}
+      {visible.length > 0 && <p className="selected-count">{toGrant.length} selected</p>}
       {connect.isError && installed && <div className="banner error">{(connect.error as ApiError).message}</div>}
       {installed && ungrantedPicked.length > 0 && picked.length === 0 && (
         <div className="banner stale">
@@ -811,6 +865,8 @@ function RepoOnboarding({
     return <span className={`badge ${s.status === "ok" ? "merge" : s.status === "failed" ? "blocked" : ""}`}>{s.status}</span>;
   };
 
+  const currentStep = setupSteps(githubActions).find((s) => repo.steps[s]?.status !== "ok") ?? "done";
+  const compact = useCompactViewport();
   const stepNo = (() => {
     let i = 0;
     return () => ++i;
@@ -835,9 +891,6 @@ function RepoOnboarding({
           <button type="button" onClick={() => setOpen((v) => !v)}>
             {open ? "Hide" : setup ? "Correct setup" : "Show steps"}
           </button>
-          <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
-            {reset.isPending ? "Resetting…" : "Reset factory…"}
-          </button>
         </span>
       </div>
       {!open && (
@@ -852,188 +905,268 @@ function RepoOnboarding({
         <ResetOutcomePanel outcome={resetOutcome} />
       )}
       {open && (
-        <>
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Labels</strong> — create the 14 <code>factory:*</code> labels (idempotent; fixes drift) {stepBadge("labels")}
-        </span>
-        <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/labels`)} disabled={run.isPending}>
-          Run
-        </button>
-      </div>
-
-      <div className="check-row" style={{ alignItems: "center" }}>
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Secret</strong> —{" "}
-          {githubActions ? (
-            <>
-              written to GitHub Actions under the name you pick (Claude Code OAuth and the Anthropic API key are different
-              credentials; the factory accepts either). Also kept in the Console for the Software Factory orchestrator.
-            </>
-          ) : (
-            <>
-              stored in the Console for the Software Factory orchestrator (Claude Code OAuth and the Anthropic API key
-              are different credentials). GitHub Actions is disabled, so this is never written as an Actions secret.
-            </>
-          )}{" "}
-          {stepBadge("secrets")}
-          {typeof repo.steps["secrets"]?.detail["name"] === "string" && (
-            <span className="muted"> · wrote {String(repo.steps["secrets"]!.detail["name"])}</span>
-          )}
-        </span>
-        <select value={secretName} onChange={(e) => setSecretName(e.target.value)} style={{ width: "auto" }}>
-          <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
-          <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
-          <option value="FACTORY_CROSS_REPO_TOKEN">FACTORY_CROSS_REPO_TOKEN</option>
-        </select>
-        <input
-          type="password"
-          placeholder="secret value"
-          value={secretValue}
-          onChange={(e) => setSecretValue(e.target.value)}
-          style={{ width: "14rem" }}
-        />
-        <button onClick={() => putSecret.mutate({ name: secretName, value: secretValue })} disabled={!secretValue || putSecret.isPending}>
-          {githubActions ? "Write" : "Store"}
-        </button>
-      </div>
-
-      {githubActions && (
-      <div className="check-row" style={{ alignItems: "center" }}>
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Claude GitHub App</strong> — agent runs exchange an OIDC token for this App's credentials at run
-          time; without it on the repo every run fails with{" "}
-          <em>"Claude Code is not installed on this repository"</em>. GitHub shows an App's installations only to its
-          owner, so once it is installed (with this repo under its repository access), confirm here. {stepBadge("claude-app")}
-          {typeof repo.steps["claude-app"]?.detail["confirmedBy"] === "string" && (
-            <span className="muted"> · confirmed by {String(repo.steps["claude-app"]!.detail["confirmedBy"])}</span>
-          )}
-        </span>
-        <a href="https://github.com/apps/claude" target="_blank" rel="noreferrer">
-          Install on GitHub →
-        </a>
-        <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/claude-app`)} disabled={run.isPending}>
-          {repo.steps["claude-app"]?.status === "ok" ? "Re-confirm" : "It's installed"}
-        </button>
-      </div>
-      )}
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · OpenSpec</strong> — the worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto
-          the enablement branch; no terminal needed {stepBadge("openspec")}
-        </span>
-        <button
-          onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/openspec`)}
-          disabled={run.isPending || ["pending", "running"].includes(repo.steps["openspec"]?.status ?? "")}
-        >
-          {["pending", "running"].includes(repo.steps["openspec"]?.status ?? "") ? "Installing…" : "Install"}
-        </button>
-      </div>
-      {repo.steps["openspec"]?.status === "failed" && typeof repo.steps["openspec"]?.detail["error"] === "string" && (
-        <p className="muted">✗ {repo.steps["openspec"]!.detail["error"] as string} — fix and re-run, or fall back to{" "}
-          <code>npx -y @fission-ai/openspec@latest init --tools claude</code> locally
-        </p>
-      )}
-      {typeof repo.steps["openspec"]?.detail["prUrl"] === "string" && (
-        <p className="muted">
-          → scaffold pushed to the{" "}
-          <a href={repo.steps["openspec"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">enablement PR</a> (merge it
-          on GitHub)
-        </p>
-      )}
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Stub files PR</strong> —{" "}
-          {githubActions ? (
-            <>workflow stubs (permissions intact), models, approvers, issue template, settings.</>
-          ) : (
-            <>
-              <code>.github/factory-orchestrator.json</code> (engine langgraph), models, approvers, issue template,
-              settings. No GitHub Actions workflows.
-            </>
-          )}{" "}
-          Merging the PR is the human act that enables the factory. {stepBadge("stubs")}
-        </span>
-        <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
-          Open PR
-        </button>
-      </div>
-      {typeof repo.steps["stubs"]?.detail["prUrl"] === "string" && (
-        <p className="muted">
-          → <a href={repo.steps["stubs"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">enablement PR</a> (merge it on
-          GitHub)
-        </p>
-      )}
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Repo profile</strong> — <code>.factory/profile.json</code>, the stack facts every role treats as
-          authoritative here. Re-run asks the <strong>Profiler</strong> to read the code again and open a correction PR if
-          it disagrees — even when a profile is already merged. The Console never reads your source. {stepBadge("profile")}
-        </span>
-        <button
-          onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/profile`)}
-          disabled={run.isPending}
-          title={
-            githubActions
-              ? "Starts the Profiler in this repo's Actions. Re-run is how you correct a stale or wrong profile."
-              : "Starts the Profiler via the Software Factory orchestrator. Re-run is how you correct a stale or wrong profile."
-          }
-        >
-          {repo.steps["profile"] || setup ? "Re-run" : "Draft it"}
-        </button>
-      </div>
-      <ProfileStepFeedback
-        progress={profileProgress(repo)}
-        githubActions={githubActions}
-        merging={mergeProfilePr.isPending}
-        onMerge={() => mergeProfilePr.mutate()}
-      />
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Validation suite</strong> — checks with no writes on a healthy repo {stepBadge("validate")}
-        </span>
-        <button onClick={() => validate.mutate()} disabled={validate.isPending}>
-          {validate.isPending ? "Checking…" : "Validate"}
-        </button>
-      </div>
-      {validation && (
-        <div style={{ marginTop: "0.4rem" }}>
-          {validation.checks.map((c) => (
-            <div className="check-row" key={c.check}>
-              <span className={`check-icon ${c.ok === true ? "ok" : c.ok === false ? "fail" : "skip"}`}>
-                {c.ok === true ? "✓" : c.ok === false ? "✗" : "–"}
+        <div className="onboarding-steps">
+          <SetupStep
+            id="labels"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.labels ?? "Labels"}
+            badge={stepBadge("labels")}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                Create the 14 <code>factory:*</code> labels (idempotent; fixes drift).
               </span>
-              <strong>{c.check}</strong>
-              <span className="muted" style={{ flex: 1 }}>
-                {c.detail}
+              <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/labels`)} disabled={run.isPending}>
+                Run
+              </button>
+            </div>
+          </SetupStep>
+
+          <SetupStep
+            id="secrets"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.secrets ?? "Secret"}
+            badge={stepBadge("secrets")}
+          >
+            <div className="check-row" style={{ alignItems: "center" }}>
+              <span style={{ flex: 1 }}>
+                {githubActions ? (
+                  <>
+                    Written to GitHub Actions under the name you pick (Claude Code OAuth and the Anthropic API key are
+                    different credentials; the factory accepts either). Also kept in the Console for the Software Factory
+                    orchestrator.
+                  </>
+                ) : (
+                  <>
+                    Stored in the Console for the Software Factory orchestrator (Claude Code OAuth and the Anthropic API
+                    key are different credentials). GitHub Actions is disabled, so this is never written as an Actions
+                    secret.
+                  </>
+                )}{" "}
+                {typeof repo.steps["secrets"]?.detail["name"] === "string" && (
+                  <span className="muted"> · wrote {String(repo.steps["secrets"]!.detail["name"])}</span>
+                )}
+              </span>
+              <select value={secretName} onChange={(e) => setSecretName(e.target.value)} style={{ width: "auto" }}>
+                <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
+                <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
+                <option value="FACTORY_CROSS_REPO_TOKEN">FACTORY_CROSS_REPO_TOKEN</option>
+              </select>
+              <input
+                type="password"
+                placeholder="secret value"
+                value={secretValue}
+                onChange={(e) => setSecretValue(e.target.value)}
+                style={{ width: "14rem" }}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button onClick={() => putSecret.mutate({ name: secretName, value: secretValue })} disabled={!secretValue || putSecret.isPending}>
+                {githubActions ? "Write" : "Store"}
+              </button>
+            </div>
+          </SetupStep>
+
+          {githubActions && (
+            <SetupStep
+              id="claude-app"
+              current={currentStep}
+              compact={compact}
+              n={stepNo()}
+              title={STEP_TITLES["claude-app"] ?? "Claude GitHub App"}
+              badge={stepBadge("claude-app")}
+            >
+              <div className="check-row" style={{ alignItems: "center" }}>
+                <span style={{ flex: 1 }}>
+                  Agent runs exchange an OIDC token for this App&apos;s credentials at run time; without it on the repo
+                  every run fails with <em>&quot;Claude Code is not installed on this repository&quot;</em>. GitHub shows
+                  an App&apos;s installations only to its owner, so once it is installed (with this repo under its
+                  repository access), confirm here.
+                  {typeof repo.steps["claude-app"]?.detail["confirmedBy"] === "string" && (
+                    <span className="muted"> · confirmed by {String(repo.steps["claude-app"]!.detail["confirmedBy"])}</span>
+                  )}
+                </span>
+                <a href="https://github.com/apps/claude" target="_blank" rel="noreferrer">
+                  Install on GitHub →
+                </a>
+                <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/claude-app`)} disabled={run.isPending}>
+                  {repo.steps["claude-app"]?.status === "ok" ? "Re-confirm" : "It's installed"}
+                </button>
+              </div>
+            </SetupStep>
+          )}
+
+          <SetupStep
+            id="openspec"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.openspec ?? "OpenSpec"}
+            badge={stepBadge("openspec")}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                The worker runs <code>openspec init --tools claude</code> and pushes the scaffold onto the enablement
+                branch; no terminal needed.
+              </span>
+              <button
+                onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/openspec`)}
+                disabled={run.isPending || ["pending", "running"].includes(repo.steps["openspec"]?.status ?? "")}
+              >
+                {["pending", "running"].includes(repo.steps["openspec"]?.status ?? "") ? "Installing…" : "Install"}
+              </button>
+            </div>
+            {repo.steps["openspec"]?.status === "failed" && typeof repo.steps["openspec"]?.detail["error"] === "string" && (
+              <p className="muted">
+                ✗ {repo.steps["openspec"]!.detail["error"] as string} — fix and re-run, or fall back to{" "}
+                <code>npx -y @fission-ai/openspec@latest init --tools claude</code> locally
+              </p>
+            )}
+            {typeof repo.steps["openspec"]?.detail["prUrl"] === "string" && (
+              <p className="muted">
+                → scaffold pushed to the{" "}
+                <a href={repo.steps["openspec"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">
+                  enablement PR
+                </a>{" "}
+                (merge it on GitHub)
+              </p>
+            )}
+          </SetupStep>
+
+          <SetupStep
+            id="stubs"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.stubs ?? "Stub files PR"}
+            badge={stepBadge("stubs")}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                {githubActions ? (
+                  <>workflow stubs (permissions intact), models, approvers, issue template, settings.</>
+                ) : (
+                  <>
+                    <code>.github/factory-orchestrator.json</code> (engine langgraph), models, approvers, issue template,
+                    settings. No GitHub Actions workflows.
+                  </>
+                )}{" "}
+                Merging the PR is the human act that enables the factory.
+              </span>
+              <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
+                Open PR
+              </button>
+            </div>
+            {typeof repo.steps["stubs"]?.detail["prUrl"] === "string" && (
+              <p className="muted">
+                →{" "}
+                <a href={repo.steps["stubs"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">
+                  enablement PR
+                </a>{" "}
+                (merge it on GitHub)
+              </p>
+            )}
+          </SetupStep>
+
+          <SetupStep
+            id="profile"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.profile ?? "Repo profile"}
+            badge={stepBadge("profile")}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                <code>.factory/profile.json</code>, the stack facts every role treats as authoritative here. Re-run asks
+                the <strong>Profiler</strong> to read the code again and open a correction PR if it disagrees — even when
+                a profile is already merged. The Console never reads your source.
+              </span>
+              <button
+                onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/profile`)}
+                disabled={run.isPending}
+                title={
+                  githubActions
+                    ? "Starts the Profiler in this repo's Actions. Re-run is how you correct a stale or wrong profile."
+                    : "Starts the Profiler via the Software Factory orchestrator. Re-run is how you correct a stale or wrong profile."
+                }
+              >
+                {repo.steps["profile"] || setup ? "Re-run" : "Draft it"}
+              </button>
+            </div>
+            <ProfileStepFeedback
+              progress={profileProgress(repo)}
+              githubActions={githubActions}
+              merging={mergeProfilePr.isPending}
+              onMerge={() => mergeProfilePr.mutate()}
+            />
+          </SetupStep>
+
+          <SetupStep
+            id="validate"
+            current={currentStep}
+            compact={compact}
+            n={stepNo()}
+            title={STEP_TITLES.validate ?? "Validation suite"}
+            badge={stepBadge("validate")}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>Checks with no writes on a healthy repo.</span>
+              <button onClick={() => validate.mutate()} disabled={validate.isPending}>
+                {validate.isPending ? "Checking…" : "Validate"}
+              </button>
+            </div>
+            {validation && (
+              <div className="validation-list">
+                {validation.checks.map((c) => (
+                  <div className="check-row" key={c.check}>
+                    <span className={`check-icon ${c.ok === true ? "ok" : c.ok === false ? "fail" : "skip"}`}>
+                      {c.ok === true ? "pass" : c.ok === false ? "fail" : "skip"}
+                    </span>
+                    <strong>{c.check}</strong>
+                    <span className="muted" style={{ flex: 1 }}>
+                      {c.ok === false ? `Fix: ${c.detail}` : c.detail}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SetupStep>
+
+          <SetupStep
+            id="canary"
+            current={currentStep === "done" ? "canary" : currentStep}
+            compact={compact}
+            n={stepNo()}
+            title="Canary"
+            badge={null}
+          >
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                After the enablement PR merges, file a plain issue (&quot;Add a FACTORY_CANARY.md with the run date&quot;)
+                and watch it traverse the pipeline in this workspace; your first gate approval happens there.
               </span>
             </div>
-          ))}
+          </SetupStep>
+
+          <div className="onboarding-reset">
+            <div className="check-row">
+              <span style={{ flex: 1 }}>
+                <strong>Reset</strong> — delete factory workflows, <code>.github/factory-orchestrator.json</code>,
+                OpenSpec, and <code>.factory/profile.json</code> from the default branch and clear the recorded steps
+                above (branch protection turns this into a PR you merge instead). Secrets, labels, and{" "}
+                <code>CLAUDE.md</code> stay. {stepBadge("reset")}
+              </span>
+              <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
+                {reset.isPending ? "Resetting…" : "Reset factory…"}
+              </button>
+            </div>
+          </div>
         </div>
-      )}
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>{stepNo()} · Canary</strong> — after the enablement PR merges, file a plain issue ("Add a FACTORY_CANARY.md with the
-          run date") and watch it traverse the pipeline in this workspace; your first gate approval happens there.
-        </span>
-      </div>
-
-      <div className="check-row">
-        <span style={{ flex: 1 }}>
-          <strong>Reset</strong> — delete factory workflows, <code>.github/factory-orchestrator.json</code>, OpenSpec, and <code>.factory/profile.json</code> from the
-          default branch and clear the recorded steps above (branch protection turns this into a PR you merge instead).
-          Secrets, labels, and <code>CLAUDE.md</code> stay. {stepBadge("reset")}
-        </span>
-        <button type="button" className="danger" disabled={reset.isPending} onClick={confirmReset}>
-          {reset.isPending ? "Resetting…" : "Reset factory…"}
-        </button>
-      </div>
-        </>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 // Dev server proxies API paths to the local Fastify service so the browser
 // always sees one origin — mirroring the nginx layout in deployment.
@@ -19,4 +19,9 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist", sourcemap: false },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/test-setup.ts",
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  },
 });

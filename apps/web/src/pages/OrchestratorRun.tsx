@@ -10,7 +10,7 @@ export function OrchestratorRunPage() {
   return (
     <div className="run-page">
       <p className="muted" style={{ marginTop: 0 }}>
-        <Link to="/">Mission control</Link>
+        <Link to="/">My work</Link>
       </p>
       <div className="spread">
         <h1 style={{ marginBottom: 0 }}>Orchestrator run</h1>

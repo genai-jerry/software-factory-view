@@ -1,29 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import { FilterBar } from "../components/FilterBar.js";
+import { Banner } from "../components/Banner.js";
 import { IssuePeek } from "../components/IssuePeek.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
+import { SegmentedTabs } from "../components/SegmentedTabs.js";
+import { useHalt } from "../components/Shell.js";
 import { useFocus } from "../lib/filter.js";
+import { PHASE_LABELS, attentionReason, factoryShort, peopleLabel } from "../lib/labels.js";
 import type { AttentionEntry, BoardCard, EstateSummary, IngestionHealth, MineRow, MyWork, Phase, WaitingRow } from "../types.js";
 
 const PHASE_ORDER: Phase[] = ["held", "specifying", "planning", "building", "shipping"];
-const PHASE_LABELS: Record<Phase, string> = {
-  specifying: "Being specified",
-  planning: "Being planned",
-  building: "Being built",
-  shipping: "Shipping",
-  held: "Held",
-};
 
-/**
- * Mission control, individual-first (plan 07 §4): "My work" — needs you /
- * yours in flight / waiting on others — is the landing tab; the whole-factory
- * board and organisation health live behind the Factory tab. Every row opens the
- * peek drawer; the workspace is one more click.
- */
 export function MissionControl() {
   const [tab, setTab] = useState<"me" | "factory">("me");
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -33,8 +23,6 @@ export function MissionControl() {
   });
   const anyStale = estates.data?.estates.some((e) => e.stale);
   const ingestion = estates.data?.ingestion;
-  // Unprocessed deliveries are normal for a few seconds; a backlog older than
-  // this means the worker is not draining the queue.
   const STUCK_MS = 10 * 60_000;
   const webhooksNeverArrived = Boolean(estates.data && estates.data.estates.length > 0 && ingestion && !ingestion.lastReceivedAt);
   const webhooksStuck = Boolean(
@@ -46,43 +34,41 @@ export function MissionControl() {
 
   return (
     <div>
-      <h1>Mission control</h1>
-      <FilterBar />
+      <h1>My work</h1>
       {webhooksNeverArrived && (
-        <div className="banner error">
-          No GitHub webhook has ever reached this Console — new issues and PRs will not appear on their own. Check the GitHub App's
-          webhook URL and secret (App settings → Webhook, and Advanced → Recent deliveries for the response codes). Until that is
-          fixed, trigger a reconcile from the Onboarding page to import current GitHub state.
-        </div>
+        <Banner
+          tone="error"
+          technical="Check the GitHub App webhook URL and secret, then Recent deliveries. Until webhooks work, reconcile from Onboarding."
+        >
+          New issues will not appear on their own. Reconcile from Onboarding to import current GitHub state.
+        </Banner>
       )}
       {webhooksStuck && ingestion && (
-        <div className="banner error">
-          {ingestion.pending} webhook deliver{ingestion.pending === 1 ? "y is" : "ies are"} waiting unprocessed — webhooks reach the
-          Console but the worker is not projecting them. Check that the worker process and Redis are running.
-        </div>
+        <Banner tone="error" technical={`${ingestion.pending} webhook deliveries waiting. Worker or Redis may be down.`}>
+          Updates from GitHub are stuck. Ask the host operator to check the worker.
+        </Banner>
       )}
       {anyStale && !webhooksNeverArrived && !webhooksStuck && (
-        <div className="banner stale">
-          Some organisations have not synced recently — the view may be stale. Trigger a reconcile from the Onboarding page, and check
-          that webhooks are reaching the Console.
-        </div>
+        <Banner tone="stale" technical="Trigger a reconcile from Onboarding if this persists.">
+          Some organisations have not synced recently — this view may be behind GitHub.
+        </Banner>
       )}
       {estates.data && estates.data.estates.some((e) => e.repos.some((r) => !r.factoryEnabled)) && (
         <div className="banner info">
           Some connected repositories are not factory-enabled yet.{" "}
-          <Link to="/onboarding">Finish setup on Onboarding</Link> — labels, secrets, and the enablement PR — or work from here
-          if the factory was already enabled by hand.
+          <Link to="/onboarding">Finish setup on Onboarding</Link>.
         </div>
       )}
 
-      <div className="tabs">
-        <button className={tab === "me" ? "active" : ""} onClick={() => setTab("me")}>
-          My work
-        </button>
-        <button className={tab === "factory" ? "active" : ""} onClick={() => setTab("factory")}>
-          Factory
-        </button>
-      </div>
+      <SegmentedTabs
+        ariaLabel="Mission control view"
+        items={[
+          { id: "me", label: "My work" },
+          { id: "factory", label: "Factory" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
       {tab === "me" ? <MyWorkTab onPeek={setPeekId} /> : <FactoryTab estates={estates.data?.estates} onPeek={setPeekId} />}
       {peekId && <IssuePeek issueId={peekId} onClose={() => setPeekId(null)} />}
@@ -92,7 +78,24 @@ export function MissionControl() {
 
 function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
   const focus = useFocus();
+  const { setHalt } = useHalt();
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
+
+  useEffect(() => {
+    const first = myWork.data?.needsYou[0];
+    if (!first || (first.rank !== 1 && first.kind !== "gate")) {
+      setHalt(null);
+      return;
+    }
+    setHalt({
+      title: attentionReason(first.kind, first.rank, first.whyYou, first.state),
+      detail: first.question ?? first.title,
+      actionLabel: "Open",
+      onAction: () => onPeek(first.issueId),
+    });
+    return () => setHalt(null);
+  }, [myWork.data, onPeek, setHalt]);
+
   if (myWork.isLoading) return <p className="muted">Loading…</p>;
   if (!myWork.data) return <p className="muted">Could not load your work.</p>;
   const { needsYou, mine, waitingOn } = myWork.data;
@@ -133,21 +136,22 @@ function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
 }
 
 function AttentionRow({ entry: e, onPeek }: { entry: AttentionEntry; onPeek: (id: string) => void }) {
+  const reason = attentionReason(e.kind, e.rank, e.whyYou, e.state);
+  const chip = factoryShort(e.state);
   return (
     <div className={`attention-entry rank-${e.rank}`}>
-      <span className={`badge ${e.kind}`}>{e.rank === 4 ? "unowned" : e.kind}</span>
+      <span className={`badge ${e.kind}`}>{e.rank === 1 ? "Agent halted" : e.rank === 4 ? "unowned" : reason}</span>
       <span style={{ flex: 1 }}>
-        <a
-          href="#peek"
-          onClick={(ev) => {
-            ev.preventDefault();
-            onPeek(e.issueId);
-          }}
-        >
+        <button type="button" className="link work-row-title" onClick={() => onPeek(e.issueId)}>
           {e.title}
-        </a>
-        <div className="why">
-          <RepoChip fullName={e.repo} /> {e.whyYou}
+        </button>
+        <div className="work-row-meta">
+          <RepoChip fullName={e.repo} /> {reason}
+          {chip && (
+            <span className="badge state" title={e.state ?? undefined}>
+              {chip}
+            </span>
+          )}
         </div>
         {e.question && <div className="question">“{e.question}”</div>}
       </span>
@@ -160,19 +164,14 @@ function MineRowView({ row: m, onPeek }: { row: MineRow; onPeek: (id: string) =>
   return (
     <div className={`attention-entry quiet${m.blocked ? " held-row" : ""}`}>
       <span style={{ flex: 1 }}>
-        <a
-          href="#peek"
-          onClick={(ev) => {
-            ev.preventDefault();
-            onPeek(m.issueId);
-          }}
-        >
+        <button type="button" className="link work-row-title" onClick={() => onPeek(m.issueId)}>
           #{m.number} {m.title}
-        </a>
-        <div className="why">
-          <RepoChip fullName={m.repo} /> {m.state?.replace("factory:", "") ?? "no state"} ·{" "}
+        </button>
+        <div className="work-row-meta">
+          <RepoChip fullName={m.repo} /> {peopleLabel(m.state)} ·{" "}
           {m.whyMine === "assigned" ? "assigned to you" : "you filed it"}
           {m.rollup && m.rollup.total > 0 && ` · ${m.rollup.done}/${m.rollup.total} tasks`}
+          <span className="badge state">{factoryShort(m.state)}</span>
         </div>
       </span>
       <span className="age">{m.freshness.quietDays === 0 ? "moved today" : `quiet ${m.freshness.quietDays}d`}</span>
@@ -185,27 +184,15 @@ function WaitingRowView({ row: w, onPeek }: { row: WaitingRow; onPeek: (id: stri
   return (
     <div className="attention-entry quiet">
       <span style={{ flex: 1 }}>
-        <a
-          href="#peek"
-          onClick={(ev) => {
-            ev.preventDefault();
-            onPeek(w.issueId);
-          }}
-        >
+        <button type="button" className="link work-row-title" onClick={() => onPeek(w.issueId)}>
           #{w.number} {w.title}
-        </a>
-        <div className="why">
+        </button>
+        <div className="work-row-meta">
           <RepoChip fullName={w.repo} /> blocked by{" "}
-          <a
-            href="#peek"
-            onClick={(ev) => {
-              ev.preventDefault();
-              onPeek(b.issueId);
-            }}
-          >
+          <button type="button" className="link" onClick={() => onPeek(b.issueId)}>
             #{b.number} {b.title}
-          </a>{" "}
-          ({b.state?.replace("factory:", "") ?? "no state"}
+          </button>{" "}
+          ({peopleLabel(b.state)}
           {b.assignees.length > 0 && ` · ${b.assignees.map((a) => `@${a}`).join(", ")}`}
           {b.ageDays !== null && ` · ${b.ageDays}d`})
         </div>
@@ -223,7 +210,8 @@ function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined;
   return (
     <div>
       <div className="card">
-        <h2>Pipeline board</h2>
+        <h2>Pipeline</h2>
+        <p className="muted">Board on larger screens. On a phone this is a phase list.</p>
         {board.isLoading && <p className="muted">Loading…</p>}
         {board.data && <PipelineBoard columns={board.data.columns} cards={board.data.cards} onPeek={onPeek} />}
       </div>
@@ -236,25 +224,20 @@ function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined;
               <strong>{e.name}</strong>
               <span className="muted">
                 last sync: {e.lastSyncedAt ? new Date(e.lastSyncedAt).toLocaleString() : "never"}
-                {e.stale && " ⚠"}
+                {e.stale && " (stale)"}
               </span>
             </div>
             <div className="row" style={{ marginTop: "0.3rem" }}>
               {e.repos.map((r) => (
                 <span className="badge" key={r.id} title={r.factoryEnabled ? "factory enabled" : "factory not detected"}>
-                  {r.factoryEnabled ? "✓" : "○"} {r.fullName.split("/")[1]}
+                  {r.factoryEnabled ? "on" : "off"} {r.fullName.split("/")[1]}
                 </span>
               ))}
             </div>
           </div>
         ))}
-        {estates?.length === 0 && (
-          <p className="muted">
-            No organisations connected yet. Install the GitHub App on your org, then reload — the installation webhook creates the connection.
-          </p>
-        )}
+        {estates?.length === 0 && <p className="muted">No organisations connected yet. Connect one from Onboarding.</p>}
       </div>
     </div>
   );
 }
-
