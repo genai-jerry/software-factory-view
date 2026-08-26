@@ -5,6 +5,10 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.js";
 import { FocusProvider } from "./lib/filter.js";
 import { applyTheme } from "./theme.js";
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/ibm-plex-sans/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
 import "./styles.css";
 
 applyTheme();

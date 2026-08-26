@@ -1,20 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api.js";
-import { FilterBar } from "../components/FilterBar.js";
 import { IssuePeek } from "../components/IssuePeek.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
+import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { useFocus } from "../lib/filter.js";
+import { PHASE_LABELS } from "../lib/labels.js";
 import type { BoardCard, FlowData, FlowEpic, FlowMilestone } from "../types.js";
-
-const PHASE_LABELS: Record<string, string> = {
-  specifying: "Being specified",
-  planning: "Being planned",
-  building: "Being built",
-  shipping: "Shipping",
-  held: "Held",
-};
 
 /**
  * The manager / scrum-master lens (plan 07 §7): a collapsible tree from the
@@ -36,15 +29,15 @@ export function FlowPage() {
   return (
     <div>
       <h1>Flow</h1>
-      <FilterBar />
-      <div className="tabs">
-        <button className={lens === "tree" ? "active" : ""} onClick={() => setLens("tree")}>
-          Tree
-        </button>
-        <button className={lens === "board" ? "active" : ""} onClick={() => setLens("board")}>
-          Board
-        </button>
-      </div>
+      <SegmentedTabs
+        ariaLabel="Flow view"
+        items={[
+          { id: "tree", label: "Tree" },
+          { id: "board", label: "Board" },
+        ]}
+        value={lens}
+        onChange={setLens}
+      />
 
       {lens === "board" ? (
         <div className="card">
@@ -76,13 +69,24 @@ function MilestoneNode({ milestone: m, onPeek }: { milestone: FlowMilestone; onP
   for (const e of m.epics) phaseCounts.set(e.phase, (phaseCounts.get(e.phase) ?? 0) + 1);
   return (
     <div className="tree-node">
-      <div className="tree-row" onClick={() => setOpen(!open)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setOpen(!open)}>
-        <span className="tree-caret">{open ? "▼" : "▶"}</span>
+      <div
+        className="tree-row"
+        onClick={() => setOpen(!open)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+      >
+        <span className="tree-caret" aria-hidden="true">{open ? "▼" : "▶"}</span>
         <strong>{m.title}</strong>
         {m.trackerState && <span className="badge state">{m.trackerState.replace("factory:", "")}</span>}
         <span className="muted">
           {m.epics.length} epic{m.epics.length === 1 ? "" : "s"}
-          {[...phaseCounts.entries()].map(([p, n]) => ` · ${n} ${PHASE_LABELS[p]?.toLowerCase() ?? p}`).join("")}
+          {[...phaseCounts.entries()].map(([p, n]) => ` · ${n} ${(PHASE_LABELS[p as keyof typeof PHASE_LABELS] ?? p).toLowerCase()}`).join("")}
         </span>
       </div>
       {open && m.epics.map((e) => <EpicNode epic={e} key={e.epicId} onPeek={onPeek} />)}
@@ -98,7 +102,19 @@ function EpicNode({ epic: e, onPeek }: { epic: FlowEpic; onPeek: (id: string) =>
   return (
     <div className="tree-node indent">
       <div className="tree-row">
-        <span className="tree-caret" onClick={() => setOpen(!open)} role="button" tabIndex={0} onKeyDown={(ev) => ev.key === "Enter" && setOpen(!open)}>
+        <span
+          className="tree-caret"
+          onClick={() => setOpen(!open)}
+          role="button"
+          tabIndex={0}
+          aria-label={open ? "Collapse tasks" : "Expand tasks"}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter" || ev.key === " ") {
+              ev.preventDefault();
+              setOpen(!open);
+            }
+          }}
+        >
           {e.tasks.length > 0 ? (open ? "▼" : "▶") : "·"}
         </span>
         <a

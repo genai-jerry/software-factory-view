@@ -182,9 +182,12 @@ URL, and register the App from there so its webhook URL matches.
    the workspace reassembles, threads and decisions included (they live in comment markers).
 6. **Validation suite**: Onboarding → Validate on a healthy repo → all green, and
    confirm zero writes happened (check the repo's audit log).
+7. **Phone jobs (compact IA)**: at ~360px the signed-in chrome is a top bar plus four bottom destinations — **My work**, **Flow**, **Inbox**, **More**. Focus lives in the top bar. When the factory is stopped on you, a signature **halt bar** sits under the top bar (not stacked with sticky Approve on the gate). Peek and Ask open as a full-height sheet; Escape closes them. Settings stay in More for org admins (GitHub App section only if you can edit the App).
+8. **Gate on a phone**: open an epic waiting at G1, switch to Gate, read the spec, Approve without panning the page. If you are not an approver, Approve is hidden.
 
 ```bash
-pnpm test        # unit + projection replay + API security tests
+pnpm test        # unit + projection replay + API security tests (web: vitest)
+pnpm --filter @console/web test:e2e   # Playwright 360/768/1280 + axe on the UX harness
 pnpm typecheck
 pnpm build
 ```
@@ -201,3 +204,4 @@ pnpm build
 | [05-decisions-and-risks](docs/plan/05-decisions-and-risks.md) | Decisions, risks, open questions |
 | [07-pipeline-view-state-display](docs/plan/07-pipeline-view-state-display.md) | Individual-first "My work" view, peek disclosure, dependency Q&A, manager tree view |
 | [08-pipeline-view-implementation](docs/plan/08-pipeline-view-implementation.md) | Implementation plan for 07: work packages, migrations (assignees, task dependencies, QA scope, milestones), per-file changes, tests |
+| [09-ux-ui-redesign](docs/plan/09-ux-ui-redesign.md) | Mobile-first UX/UI redesign: standards audit, persona scorecard, OpenSpec change `mobile-ux-redesign` |

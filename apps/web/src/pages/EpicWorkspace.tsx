@@ -13,22 +13,23 @@ import type {
 } from "../types.js";
 import { DecisionCard } from "./Decisions.js";
 import { QaPanel } from "./QaPanel.js";
-
-const RAIL_LABELS: Record<string, string> = {
-  "factory:intake": "intake",
-  "factory:spec-ready": "G1",
-  "factory:spec-approved": "spec ✓",
-  "factory:planned": "planned",
-  "factory:design-ready": "G2",
-  "factory:design-approved": "design ✓",
-  "factory:ready": "ready",
-  "factory:in-review": "review",
-  "factory:in-test": "test",
-  "factory:ready-to-ship": "G3",
-  "factory:deployed": "done",
-};
+import { GitHubLink } from "../components/GitHubLink.js";
+import { SegmentedTabs } from "../components/SegmentedTabs.js";
+import { Sheet } from "../components/Sheet.js";
+import { ActionBar } from "../components/ActionBar.js";
+import { HaltBar } from "../components/HaltBar.js";
+import { peopleLabel, factoryShort } from "../lib/labels.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tasks" | "threads" | "decisions";
+
+const TAB_LABELS: Record<Tab, string> = {
+  overview: "Overview",
+  artifacts: "Spec",
+  gate: "Gate",
+  tasks: "Tasks",
+  threads: "Threads",
+  decisions: "Decisions",
+};
 
 export function EpicWorkspacePage({ me }: { me: Me }) {
   const { id = "" } = useParams();
@@ -42,25 +43,50 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
     refetchInterval: 30_000,
   });
 
+  const [askOpen, setAskOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [railOpen, setRailOpen] = useState(false);
+
   if (ws.isError) return <div className="banner error">{(ws.error as ApiError).message}</div>;
   if (!ws.data) return <p className="muted">Loading workspace…</p>;
   const data = ws.data;
 
   const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:ready-to-ship");
+  const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
+  const tabItems: Array<{ id: Tab; label: string }> = (
+    ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tasks", "threads", "decisions"] as Tab[]
+  ).map((t) => ({
+    id: t,
+    label:
+      t === "gate"
+        ? `Gate (${peopleLabel(data.epic.state)})`
+        : t === "threads"
+          ? `Threads (${data.threads.filter((th) => Number(th.entryCount) > 0).length})`
+          : TAB_LABELS[t],
+  }));
 
   return (
     <div>
       <div className="spread">
         <h1 style={{ marginBottom: 0 }}>
-          Epic #{data.epic.number} · {data.epic.title}
-          <a className="raw-link" href={data.epic.htmlUrl} target="_blank" rel="noreferrer">
-            ≡ raw
-          </a>
+          Epic #{data.epic.number} · {data.epic.title}{" "}
+          <GitHubLink href={data.epic.htmlUrl} />
         </h1>
-        <span className="badge state">{data.epic.state ?? "no factory state"}</span>
+        <span className="badge state" title={data.epic.state ?? undefined}>
+          {peopleLabel(data.epic.state)}
+        </span>
       </div>
 
-      <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} />
+      <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
+
+      {showHalt && (
+        <HaltBar
+          title={peopleLabel(data.epic.state)}
+          detail={`${data.gate!.label} is waiting on you.`}
+          actionLabel="Open"
+          onAction={() => setTab("gate")}
+        />
+      )}
 
       {data.freshness.stale && (
         <div className="banner stale">
@@ -97,16 +123,9 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
         </div>
       )}
 
-      <div className="tabs">
-        {(["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tasks", "threads", "decisions"] as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t === "gate" ? `gate (${data.gate?.label})` : t}
-            {t === "threads" && ` (${data.threads.filter((th) => Number(th.entryCount) > 0).length})`}
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs ariaLabel="Epic workspace" items={tabItems} value={tab} onChange={setTab} />
 
-      <div className="workspace" style={{ gridTemplateColumns: "minmax(0,1fr) 340px" }}>
+      <div className="workspace workspace-wide">
         <div>
           {tab === "overview" && <OverviewTab data={data} />}
           {tab === "artifacts" && <ArtifactsTab data={data} />}
@@ -120,6 +139,24 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           <TimelineRail epicId={data.epic.id} />
         </div>
       </div>
+      <div className="workspace-tools">
+        <button type="button" onClick={() => setAskOpen(true)}>
+          Ask
+        </button>
+        <button type="button" onClick={() => setHistoryOpen(true)}>
+          History
+        </button>
+      </div>
+      {askOpen && (
+        <Sheet title="Ask the Factory" onClose={() => setAskOpen(false)}>
+          <QaPanel scope={{ kind: "epic", id: data.epic.id }} />
+        </Sheet>
+      )}
+      {historyOpen && (
+        <Sheet title="History" onClose={() => setHistoryOpen(false)}>
+          <TimelineRail epicId={data.epic.id} />
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -162,21 +199,45 @@ function StartFactoryRun({ epicId, state }: { epicId: string; state: string | nu
   );
 }
 
-function StageRail({ pipeline, current, pendingMine }: { pipeline: string[]; current: string | null; pendingMine: boolean }) {
+function StageRail({
+  pipeline,
+  current,
+  pendingMine,
+  expanded,
+  onToggle,
+}: {
+  pipeline: string[];
+  current: string | null;
+  pendingMine: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const idx = current ? pipeline.indexOf(current) : -1;
+  const compactIds = new Set([pipeline[idx - 1], pipeline[idx], pipeline[idx + 1]].filter(Boolean));
   return (
-    <div className="stage-rail">
-      {pipeline.map((s, i) => {
-        const cls = i < idx ? "past" : i === idx ? (pendingMine ? "attention" : "current") : "";
-        return (
-          <span className={`stage ${cls}`} key={s} title={s}>
-            {i > 0 && <span className="bar" />}
-            <span className="dot" />
-            <span className="lbl">{RAIL_LABELS[s] ?? s}</span>
-          </span>
-        );
-      })}
-      {current && idx === -1 && <span className="badge blocked">{current}</span>}
+    <div>
+      <div className={`stage-rail${expanded ? "" : " compact"}`}>
+        {pipeline.map((s, i) => {
+          const cls = i < idx ? "past" : i === idx ? (pendingMine ? "attention" : "current") : "";
+          const shown = expanded || compactIds.has(s);
+          return (
+            <span className={`stage ${cls}${shown ? " shown" : ""}`} key={s} title={s}>
+              {i > 0 && <span className="bar" />}
+              <span className="dot" />
+              <span className="lbl">
+                {peopleLabel(s)}
+                {factoryShort(s) && factoryShort(s) !== peopleLabel(s).replace(/\s/g, "") && (
+                  <span className="muted"> ({factoryShort(s)})</span>
+                )}
+              </span>
+            </span>
+          );
+        })}
+        {current && idx === -1 && <span className="badge blocked">{peopleLabel(current)}</span>}
+      </div>
+      <button type="button" className="link" onClick={onToggle}>
+        {expanded ? "Hide full pipeline" : "Show full pipeline"}
+      </button>
     </div>
   );
 }
@@ -236,7 +297,7 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
   return (
     <div>
       <div className="row" style={{ marginBottom: "0.75rem" }}>
-        <select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ width: "auto", flex: 1 }}>
+        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
           {data.artifacts.map((a) => (
             <option key={a.path} value={a.path}>
               [{a.kind}] {a.path}
@@ -244,15 +305,16 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
             </option>
           ))}
         </select>
-        <div className="tabs" style={{ border: "none", margin: 0 }}>
-          <button className={ref === "proposed" ? "active" : ""} onClick={() => setRef("proposed")}>
-            as proposed
-          </button>
-          <button className={ref === "approved" ? "active" : ""} onClick={() => setRef("approved")}>
-            as approved
-          </button>
-        </div>
       </div>
+      <SegmentedTabs
+        ariaLabel="Artefact version"
+        items={[
+          { id: "proposed", label: "As proposed" },
+          { id: "approved", label: "As approved" },
+        ]}
+        value={ref}
+        onChange={setRef}
+      />
       <div className="card">
         {artifact.isError && <p className="muted">{(artifact.error as ApiError).message}</p>}
         {artifact.data && (
@@ -339,7 +401,7 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
         </div>
         {g.changedSinceLastView && (
           <div className="banner stale">
-            The artifact changed since you last looked (you saw <code>{g.lastViewedSha?.slice(0, 7)}</code>, it is now{" "}
+            This spec changed since you last looked (you saw <code>{g.lastViewedSha?.slice(0, 7)}</code>, it is now{" "}
             <code>{g.currentSha?.slice(0, 7)}</code>).
           </div>
         )}
@@ -357,9 +419,7 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               <span className="muted">
                 ({pr.headRef} → {pr.baseRef}, CI: {pr.ciStatus ?? "unknown"})
               </span>
-              <a className="raw-link" href={pr.htmlUrl} target="_blank" rel="noreferrer">
-                ≡ raw
-              </a>
+              <GitHubLink href={pr.htmlUrl} />
             </p>
           ))}
         </div>
@@ -388,14 +448,14 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               <span>
                 <span className="badge">{pr.kind}</span> #{pr.number} {pr.title}{" "}
                 <span className="muted">(CI: {pr.ciStatus ?? "unknown"})</span>
-                <a className="raw-link" href={pr.htmlUrl} target="_blank" rel="noreferrer">
-                  ≡ raw
-                </a>
+                <GitHubLink href={pr.htmlUrl} />
               </span>
               {g.amApprover && (
-                <button className="approve" disabled={merge.isPending || pr.ciStatus === "failure"} onClick={() => merge.mutate(pr.id)}>
-                  Merge as @{me.login}
-                </button>
+                <ActionBar>
+                  <button className="approve" disabled={merge.isPending || pr.ciStatus === "failure"} onClick={() => merge.mutate(pr.id)}>
+                    Merge as @{me.login}
+                  </button>
+                </ActionBar>
               )}
             </div>
           ))}
@@ -421,7 +481,7 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               </label>
             </div>
           )}
-          <div className="row">
+          <ActionBar>
             <button
               className="approve"
               disabled={approve.isPending || (g.openQuestions.length > 0 && !ack)}
@@ -431,7 +491,7 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               {approve.isPending ? "Posting…" : `Approve as @${me.login}`}
             </button>
             <button onClick={() => setShowRequest(!showRequest)}>Request changes</button>
-          </div>
+          </ActionBar>
           <p className="muted" style={{ marginTop: "0.5rem" }}>
             Approve posts the literal comment <code>Approved</code> under your GitHub identity; the factory router merges the
             document PR and advances the pipeline exactly as if you had typed it on GitHub.
@@ -470,21 +530,23 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;
   return (
-    <div className="board">
+    <div className="tasks-list">
       {cols.map((c) => {
         const items = data.tasks.filter((t) => c.match(t.state, t.open));
+        if (items.length === 0) return null;
         return (
-          <div className="board-col" key={c.title}>
-            <h4>
+          <div key={c.title}>
+            <h4 className="phase-head">
               {c.title} ({items.length})
             </h4>
             {items.map((t) => (
               <div className={`board-card${t.state === "factory:blocked" ? " blocked" : ""}`} key={t.id}>
                 #{t.number} {t.title.replace(/^task\([^)]*\):?\s*/i, "")}
                 <div className="meta">
+                  {t.state === "factory:blocked" && <span className="badge blocked">Agent halted</span>}
                   {t.blockedBy.filter((d) => d.open).length > 0 && (
                     <span title={t.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>
-                      ⛓ after {t.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
+                      after {t.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
                     </span>
                   )}
                   {t.blocks.length > 0 && (
@@ -492,9 +554,7 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
                       unblocks {t.blocks.map((d) => `#${d.number}`).join(", ")}
                     </span>
                   )}
-                  <a href={t.htmlUrl} target="_blank" rel="noreferrer" className="raw-link">
-                    ≡ raw
-                  </a>
+                  <GitHubLink href={t.htmlUrl} />
                 </div>
               </div>
             ))}
@@ -574,16 +634,12 @@ function ThreadCard({
                 {e.isApproval && <span className="badge merge">Approved</span>}
                 {e.source === "console_note" && <span className="badge">private note</span>}
                 <span>{new Date(e.createdAt).toLocaleString()}</span>
-                {e.htmlUrl && (
-                  <a className="raw-link" href={e.htmlUrl} target="_blank" rel="noreferrer">
-                    ≡ raw
-                  </a>
-                )}
+                {e.htmlUrl && <GitHubLink href={e.htmlUrl} />}
               </div>
               <div className="markdown-body" dangerouslySetInnerHTML={{ __html: e.bodyHtml }} />
             </div>
           ))}
-          <div style={{ marginTop: "0.6rem" }}>
+          <div className="thread-composer" style={{ marginTop: "0.6rem" }}>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Reply — posts to GitHub as you, threaded here." />
             {post.isError && <div className="banner error">{(post.error as Error).message}</div>}
             <div className="row" style={{ marginTop: "0.4rem" }}>
@@ -687,11 +743,7 @@ function TimelineRail({ epicId }: { epicId: string }) {
           <span>
             {e.detail}
             {e.actor && <span className="muted"> — @{e.actor}</span>}
-            {e.link && (
-              <a className="raw-link" href={e.link} target="_blank" rel="noreferrer">
-                ≡
-              </a>
-            )}
+            {e.link && <GitHubLink href={e.link} />}
           </span>
         </div>
       ))}
