@@ -1,0 +1,11 @@
+{
+  "name": "Factory Console",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "./scripts/dev.sh"
+    }
+  ]
+}
