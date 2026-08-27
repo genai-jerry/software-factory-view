@@ -1,0 +1,496 @@
+From 23950a3a60d255ca0812ce4a3f2083d0252240c3 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 27 Aug 2026 09:32:01 +0000
+Subject: [PATCH] Mint a fresh GitHub token immediately before each GitHub
+ action.
+
+Dispatch-time installation tokens expire in ~1h while Profiler can run
+45 minutes. Stop treating the Console-supplied token as the primary cache:
+mint via App JWT (or Console POST /api/orchestrator/github-token) at role
+start and again before the post-run issue snapshot, and retry once on 401.
+---
+ orchestrator/.env.example                     |   4 +
+ .../src/factory_orchestrator/config.py        |   4 +
+ .../src/factory_orchestrator/github_app.py    | 109 ++++++++++++++++--
+ .../src/factory_orchestrator/graph.py         |  24 +++-
+ .../src/factory_orchestrator/webhook.py       |  18 ++-
+ orchestrator/tests/test_config.py             |   5 +
+ orchestrator/tests/test_github_app.py         |  94 +++++++++++++++
+ orchestrator/tests/test_graph.py              |   2 +-
+ orchestrator/tests/test_webhook.py            |  20 ++++
+ 9 files changed, 265 insertions(+), 15 deletions(-)
+
+diff --git a/orchestrator/.env.example b/orchestrator/.env.example
+index 26ab90e..5e93ad7 100644
+--- a/orchestrator/.env.example
++++ b/orchestrator/.env.example
+@@ -26,6 +26,10 @@ FACTORY_REF=v1
+ 
+ # --- Operations
+ DISPATCH_TOKEN=dev-dispatch-token
++# Factory Console origin — the orchestrator POSTs /api/orchestrator/github-token
++# here immediately before a GitHub action, so a 45-minute Profiler run is not
++# stuck with the token captured at /dispatch.
++CONSOLE_URL=
+ CLAIMED_REPOS=
+ FACTORY_CROSS_REPO_TOKEN=
+ 
+diff --git a/orchestrator/src/factory_orchestrator/config.py b/orchestrator/src/factory_orchestrator/config.py
+index b0e90e9..71c693e 100644
+--- a/orchestrator/src/factory_orchestrator/config.py
++++ b/orchestrator/src/factory_orchestrator/config.py
+@@ -84,6 +84,9 @@ class Config:
+     public_base_url: str = "http://localhost:8080"
+     # Operator dispatch bearer token (manual "Run workflow" equivalent).
+     dispatch_token: Secret = field(default_factory=lambda: Secret(""))
++    # Optional Factory Console origin. When set, a 401 from GitHub refreshes
++    # the installation token via POST /api/orchestrator/github-token.
++    console_url: str = ""
+     # Optional cross-repo PAT for multi-repo estates (same role as in Actions).
+     cross_repo_token: Secret = field(default_factory=lambda: Secret(""))
+ 
+@@ -158,5 +161,6 @@ def load_config(env: dict[str, str] | None = None) -> Config:
+         max_turns=int(e.get("MAX_TURNS", "100")),
+         public_base_url=e.get("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/"),
+         dispatch_token=Secret(e.get("DISPATCH_TOKEN", "")),
++        console_url=e.get("CONSOLE_URL", "").rstrip("/"),
+         cross_repo_token=Secret(e.get("FACTORY_CROSS_REPO_TOKEN", "")),
+     )
+diff --git a/orchestrator/src/factory_orchestrator/github_app.py b/orchestrator/src/factory_orchestrator/github_app.py
+index 2f9c5d7..9cec1c8 100644
+--- a/orchestrator/src/factory_orchestrator/github_app.py
++++ b/orchestrator/src/factory_orchestrator/github_app.py
+@@ -14,7 +14,9 @@ import base64
+ import hashlib
+ import hmac
+ import json
++import logging
+ import time
++from datetime import datetime
+ from typing import Any, Protocol
+ 
+ import httpx
+@@ -22,6 +24,8 @@ import jwt
+ 
+ from .config import Config
+ 
++log = logging.getLogger("factory-orchestrator.github")
++
+ 
+ def verify_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
+     """Constant-time check of X-Hub-Signature-256."""
+@@ -54,43 +58,119 @@ class RepoPort(Protocol):
+ 
+ 
+ class GitHubApp:
+-    """App JWT + per-repo installation tokens, cached until near expiry."""
++    """App JWT + per-repo installation tokens, minted just before GitHub use."""
+ 
+     def __init__(self, cfg: Config, client: httpx.Client | None = None):
+         self.cfg = cfg
+         self.http = client or httpx.Client(base_url=cfg.github_api_url, timeout=30)
+         self._tokens: dict[str, tuple[str, float]] = {}
++        self._fallback: dict[str, str] = {}
++        self._installations: dict[str, int] = {}
+ 
+     def app_jwt(self) -> str:
+         now = int(time.time())
+         payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": self.cfg.github_app_id}
+         return jwt.encode(payload, self.cfg.github_app_private_key.reveal(), algorithm="RS256")
+ 
++    def remember_installation(self, owner: str, repo: str, installation_id: int) -> None:
++        self._installations[f"{owner}/{repo}"] = int(installation_id)
++
++    def remember_console_url(self, url: str) -> None:
++        """Hint from a Console dispatch. ``CONSOLE_URL`` in the env still wins."""
++        hint = (url or "").rstrip("/")
++        if hint and not (self.cfg.console_url or "").strip():
++            self.cfg.console_url = hint
++
+     def cache_token(self, owner: str, repo: str, token: str, *, ttl_seconds: float = 50 * 60) -> None:
+-        """Use a caller-supplied installation token (Console /dispatch) instead of minting a JWT."""
+-        self._tokens[f"{owner}/{repo}"] = (token, time.time() + ttl_seconds)
++        """Keep a Console-supplied token as last-resort fallback.
++
++        It must not become the primary cache: those tokens are captured at
++        /dispatch and expire in ~1h, while a Profiler run can take 45 minutes.
++        Live minting (App JWT or Console refresh) happens at GitHub-call time.
++        """
++        del ttl_seconds
++        self._fallback[f"{owner}/{repo}"] = token
++
++    def invalidate_token(self, owner: str, repo: str) -> None:
++        self._tokens.pop(f"{owner}/{repo}", None)
+ 
+-    def installation_token(self, owner: str, repo: str) -> str:
++    def installation_token(self, owner: str, repo: str, *, force_fresh: bool = False) -> str:
++        key = f"{owner}/{repo}"
++        if not force_fresh:
++            cached = self._tokens.get(key)
++            if cached and cached[1] > time.time() + 120:
++                return cached[0]
++        err: Exception | None = None
++        try:
++            return self._mint_via_app(owner, repo)
++        except Exception as e:  # noqa: BLE001 - App JWT is optional when Console can mint
++            err = e
++            log.warning("App JWT mint failed for %s - trying Console refresh", key, exc_info=True)
++        refreshed = self._mint_via_console(owner, repo)
++        if refreshed:
++            return refreshed
++        fallback = self._fallback.get(key)
++        if fallback:
++            log.warning("using dispatch-time GitHub token for %s; it may expire mid-run", key)
++            return fallback
++        assert err is not None
++        raise err
++
++    def _mint_via_app(self, owner: str, repo: str) -> str:
+         key = f"{owner}/{repo}"
+-        cached = self._tokens.get(key)
+-        if cached and cached[1] > time.time() + 120:
+-            return cached[0]
+         headers = {"Authorization": f"Bearer {self.app_jwt()}",
+                    "Accept": "application/vnd.github+json"}
+-        r = self.http.get(f"/repos/{owner}/{repo}/installation", headers=headers)
+-        r.raise_for_status()
+-        inst_id = r.json()["id"]
++        inst_id = self._installations.get(key)
++        if inst_id is None:
++            r = self.http.get(f"/repos/{owner}/{repo}/installation", headers=headers)
++            r.raise_for_status()
++            inst_id = int(r.json()["id"])
++            self._installations[key] = inst_id
+         r = self.http.post(f"/app/installations/{inst_id}/access_tokens", headers=headers)
+         r.raise_for_status()
+         token = r.json()["token"]
+-        # Installation tokens live ~1h; refresh with headroom.
+         self._tokens[key] = (token, time.time() + 55 * 60)
+         return token
+ 
++    def _mint_via_console(self, owner: str, repo: str) -> str | None:
++        base = (self.cfg.console_url or "").rstrip("/")
++        inst_id = self._installations.get(f"{owner}/{repo}")
++        dispatch = self.cfg.dispatch_token.reveal()
++        if not base or not inst_id or not dispatch:
++            return None
++        try:
++            r = httpx.post(
++                f"{base}/api/orchestrator/github-token",
++                headers={"authorization": f"Bearer {dispatch}", "content-type": "application/json"},
++                json={"installation_id": inst_id},
++                timeout=10,
++            )
++            r.raise_for_status()
++            data = r.json()
++        except Exception:  # noqa: BLE001 - Console is optional; fall back to dispatch-time token
++            log.warning("Console token refresh failed for %s/%s", owner, repo, exc_info=True)
++            return None
++        token = data.get("token")
++        if not isinstance(token, str) or not token:
++            return None
++        self._tokens[f"{owner}/{repo}"] = (token, time.time() + _ttl_from_expires_at(data.get("expires_at")))
++        log.info("minted GitHub installation token via Console for %s/%s", owner, repo)
++        return token
++
+     def repo_client(self, owner: str, repo: str) -> RepoClient:
+         return RepoClient(self, owner, repo)
+ 
+ 
++def _ttl_from_expires_at(expires_at: object) -> float:
++    if not isinstance(expires_at, str) or not expires_at:
++        return 55 * 60
++    try:
++        ts = datetime.fromisoformat(expires_at.replace("Z", "+00:00")).timestamp()
++        return max(60.0, ts - time.time() - 60)
++    except ValueError:
++        return 55 * 60
++
++
+ class RepoClient:
+     """REST implementation of :class:`RepoPort` using an installation token."""
+ 
+@@ -104,9 +184,14 @@ class RepoClient:
+         return {"Authorization": f"token {self.app.installation_token(self.owner, self.repo)}",
+                 "Accept": "application/vnd.github+json"}
+ 
+-    def _req(self, method: str, path: str, *, ok404: bool = False, **kw) -> httpx.Response | None:
++    def _req(self, method: str, path: str, *, ok404: bool = False, _retried: bool = False, **kw) -> httpx.Response | None:
+         r = self.app.http.request(method, f"/repos/{self.owner}/{self.repo}{path}",
+                                   headers=self._headers(), **kw)
++        if r.status_code == 401 and not _retried:
++            self.app.invalidate_token(self.owner, self.repo)
++            log.warning("GitHub 401 on %s %s/%s%s - minting a fresh token and retrying",
++                        method, self.owner, self.repo, path)
++            return self._req(method, path, ok404=ok404, _retried=True, **kw)
+         if ok404 and r.status_code == 404:
+             return None
+         r.raise_for_status()
+diff --git a/orchestrator/src/factory_orchestrator/graph.py b/orchestrator/src/factory_orchestrator/graph.py
+index 845c493..c7debb4 100644
+--- a/orchestrator/src/factory_orchestrator/graph.py
++++ b/orchestrator/src/factory_orchestrator/graph.py
+@@ -190,6 +190,7 @@ def execute_role(engine: Engine, item: RunItem) -> dict[str, Any]:
+                                "round": item.get("round", 0)}
+     log.info("role start role=%s repo=%s/%s#%s run=%s log=%s",
+              role, owner, repo, issue, run_id, run_url)
++    _mint_fresh_github_token(engine, owner, repo, why=f"before {role} #{issue}")
+     mark_in_progress(port, issue)
+     transcript_path = engine.transcript_dir / f"{run_id}.log"
+ 
+@@ -230,6 +231,9 @@ def execute_role(engine: Engine, item: RunItem) -> dict[str, Any]:
+             github_token=engine.app.installation_token(owner, repo),
+             on_phase=lambda phase: note(phase, **extra))
+         transcript_path.write_text(outcome.transcript)
++        # Profiler can run for 45 minutes; the clone token from role start may
++        # already be dead. Mint again so the post-run issue snapshot does not 401.
++        _mint_fresh_github_token(engine, owner, repo, why=f"after {role} #{issue}")
+         traced = verify_no_op(port, issue, before, role)
+         if outcome.status == "success" and traced:
+             status = "success"
+@@ -268,6 +272,15 @@ def thread_id_for(event_name: str, payload: dict[str, Any]) -> str:
+     return f"{repo}#{issue}"
+ 
+ 
++def _mint_fresh_github_token(engine: Engine, owner: str, repo: str, *, why: str) -> None:
++    if not hasattr(engine.app, "installation_token"):
++        return
++    try:
++        engine.app.installation_token(owner, repo, force_fresh=True)
++    except Exception:  # noqa: BLE001 - fallback token may still work
++        log.warning("could not mint a fresh GitHub token %s", why, exc_info=True)
++
++
+ def make_checkpointer(database_url: str):
+     """SQLite or Postgres checkpointing from the same DATABASE_URL as the ledger."""
+     if database_url.startswith("sqlite"):
+@@ -300,7 +313,16 @@ class Processor:
+             log.info("event without a repository - ignoring")
+             return
+         owner, repo = full.split("/", 1)
+-        token = (payload.get("inputs") or {}).get("github_token")
++        inputs = payload.get("inputs") or {}
++        inst = (payload.get("installation") or {}).get("id")
++        if inst is None:
++            inst = inputs.get("installation_id")
++        if inst and hasattr(self.engine.app, "remember_installation"):
++            self.engine.app.remember_installation(owner, repo, int(inst))
++        console_url = payload.get("console_url") or inputs.get("console_url")
++        if console_url and hasattr(self.engine.app, "remember_console_url"):
++            self.engine.app.remember_console_url(str(console_url))
++        token = inputs.get("github_token")
+         if token and hasattr(self.engine.app, "cache_token"):
+             self.engine.app.cache_token(owner, repo, token)
+         port = self.engine.port(owner, repo)
+diff --git a/orchestrator/src/factory_orchestrator/webhook.py b/orchestrator/src/factory_orchestrator/webhook.py
+index 0cfa775..714f64e 100644
+--- a/orchestrator/src/factory_orchestrator/webhook.py
++++ b/orchestrator/src/factory_orchestrator/webhook.py
+@@ -170,9 +170,17 @@ def create_app(cfg: Config, ledger: Ledger, processor: Processor,
+         applied = apply_runtime_agent_secrets(cfg, body)
+         queued_payload = dict(payload)
+         token = body.get("github_token")
++        extra_inputs: dict[str, Any] = {}
+         if isinstance(token, str) and token:
++            extra_inputs["github_token"] = token
++        console_url = body.get("console_url")
++        if isinstance(console_url, str) and console_url.strip():
++            origin = console_url.strip().rstrip("/")
++            queued_payload["console_url"] = origin
++            extra_inputs["console_url"] = origin
++        if extra_inputs:
+             inputs = dict(queued_payload.get("inputs") or {})
+-            inputs["github_token"] = token
++            inputs.update(extra_inputs)
+             queued_payload["inputs"] = inputs
+         fresh = ledger.record_delivery(str(guid), str(event), queued_payload)
+         repo = (queued_payload.get("repository") or {}).get("full_name", "-")
+@@ -201,11 +209,19 @@ def create_app(cfg: Config, ledger: Ledger, processor: Processor,
+         inputs: dict[str, Any] = {"role": body["role"], "issue_number": str(body["issue"])}
+         if body.get("github_token"):
+             inputs["github_token"] = body["github_token"]
++        if body.get("installation_id"):
++            inputs["installation_id"] = body["installation_id"]
++        if isinstance(body.get("console_url"), str) and body["console_url"].strip():
++            inputs["console_url"] = body["console_url"].strip().rstrip("/")
+         applied = apply_runtime_agent_secrets(cfg, body)
+         payload = {"action": "dispatch",
+                    "repository": {"full_name": f"{body['owner']}/{body['repo']}",
+                                   "owner": {"login": body["owner"]}, "name": body["repo"]},
+                    "inputs": inputs}
++        if body.get("installation_id"):
++            payload["installation"] = {"id": body["installation_id"]}
++        if inputs.get("console_url"):
++            payload["console_url"] = inputs["console_url"]
+         fresh = ledger.record_delivery(guid, "workflow_dispatch", payload)
+         log.info("dispatch queued=%s role=%s repo=%s/%s issue=%s id=%s token=%s agent=%s",
+                  fresh, body["role"], body["owner"], body["repo"], body["issue"], guid,
+diff --git a/orchestrator/tests/test_config.py b/orchestrator/tests/test_config.py
+index 29e5acd..e795e3f 100644
+--- a/orchestrator/tests/test_config.py
++++ b/orchestrator/tests/test_config.py
+@@ -87,3 +87,8 @@ def test_private_key_bad_base64_rejected():
+            "GITHUB_APP_PRIVATE_KEY_B64": "!!!not-base64!!!"}
+     with pytest.raises(ConfigError, match="B64"):
+         load_config(env)
++
++
++def test_console_url_from_env():
++    cfg = load_config({**BASE, "CONSOLE_URL": "http://console.test/"})
++    assert cfg.console_url == "http://console.test"
+diff --git a/orchestrator/tests/test_github_app.py b/orchestrator/tests/test_github_app.py
+index fe8874d..d53d486 100644
+--- a/orchestrator/tests/test_github_app.py
++++ b/orchestrator/tests/test_github_app.py
+@@ -75,6 +75,47 @@ def test_installation_token_cached_per_repo():
+     assert state["minted"] == 1
+ 
+ 
++def test_force_fresh_mints_again():
++    state = {"calls": [], "minted": 0, "labels": []}
++    app = make_app(github_stub(state))
++    assert app.installation_token("o", "r") == "ghs_tok1"
++    assert app.installation_token("o", "r", force_fresh=True) == "ghs_tok2"
++    assert state["minted"] == 2
++
++
++def test_cache_token_is_fallback_not_primary():
++    """A dispatch-time token must not block minting a fresh one at action time."""
++    state = {"calls": [], "minted": 0, "labels": []}
++    app = make_app(github_stub(state))
++    app.cache_token("o", "r", "ghs_stale_from_dispatch")
++    assert app.installation_token("o", "r") == "ghs_tok1"
++    assert state["minted"] == 1
++
++
++def test_401_retries_with_a_fresh_token():
++    state = {"calls": [], "minted": 0, "labels": [], "issue_gets": 0}
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        path = request.url.path
++        state["calls"].append((request.method, path))
++        if path == "/repos/o/r/installation":
++            return httpx.Response(200, json={"id": 42})
++        if path == "/app/installations/42/access_tokens":
++            state["minted"] += 1
++            return httpx.Response(201, json={"token": f"ghs_tok{state['minted']}"})
++        if path == "/repos/o/r/issues/7":
++            state["issue_gets"] += 1
++            if state["issue_gets"] == 1:
++                return httpx.Response(401, json={"message": "Bad credentials"})
++            return httpx.Response(200, json={"number": 7, "labels": []})
++        return httpx.Response(500, json={"path": path})
++
++    app = make_app(handler)
++    assert app.repo_client("o", "r").get_issue(7) == {"number": 7, "labels": []}
++    assert state["issue_gets"] == 2
++    assert state["minted"] == 2
++
++
+ def test_repo_client_basics():
+     state = {"calls": [], "minted": 0, "labels": []}
+     app = make_app(github_stub(state))
+@@ -86,3 +127,56 @@ def test_repo_client_basics():
+     assert rc.get_file(".github/factory-orchestrator.json") == '{"engine": "langgraph"}'
+     assert rc.get_file("missing.json") is None
+     assert rc.list_issues() == [{"number": 1}]
++
++
++def test_console_refresh_when_app_jwt_fails():
++    from unittest.mock import patch
++
++    from factory_orchestrator.config import Secret
++
++    state = {"calls": [], "minted": 0, "labels": []}
++    app = make_app(github_stub(state))
++    app.cfg.console_url = "http://console.test"
++    app.cfg.dispatch_token = Secret("op-token")
++    app.remember_installation("o", "r", 42)
++
++    def boom():
++        raise RuntimeError("placeholder pem")
++
++    app.app_jwt = boom  # type: ignore[method-assign]
++
++    def fake_post(url, **kwargs):
++        assert url == "http://console.test/api/orchestrator/github-token"
++        assert kwargs["headers"]["authorization"] == "Bearer op-token"
++        assert kwargs["json"] == {"installation_id": 42}
++        return httpx.Response(
++            200,
++            json={"token": "ghs_console", "expires_at": "2099-01-01T00:00:00Z"},
++            request=httpx.Request("POST", url),
++        )
++
++    with patch("factory_orchestrator.github_app.httpx.post", side_effect=fake_post):
++        assert app.installation_token("o", "r", force_fresh=True) == "ghs_console"
++
++
++def test_dispatch_time_token_is_last_resort_when_mints_fail():
++    state = {"calls": [], "minted": 0, "labels": []}
++    app = make_app(github_stub(state))
++    app.cache_token("o", "r", "ghs_from_dispatch")
++
++    def boom():
++        raise RuntimeError("placeholder pem")
++
++    app.app_jwt = boom  # type: ignore[method-assign]
++    assert app.installation_token("o", "r") == "ghs_from_dispatch"
++
++
++def test_remember_console_url_does_not_override_env():
++    state = {"calls": [], "minted": 0, "labels": []}
++    app = make_app(github_stub(state))
++    app.cfg.console_url = "http://from-env"
++    app.remember_console_url("http://from-dispatch")
++    assert app.cfg.console_url == "http://from-env"
++    app.cfg.console_url = ""
++    app.remember_console_url("http://from-dispatch/")
++    assert app.cfg.console_url == "http://from-dispatch"
+diff --git a/orchestrator/tests/test_graph.py b/orchestrator/tests/test_graph.py
+index b1eead9..47a984b 100644
+--- a/orchestrator/tests/test_graph.py
++++ b/orchestrator/tests/test_graph.py
+@@ -33,7 +33,7 @@ class FakeApp:
+     def __init__(self, world):
+         self.world = world
+ 
+-    def installation_token(self, owner, repo):
++    def installation_token(self, owner, repo, *, force_fresh=False):
+         return "ghs_test"
+ 
+     def repo_client(self, owner, repo):
+diff --git a/orchestrator/tests/test_webhook.py b/orchestrator/tests/test_webhook.py
+index 6c85db2..d8772f3 100644
+--- a/orchestrator/tests/test_webhook.py
++++ b/orchestrator/tests/test_webhook.py
+@@ -145,6 +145,26 @@ async def test_dispatch_applies_claude_token_without_storing_it(service):
+     await with_client(app, go)
+ 
+ 
++async def test_dispatch_stores_installation_id_and_console_url(service):
++    _, ledger, _, app = service
++
++    async def go(client):
++        r = await client.post(
++            "/dispatch",
++            json={"owner": "o", "repo": "r", "role": "profiler", "issue": 12,
++                  "installation_id": 99, "console_url": "http://console.test/"},
++            headers={"authorization": "Bearer op-token"})
++        assert r.status_code == 200
++        row = ledger.get_delivery(r.json()["dispatch_id"])
++        assert row is not None
++        payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
++        assert payload["installation"] == {"id": 99}
++        assert payload["console_url"] == "http://console.test"
++        assert payload["inputs"]["installation_id"] == 99
++        assert payload["inputs"]["console_url"] == "http://console.test"
++    await with_client(app, go)
++
++
+ def test_public_delivery_error_explains_placeholder_key():
+     class InvalidKeyError(Exception):
+         pass
+-- 
+2.43.0
+
