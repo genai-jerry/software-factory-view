@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { explainOrchestratorError } from "./OrchestratorRunView.js";
+import { explainOrchestratorError, NO_OP_EXPLANATION } from "./OrchestratorRunView.js";
 
 describe("explainOrchestratorError", () => {
   it("turns a GitHub 401 into a re-run hint", () => {
@@ -13,5 +13,12 @@ describe("explainOrchestratorError", () => {
     expect(explainOrchestratorError("No Anthropic credential is available.")).toBe(
       "No Anthropic credential is available.",
     );
+  });
+});
+
+describe("no-op outcome", () => {
+  it("explains a silent role without blaming credentials", () => {
+    expect(NO_OP_EXPLANATION).toMatch(/without posting a comment/i);
+    expect(NO_OP_EXPLANATION).not.toMatch(/turn limit/i);
   });
 });

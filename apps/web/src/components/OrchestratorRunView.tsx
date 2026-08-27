@@ -146,13 +146,19 @@ export function OrchestratorRunModal({
   );
 }
 
+export const NO_OP_EXPLANATION =
+  "Claude finished without posting a comment or changing a factory label on the issue. Local edits in the run workspace were discarded. This is not a credentials, permission, or turn-limit failure unless the transcript says so.";
+
+function outcomeLabel(run: OrchestratorRunLog): string {
+  if (run.outcome === "running" || (!run.outcome && !run.finished_at)) return "in progress";
+  if (run.outcome === "no_op") return "no GitHub trace";
+  return run.outcome ?? "—";
+}
+
 export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
   const phase = runPhase(run);
   const fallbacks = runFallbacks(run);
-  const outcome =
-    run.outcome === "running" || (!run.outcome && !run.finished_at)
-      ? "in progress"
-      : (run.outcome ?? "—");
+  const outcome = outcomeLabel(run);
   const repoLabel = run.issue != null ? `${run.repo ?? ""}#${run.issue}` : (run.repo ?? "—");
   const rows: Array<[string, ReactNode]> = [
     ["Outcome", outcome],
@@ -164,11 +170,17 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
   ];
   if (run.trigger) rows.splice(2, 0, ["Trigger", run.trigger]);
   if (phase && !run.finished_at) rows.splice(1, 0, ["Now", phase]);
+  const noOpBanner = run.outcome === "no_op" && !run.error;
   return (
     <>
       {run.error && (
         <div style={{ marginTop: "0.75rem" }}>
           <OrchestratorErrorBanner error={run.error} />
+        </div>
+      )}
+      {noOpBanner && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <Banner tone="error">{NO_OP_EXPLANATION}</Banner>
         </div>
       )}
       {fallbacks.length > 0 && (
