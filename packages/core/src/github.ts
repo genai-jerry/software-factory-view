@@ -78,9 +78,16 @@ export class AppAuth {
       .sign(key);
   }
 
-  async installationToken(installationId: number): Promise<string> {
+  /**
+   * Installation tokens last ~1 hour. `minRemainingMs` is how much of that
+   * hour must still be left to reuse a cached token. Console API calls use
+   * the default (1 minute). Tokens handed to the orchestrator must outlive a
+   * 45-minute role run, or GitHub answers the next issue fetch with 401.
+   */
+  async installationToken(installationId: number, opts?: { minRemainingMs?: number }): Promise<string> {
+    const minRemainingMs = opts?.minRemainingMs ?? 60_000;
     const cached = this.cache.get(installationId);
-    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+    if (cached && cached.expiresAt > Date.now() + minRemainingMs) return cached.token;
     const jwt = await this.appJwt();
     const { json } = await ghFetch(this.cfg.apiUrl, jwt, "POST", `/app/installations/${installationId}/access_tokens`);
     const data = json as { token: string; expires_at: string };
@@ -137,6 +144,18 @@ export class AppAuth {
     if (!data.access_token) throw new Error(`OAuth exchange failed: ${data.error ?? "no token"} ${data.error_description ?? ""}`);
     return { accessToken: data.access_token };
   }
+}
+
+/**
+ * Role timeout is 45 minutes; keep slack for clone + the post-run issue
+ * snapshot. A token already 15+ minutes old will expire during that window
+ * and the profiler dies with HTTP 401 on GET /issues/{n}.
+ */
+export const ORCHESTRATOR_GITHUB_TOKEN_MIN_REMAINING_MS = 50 * 60 * 1000;
+
+/** Mint (or reuse only a young) installation token for a LangGraph dispatch. */
+export function installationTokenForOrchestrator(auth: AppAuth, installationId: number): Promise<string> {
+  return auth.installationToken(installationId, { minRemainingMs: ORCHESTRATOR_GITHUB_TOKEN_MIN_REMAINING_MS });
 }
 
 function normalisePem(pem: string): string {

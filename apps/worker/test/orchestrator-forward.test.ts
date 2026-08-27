@@ -93,6 +93,8 @@ describe("orchestrator event forward", () => {
     const org = (await db.select().from(orgs).limit(1))[0]!;
     await db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, org.id));
 
+    vi.spyOn(auth, "installationToken").mockResolvedValue("ghs_from_console");
+
     const opened = job("issues", {
       action: "labeled",
       issue: {
@@ -123,7 +125,9 @@ describe("orchestrator event forward", () => {
       event: "issues",
       delivery_guid: "fwd-ft",
       payload: { action: "labeled" },
+      github_token: "ghs_from_console",
     });
+    expect(auth.installationToken).toHaveBeenCalledWith(INSTALLATION.id, expect.objectContaining({ minRemainingMs: 50 * 60 * 1000 }));
   });
 
   it("throws on orchestrator network failure so ingest retries", async () => {

@@ -3,6 +3,7 @@ import {
   factoryStartLabel,
   githubActionsEnabled,
   InstallationClient,
+  installationTokenForOrchestrator,
   postOrchestratorGitHubEvent,
   type GhIssue,
 } from "@console/core";
@@ -100,7 +101,7 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     let githubToken: string | undefined;
     try {
       const auth = await deps.credentials.auth();
-      if (auth) githubToken = await auth.installationToken(estate.installationId);
+      if (auth) githubToken = await installationTokenForOrchestrator(auth, estate.installationId);
     } catch {
       /* orchestrator can still mint its own JWT if it has a real App key */
     }

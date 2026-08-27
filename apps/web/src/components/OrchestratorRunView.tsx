@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api, ApiError } from "../api.js";
+import { Banner } from "./Banner.js";
 
 export type OrchestratorRunLog = {
   id?: string;
@@ -166,8 +167,8 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
   return (
     <>
       {run.error && (
-        <div className="banner error" style={{ marginTop: "0.75rem" }}>
-          {run.error}
+        <div style={{ marginTop: "0.75rem" }}>
+          <OrchestratorErrorBanner error={run.error} />
         </div>
       )}
       {fallbacks.length > 0 && (
@@ -184,6 +185,22 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
         ))}
       </dl>
     </>
+  );
+}
+
+export function explainOrchestratorError(error: string): string {
+  if (/401 Unauthorized/i.test(error) && /api\.github\.com/i.test(error)) {
+    return "GitHub rejected the orchestrator's token (401). Re-run the Profiler from Onboarding so a fresh installation token is issued — a token already near expiry dies mid-run when the role next talks to GitHub.";
+  }
+  return error;
+}
+
+function OrchestratorErrorBanner({ error }: { error: string }) {
+  const explained = explainOrchestratorError(error);
+  return (
+    <Banner tone="error" technical={explained !== error ? error : undefined}>
+      {explained}
+    </Banner>
   );
 }
 

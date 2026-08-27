@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
@@ -11,6 +11,11 @@ import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 
 const MASTER_KEY = randomBytes(32).toString("base64");
+const PKCS8 = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+}).privateKey;
 const cookie = "console_session=sess-1";
 
 let app: Awaited<ReturnType<typeof buildApp>>;
@@ -38,7 +43,7 @@ beforeEach(async () => {
       masterKey: MASTER_KEY,
       apiUrl: "https://api.invalid",
       load: async () => null,
-      env: { appId: "1", privateKeyPem: "x", webhookSecret: "s", clientId: "c", clientSecret: "cs" },
+      env: { appId: "1", privateKeyPem: PKCS8, webhookSecret: "s", clientId: "c", clientSecret: "cs" },
     }),
     ingestQueue: { add: async () => undefined } as never,
     reconcileQueue: { add: async () => undefined } as never,
@@ -93,9 +98,30 @@ describe("POST /api/epics/:id/factory-run", () => {
   });
 
   it("synthesizes a labeled fast-track event for the orchestrator", async () => {
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ queued: true, delivery_guid: "console-kick-1" }), { status: 200 }),
-    );
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/access_tokens")) {
+        return new Response(
+          JSON.stringify({
+            token: "ghs_from_console",
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          }),
+          { status: 201 },
+        );
+      }
+      if (href.includes("/issues/102")) {
+        return new Response(
+          JSON.stringify({
+            number: 102,
+            title: "Add a FACTORY_CANARY.md",
+            state: "open",
+            labels: [{ name: "factory:fast-track" }],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ queued: true, delivery_guid: "console-kick-1" }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const res = await app.inject({
@@ -106,16 +132,19 @@ describe("POST /api/epics/:id/factory-run", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ queued: true, action: "labeled", label: "factory:fast-track" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const eventCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/events"));
+    expect(eventCall).toBeTruthy();
+    const [url, init] = eventCall as [string, RequestInit];
     expect(url).toBe("http://127.0.0.1:8080/events");
     const body = JSON.parse(init.body as string) as {
       event: string;
       delivery_guid: string;
+      github_token?: string;
       payload: { action: string; label?: { name: string }; issue: { number: number } };
     };
     expect(body.event).toBe("issues");
     expect(body.delivery_guid).toMatch(/^console-kick-/);
+    expect(body.github_token).toBe("ghs_from_console");
     expect(body.payload).toMatchObject({
       action: "labeled",
       label: { name: "factory:fast-track" },
