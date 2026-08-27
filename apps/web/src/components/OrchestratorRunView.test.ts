@@ -19,6 +19,7 @@ describe("explainOrchestratorError", () => {
 describe("no-op outcome", () => {
   it("explains a silent role without blaming credentials", () => {
     expect(NO_OP_EXPLANATION).toMatch(/without posting a comment/i);
+    expect(NO_OP_EXPLANATION).toMatch(/not still in progress/i);
     expect(NO_OP_EXPLANATION).not.toMatch(/turn limit/i);
   });
 });

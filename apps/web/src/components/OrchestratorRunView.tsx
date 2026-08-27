@@ -147,7 +147,7 @@ export function OrchestratorRunModal({
 }
 
 export const NO_OP_EXPLANATION =
-  "Claude finished without posting a comment or changing a factory label on the issue. Local edits in the run workspace were discarded. This is not a credentials, permission, or turn-limit failure unless the transcript says so.";
+  "Claude's session ended without posting a comment or changing a factory label. Local edits — and any background tests — were discarded with the run workspace. The role is not still in progress. This is not a credentials, permission, or turn-limit failure unless the transcript says so.";
 
 function outcomeLabel(run: OrchestratorRunLog): string {
   if (run.outcome === "running" || (!run.outcome && !run.finished_at)) return "in progress";
