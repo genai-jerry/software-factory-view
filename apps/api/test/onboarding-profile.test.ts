@@ -31,6 +31,8 @@ let repoId: string;
 let orgId: string;
 /** Every GitHub request the route made, in order: "METHOD /path". */
 let calls: string[];
+/** POST bodies keyed by path substring, last write wins. */
+let posted: Record<string, unknown>;
 /** path-substring → response, consulted in insertion order. */
 let routes: Array<[string, { status?: number; body: unknown }]>;
 
@@ -92,6 +94,7 @@ beforeEach(async () => {
   )[0]!.id;
 
   calls = [];
+  posted = {};
   // Defaults describe the happy path: enabled repo, no profile, no issue yet.
   routes = [
     ["/access_tokens", { body: { token: "ghs_x", expires_at: new Date(Date.now() + 3600_000).toISOString() } }],
@@ -103,11 +106,18 @@ beforeEach(async () => {
     ["/issues", { body: { number: 7, html_url: "https://github.com/acme/api/issues/7", state: "open", labels: [] } }],
   ];
 
-  vi.stubGlobal("fetch", async (url: string | URL, init?: { method?: string }) => {
+  vi.stubGlobal("fetch", async (url: string | URL, init?: { method?: string; body?: string }) => {
     // Two hosts reach this stub: the installation client on the configured API
     // URL, and the user client on the default one.
     const path = String(url).replace(/^https:\/\/[^/]+/, "");
     calls.push(`${init?.method ?? "GET"} ${path}`);
+    if (init?.body) {
+      try {
+        posted[path] = JSON.parse(init.body);
+      } catch {
+        posted[path] = init.body;
+      }
+    }
     const hit = routes.find(([match]) => path.includes(match));
     if (!hit) throw new Error(`unstubbed GitHub call: ${init?.method ?? "GET"} ${path}`);
     const [, res] = hit;
@@ -195,6 +205,42 @@ describe("the profile step", () => {
     expect(calls.some((c) => c.includes("/actions/secrets"))).toBe(false);
     const profile = (await deps.dbh.db.select().from(onboardingRuns)).find((s) => s.step === "profile");
     expect((profile!.detail as { dispatchError?: string }).dispatchError).toMatch(/ORCHESTRATOR_URL is not set/);
+  });
+
+  it("hands the orchestrator a fresh installation token with the profiler dispatch", async () => {
+    await deps.dbh.db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, orgId));
+    Object.assign(deps.cfg, {
+      ORCHESTRATOR_URL: "http://127.0.0.1:8080",
+      ORCHESTRATOR_DISPATCH_TOKEN: "op-token",
+    });
+    const secret = await app.inject({
+      method: "POST",
+      url: `/api/repos/${repoId}/onboarding/secret`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { name: "ANTHROPIC_API_KEY", value: "sk-ant-console" },
+    });
+    expect(secret.statusCode).toBe(200);
+
+    reply(
+      "factory-orchestrator.json",
+      { content: Buffer.from(JSON.stringify({ engine: "langgraph" })).toString("base64"), sha: "o1", encoding: "base64" },
+    );
+    reply("/dispatch", { queued: true, dispatch_id: "dispatch-profile" });
+
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    const dispatch = Object.entries(posted).find(([path]) => path.includes("/dispatch"));
+    expect(dispatch).toBeTruthy();
+    expect(dispatch![1]).toMatchObject({
+      owner: "acme",
+      repo: "api",
+      role: "profiler",
+      issue: 7,
+      github_token: "ghs_x",
+      anthropic_api_key: "sk-ant-console",
+    });
+    const profile = (await deps.dbh.db.select().from(onboardingRuns)).find((s) => s.step === "profile");
+    expect(profile!.detail).toMatchObject({ dispatched: true, dispatchId: "dispatch-profile" });
   });
 
   it("when Software Factory is selected, refuses before the langgraph claim is on the default branch", async () => {

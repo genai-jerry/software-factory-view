@@ -3,6 +3,7 @@ import {
   githubActionsEnabled,
   postOrchestratorGitHubEvent,
   InstallationClient,
+  installationTokenForOrchestrator,
   type AppAuth,
   type ConsoleConfig,
   type GhComment,
@@ -179,7 +180,7 @@ async function maybeForwardToOrchestrator(
   let githubToken: string | undefined;
   if (installationId) {
     try {
-      githubToken = await auth.installationToken(installationId);
+      githubToken = await installationTokenForOrchestrator(auth, installationId);
     } catch {
       /* orchestrator can still mint its own JWT if it has a real App key */
     }

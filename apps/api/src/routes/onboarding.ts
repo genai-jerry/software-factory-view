@@ -5,6 +5,7 @@ import {
   GitHubHttpError,
   githubActionsEnabled,
   InstallationClient,
+  installationTokenForOrchestrator,
   isAgentSecretName,
   parseApproverFile,
   parseRepoOrchestratorEngine,
@@ -895,7 +896,7 @@ async function dispatchProfiler(
   let githubToken: string | undefined;
   try {
     const auth = await deps.credentials.auth();
-    if (auth) githubToken = await auth.installationToken(installationId);
+    if (auth) githubToken = await installationTokenForOrchestrator(auth, installationId);
   } catch {
     /* orchestrator can still mint its own JWT if it has a real App key */
   }
