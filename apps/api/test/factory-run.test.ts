@@ -140,15 +140,23 @@ describe("POST /api/epics/:id/factory-run", () => {
       event: string;
       delivery_guid: string;
       github_token?: string;
-      payload: { action: string; label?: { name: string }; issue: { number: number } };
+      console_url?: string;
+      payload: {
+        action: string;
+        label?: { name: string };
+        issue: { number: number };
+        installation?: { id: number };
+      };
     };
     expect(body.event).toBe("issues");
     expect(body.delivery_guid).toMatch(/^console-kick-/);
     expect(body.github_token).toBe("ghs_from_console");
+    expect(body.console_url).toBe("http://localhost:5173");
     expect(body.payload).toMatchObject({
       action: "labeled",
       label: { name: "factory:fast-track" },
       issue: { number: 102 },
+      installation: { id: 99 },
     });
   });
 

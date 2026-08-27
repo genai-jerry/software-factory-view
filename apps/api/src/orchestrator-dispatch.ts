@@ -30,6 +30,7 @@ export async function dispatchFactoryRole(
     role: string;
     issue: number;
     githubToken?: string;
+    installationId?: number;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
   },
@@ -60,6 +61,8 @@ export async function dispatchFactoryRole(
         role: args.role,
         issue: args.issue,
         ...(args.githubToken ? { github_token: args.githubToken } : {}),
+        ...(args.installationId ? { installation_id: args.installationId } : {}),
+        ...(cfg.PUBLIC_ORIGIN ? { console_url: cfg.PUBLIC_ORIGIN.replace(/\/+$/, "") } : {}),
         ...(args.anthropicApiKey ? { anthropic_api_key: args.anthropicApiKey } : {}),
         ...(args.claudeCodeOauthToken ? { claude_code_oauth_token: args.claudeCodeOauthToken } : {}),
       }),

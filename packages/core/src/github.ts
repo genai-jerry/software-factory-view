@@ -81,18 +81,33 @@ export class AppAuth {
   /**
    * Installation tokens last ~1 hour. `minRemainingMs` is how much of that
    * hour must still be left to reuse a cached token. Console API calls use
-   * the default (1 minute). Tokens handed to the orchestrator must outlive a
-   * 45-minute role run, or GitHub answers the next issue fetch with 401.
+   * the default (1 minute). `forceFresh` always hits GitHub — the orchestrator
+   * calls this immediately before a role talks to the API.
    */
-  async installationToken(installationId: number, opts?: { minRemainingMs?: number }): Promise<string> {
+  async installationToken(
+    installationId: number,
+    opts?: { minRemainingMs?: number; forceFresh?: boolean },
+  ): Promise<string> {
+    return (await this.mintInstallationToken(installationId, opts)).token;
+  }
+
+  async mintInstallationToken(
+    installationId: number,
+    opts?: { minRemainingMs?: number; forceFresh?: boolean },
+  ): Promise<{ token: string; expiresAt: number }> {
     const minRemainingMs = opts?.minRemainingMs ?? 60_000;
-    const cached = this.cache.get(installationId);
-    if (cached && cached.expiresAt > Date.now() + minRemainingMs) return cached.token;
+    if (!opts?.forceFresh) {
+      const cached = this.cache.get(installationId);
+      if (cached && cached.expiresAt > Date.now() + minRemainingMs) {
+        return { token: cached.token, expiresAt: cached.expiresAt };
+      }
+    }
     const jwt = await this.appJwt();
     const { json } = await ghFetch(this.cfg.apiUrl, jwt, "POST", `/app/installations/${installationId}/access_tokens`);
     const data = json as { token: string; expires_at: string };
-    this.cache.set(installationId, { token: data.token, expiresAt: Date.parse(data.expires_at) });
-    return data.token;
+    const minted = { token: data.token, expiresAt: Date.parse(data.expires_at) };
+    this.cache.set(installationId, minted);
+    return minted;
   }
 
   /** The authenticated App (app JWT). Used to recover the slug when credentials come from the environment. */

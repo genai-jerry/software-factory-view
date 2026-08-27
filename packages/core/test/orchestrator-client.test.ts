@@ -47,6 +47,7 @@ describe("postOrchestratorGitHubEvent", () => {
       delivery_guid: "g1",
       github_token: "ghs_from_console",
       claude_code_oauth_token: "oauth-secret",
+      console_url: "http://localhost:5173",
     });
   });
 

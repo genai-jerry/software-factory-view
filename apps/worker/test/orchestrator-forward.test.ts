@@ -126,6 +126,7 @@ describe("orchestrator event forward", () => {
       delivery_guid: "fwd-ft",
       payload: { action: "labeled" },
       github_token: "ghs_from_console",
+      console_url: "http://localhost:5173",
     });
     expect(auth.installationToken).toHaveBeenCalledWith(INSTALLATION.id, expect.objectContaining({ minRemainingMs: 50 * 60 * 1000 }));
   });

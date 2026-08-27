@@ -907,6 +907,7 @@ async function dispatchProfiler(
     role: "profiler",
     issue,
     githubToken,
+    installationId,
     ...secrets,
   });
 }

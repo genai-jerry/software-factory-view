@@ -237,6 +237,8 @@ describe("the profile step", () => {
       role: "profiler",
       issue: 7,
       github_token: "ghs_x",
+      installation_id: 99,
+      console_url: "http://localhost:5173",
       anthropic_api_key: "sk-ant-console",
     });
     const profile = (await deps.dbh.db.select().from(onboardingRuns)).find((s) => s.step === "profile");

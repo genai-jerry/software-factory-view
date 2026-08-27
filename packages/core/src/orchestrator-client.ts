@@ -43,6 +43,7 @@ export async function postOrchestratorGitHubEvent(
         payload: args.payload,
         delivery_guid: args.deliveryGuid,
         ...(args.githubToken ? { github_token: args.githubToken } : {}),
+        ...(cfg.PUBLIC_ORIGIN ? { console_url: cfg.PUBLIC_ORIGIN.replace(/\/+$/, "") } : {}),
         ...(args.anthropicApiKey ? { anthropic_api_key: args.anthropicApiKey } : {}),
         ...(args.claudeCodeOauthToken ? { claude_code_oauth_token: args.claudeCodeOauthToken } : {}),
       }),
