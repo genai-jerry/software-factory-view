@@ -68,4 +68,22 @@ describe("AppAuth.installationToken", () => {
     expect(minted).toBe(2);
     expect(ORCHESTRATOR_GITHUB_TOKEN_MIN_REMAINING_MS).toBe(50 * 60 * 1000);
   });
+
+  it("mints a new token when forceFresh is set even if the cache is young", async () => {
+    let minted = 0;
+    vi.stubGlobal("fetch", async () => {
+      minted += 1;
+      return new Response(
+        JSON.stringify({
+          token: `ghs_${minted}`,
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        }),
+        { status: 201 },
+      );
+    });
+    const gh = auth();
+    expect(await gh.installationToken(9)).toBe("ghs_1");
+    expect((await gh.mintInstallationToken(9, { forceFresh: true })).token).toBe("ghs_2");
+    expect(minted).toBe(2);
+  });
 });

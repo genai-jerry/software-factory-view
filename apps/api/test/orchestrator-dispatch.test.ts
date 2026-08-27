@@ -38,6 +38,7 @@ describe("dispatchFactoryRole", () => {
       repo: "api",
       role: "profiler",
       issue: 7,
+      console_url: "http://localhost:5173",
     });
     expect(out).toMatchObject({
       dispatched: true,
@@ -69,6 +70,21 @@ describe("dispatchFactoryRole", () => {
     );
     expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toMatchObject({
       github_token: "ghs_from_console",
+    });
+  });
+
+  it("forwards the GitHub App installation id so the orchestrator can mint a token at action time", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ queued: true, dispatch_id: "d1" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await dispatchFactoryRole(
+      cfg({ ORCHESTRATOR_URL: "http://127.0.0.1:8080", ORCHESTRATOR_DISPATCH_TOKEN: "op-token" }),
+      { owner: "acme", repo: "api", role: "profiler", issue: 7, installationId: 99 },
+    );
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toMatchObject({
+      installation_id: 99,
+      console_url: "http://localhost:5173",
     });
   });
 

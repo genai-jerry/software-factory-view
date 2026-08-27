@@ -190,7 +190,7 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
 
 export function explainOrchestratorError(error: string): string {
   if (/401 Unauthorized/i.test(error) && /api\.github\.com/i.test(error)) {
-    return "GitHub rejected the orchestrator's token (401). Re-run the Profiler from Onboarding so a fresh installation token is issued — a token already near expiry dies mid-run when the role next talks to GitHub.";
+    return "GitHub rejected the orchestrator's token (401). Re-run the Profiler from Onboarding. The Console mints a fresh installation token when the orchestrator is about to talk to GitHub — a token captured at dispatch can expire during a long run.";
   }
   return error;
 }

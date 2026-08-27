@@ -55,6 +55,34 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
   });
 
   /**
+   * Called by the orchestrator immediately before a GitHub action. Dispatch-time
+   * tokens last ~1h and a Profiler run can take 45 minutes; this mints a new
+   * installation token so GET /issues/{n} does not 401 mid-run.
+   */
+  app.post<{ Body: { installation_id?: number } }>("/api/orchestrator/github-token", async (req, reply) => {
+    const expected = deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN.trim();
+    if (!expected || req.headers.authorization !== `Bearer ${expected}`) {
+      return reply.code(401).send({ error: "dispatch token required" });
+    }
+    const installationId = Number(req.body?.installation_id);
+    if (!Number.isInteger(installationId) || installationId < 1) {
+      return reply.code(400).send({ error: "installation_id is required" });
+    }
+    const known = (
+      await deps.dbh.db.select({ id: estates.id }).from(estates).where(eq(estates.installationId, installationId)).limit(1)
+    )[0];
+    if (!known) return reply.code(404).send({ error: "unknown installation" });
+    try {
+      const auth = await deps.credentials.auth();
+      if (!auth) return reply.code(503).send({ error: "GitHub App is not configured" });
+      const minted = await auth.mintInstallationToken(installationId, { forceFresh: true });
+      return { token: minted.token, expires_at: new Date(minted.expiresAt).toISOString() };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
    * Hand an already-projected issue to the orchestrator. Needed because the
    * original GitHub delivery was consumed by the Console and never reached
    * :8080 — relabelling also works once the worker forwards events.
