@@ -150,6 +150,8 @@ The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger
 
 The factory engine is a second compose project on this VPS (`~/factory-orchestrator`), deployed from `claude-software-factory` the same way: GitHub Actions, Traefik, `lighthouse-network`. Set `ORCHESTRATOR_DISPATCH_TOKEN` here to match that stack's `DISPATCH_TOKEN`, then redeploy this Console so api/worker can reach `http://factory-orchestrator:8080`. GitHub webhooks stay on this Console. Runbook: `claude-software-factory/orchestrator/README.md` § Cloud deploy.
 
+**Hostname collision:** `PUBLIC_ORIGIN` here (`sf.genaipeople.com`) and the orchestrator's `PUBLIC_BASE_URL` must be different hosts. If both point at `sf.genaipeople.com`, Traefik serves the orchestrator JSON at `/` instead of the Console SPA. Fix with [`scripts/fix-vps-host-routing.sh`](scripts/fix-vps-host-routing.sh) on the VPS and update `PUBLIC_BASE_URL` in `claude-software-factory`.
+
 ### Adopt your existing factory organisation
 
 After connecting repos, Onboarding → **Reconcile this organisation now** walks GitHub and imports
