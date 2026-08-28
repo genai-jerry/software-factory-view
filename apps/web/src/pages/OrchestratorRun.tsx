@@ -17,7 +17,8 @@ export function OrchestratorRunPage() {
         <code className="muted">{runId}</code>
       </div>
       <p className="muted">
-        Live log for one Software Factory role — outcome, model, and Claude's transcript. Factory comments on GitHub
+        Live log for one Software Factory role — outcome, model, a live event
+        timeline, and Claude's transcript as it is written. Factory comments on GitHub
         point here instead of the orchestrator's raw JSON.
       </p>
       <OrchestratorRunDetail runId={runId} repo="" />
