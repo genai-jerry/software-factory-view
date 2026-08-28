@@ -82,8 +82,8 @@ describe("GET /api/orchestrator/runs/:id", () => {
           JSON.stringify({
             id: "ee6a9128-10c0-469c-baa1-3c47b2a08c3c",
             role: "profiler",
-            outcome: "error",
-            error: "No model in the preference chain",
+            outcome: "running",
+            events: [{ ts: "2026-08-28T03:00:00Z", kind: "phase", message: "waiting for tests" }],
           }),
           { status: 200 },
         ),
@@ -94,7 +94,11 @@ describe("GET /api/orchestrator/runs/:id", () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ role: "profiler", outcome: "error" });
+    expect(res.json()).toMatchObject({
+      role: "profiler",
+      outcome: "running",
+      events: [{ message: "waiting for tests" }],
+    });
   });
 });
 

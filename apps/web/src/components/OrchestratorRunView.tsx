@@ -3,6 +3,12 @@ import type { ReactNode } from "react";
 import { api, ApiError } from "../api.js";
 import { Banner } from "./Banner.js";
 
+export type RunEvent = {
+  ts?: string;
+  kind?: string;
+  message: string;
+};
+
 export type OrchestratorRunLog = {
   id?: string;
   repo?: string;
@@ -16,6 +22,7 @@ export type OrchestratorRunLog = {
   outcome?: string | null;
   error?: string | null;
   status?: string;
+  events?: RunEvent[] | unknown;
   guards?: { phase?: string; fallbacks?: string[]; model?: string } | unknown;
 };
 
@@ -112,7 +119,9 @@ export function OrchestratorRunDetail({
           <pre className="run-log">{transcript.data.transcript}</pre>
         </>
       ) : (
-        !done && run.data && <p className="muted">Claude's transcript appears here when the run writes it.</p>
+        !done && run.data && (
+          <p className="muted">Output appears here as Claude and tests run.</p>
+        )
       )}
     </>
   );
@@ -147,7 +156,7 @@ export function OrchestratorRunModal({
 }
 
 export const NO_OP_EXPLANATION =
-  "Claude finished without posting a comment or changing a factory label on the issue. Local edits in the run workspace were discarded. This is not a credentials, permission, or turn-limit failure unless the transcript says so.";
+  "Claude's session ended without posting a comment or changing a factory label. Local edits — and any background tests — were discarded with the run workspace. The role is not still in progress. This is not a credentials, permission, or turn-limit failure unless the transcript says so.";
 
 function outcomeLabel(run: OrchestratorRunLog): string {
   if (run.outcome === "running" || (!run.outcome && !run.finished_at)) return "in progress";
@@ -196,8 +205,53 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
           </div>
         ))}
       </dl>
+      <RunEventList events={runEvents(run)} />
     </>
   );
+}
+
+export function runEvents(run?: OrchestratorRunLog | null): RunEvent[] {
+  const raw = run?.events;
+  if (!Array.isArray(raw)) return [];
+  const out: RunEvent[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const message = "message" in item && typeof item.message === "string" ? item.message : "";
+    if (!message) continue;
+    out.push({
+      ts: "ts" in item && typeof item.ts === "string" ? item.ts : undefined,
+      kind: "kind" in item && typeof item.kind === "string" ? item.kind : undefined,
+      message,
+    });
+  }
+  return out;
+}
+
+export function RunEventList({ events }: { events: RunEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <>
+      <h4 style={{ margin: "1rem 0 0.4rem" }}>Events</h4>
+      <ol className="run-events" aria-label="Run events">
+        {events.map((event, i) => (
+          <li key={`${event.ts ?? "t"}-${i}`}>
+            {event.ts ? <time dateTime={event.ts}>{formatEventTime(event.ts)}</time> : null}
+            <span>{event.message}</span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+function formatEventTime(ts: string): string {
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return ts;
+  return new Date(ms).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function explainOrchestratorError(error: string): string {
