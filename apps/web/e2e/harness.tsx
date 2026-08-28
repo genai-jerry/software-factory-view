@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
+import { useMemo } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { FocusProvider } from "../src/lib/filter.js";
 import { Shell } from "../src/components/Shell.js";
@@ -7,8 +8,9 @@ import { Sheet } from "../src/components/Sheet.js";
 import { ActionBar } from "../src/components/ActionBar.js";
 import { HaltBar } from "../src/components/HaltBar.js";
 import { Banner } from "../src/components/Banner.js";
+import { FactoryRunStatus } from "../src/components/FactoryRunStatus.js";
 import { HomePage } from "../src/pages/Home.js";
-import type { Me, SetupStatus } from "../src/types.js";
+import type { EpicWorkspace, Me, SetupStatus } from "../src/types.js";
 import "@fontsource/ibm-plex-sans/400.css";
 import "@fontsource/ibm-plex-sans/600.css";
 import "../src/styles.css";
@@ -192,6 +194,64 @@ function OnboardingScreen() {
   );
 }
 
+function EpicRunStatusScreen() {
+  const demoClient = useMemo(() => {
+    const run = {
+      id: "demo-run-id",
+      role: "intake",
+      model: "claude-sonnet-4",
+      outcome: "running",
+      guards: { phase: "reading the repo" },
+    };
+    return new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          queryFn: async ({ queryKey }) => {
+            if (queryKey[0] === "orchestrator-run") return run;
+            throw new Error(`unexpected query ${String(queryKey[0])}`);
+          },
+        },
+      },
+    });
+  }, []);
+  const data: EpicWorkspace = {
+    epic: {
+      id: "epic-1",
+      number: 4,
+      title: "Intake flow",
+      bodyHtml: "",
+      state: "factory:intake",
+      open: true,
+      author: "alice",
+      htmlUrl: "https://github.com/acme/api/issues/4",
+      labels: ["factory:in-progress", "factory:intake"],
+    },
+    repo: { id: "repo-1", fullName: "acme/api", defaultBranch: "main" },
+    pipeline: ["factory:intake", "factory:spec-ready"],
+    gate: null,
+    tasks: [],
+    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0, waiting: 0 },
+    blockedSubIssues: [],
+    change: null,
+    artifacts: [],
+    threads: [],
+    freshness: { lastSyncedAt: null, stale: false },
+    orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
+  };
+  return (
+    <QueryClientProvider client={demoClient}>
+      <Shell me={me} setup={setup}>
+        <h1 style={{ marginBottom: 0 }}>Epic #4 · Intake flow</h1>
+        <FactoryRunStatus data={data} />
+        <p className="muted">Overview tab content would follow.</p>
+        <OverflowProbe />
+      </Shell>
+    </QueryClientProvider>
+  );
+}
+
 function ApiDownScreen() {
   return (
     <div className="home">
@@ -219,6 +279,8 @@ function Screen() {
       return <HomeScreen />;
     case "onboarding":
       return <OnboardingScreen />;
+    case "epic-run-status":
+      return <EpicRunStatusScreen />;
     case "api-down":
       return <ApiDownScreen />;
     default:

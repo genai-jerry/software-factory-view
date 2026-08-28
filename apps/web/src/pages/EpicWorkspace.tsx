@@ -13,6 +13,7 @@ import type {
 } from "../types.js";
 import { DecisionCard } from "./Decisions.js";
 import { QaPanel } from "./QaPanel.js";
+import { FactoryRunStatus } from "../components/FactoryRunStatus.js";
 import { GitHubLink } from "../components/GitHubLink.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { Sheet } from "../components/Sheet.js";
@@ -78,6 +79,8 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
       </div>
 
       <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
+
+      <FactoryRunStatus data={data} />
 
       {showHalt && (
         <HaltBar

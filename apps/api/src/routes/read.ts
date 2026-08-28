@@ -24,7 +24,8 @@ import {
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
-import { requireAuth, resolveSession, type AppDeps, type RequestCtx } from "../context.js";
+import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
+import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
 
 /** Read surface. Every query is scoped to the caller's orgs at the data layer. */
@@ -49,6 +50,49 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       .innerJoin(orgs, eq(orgs.id, memberships.orgId))
       .where(eq(memberships.userId, ctx.userId));
     return { login: user.login, name: user.name, avatarUrl: user.avatarUrl, orgs: orgRows };
+  });
+
+  /** Proxy GitHub-hosted issue/comment images with installation or user auth. */
+  app.get<{ Params: { repoId: string }; Querystring: { url?: string } }>("/api/media/:repoId", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const url = req.query.url?.trim();
+    if (!url || !isGitHubMediaUrl(url)) return reply.code(400).send({ error: "unsupported or missing media url" });
+
+    const row = (
+      await db
+        .select({ repo: repos, estate: estates })
+        .from(repos)
+        .innerJoin(estates, eq(estates.id, repos.estateId))
+        .where(and(eq(repos.id, req.params.repoId), inArray(repos.orgId, ctx.orgIds)))
+        .limit(1)
+    )[0];
+    if (!row) return reply.code(404).send({ error: "repo not found" });
+
+    let token: string;
+    try {
+      const auth = await deps.credentials.auth();
+      if (auth) {
+        token = await auth.installationToken(row.estate.installationId);
+      } else {
+        token = ctx.userToken();
+      }
+    } catch {
+      try {
+        token = ctx.userToken();
+      } catch {
+        return reply.code(503).send({ error: "no GitHub credentials available to fetch media" });
+      }
+    }
+
+    try {
+      const { body, contentType } = await fetchGitHubMedia(url, token);
+      reply.header("content-type", contentType);
+      reply.header("cache-control", "private, max-age=3600");
+      return reply.send(body);
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
   });
 
   app.get("/api/estates", async (req, reply) => {
@@ -222,7 +266,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         id: epic.id,
         number: epic.number,
         title: epic.title,
-        bodyHtml: epic.body ? renderMarkdown(epic.body) : "",
+        bodyHtml: epic.body ? renderMarkdown(epic.body, { repoId: repo.id }) : "",
         state: epic.factoryState,
         open: epic.state === "open",
         author: epic.author,
@@ -315,7 +359,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       if (!ctx) return;
       const found = await loadEpic(deps, ctx, req.params.id);
       if (!found) return reply.code(404).send({ error: "epic not found" });
-      const { epic } = found;
+      const { epic, repo } = found;
 
       const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epic.id)).limit(1))[0];
       if (!change) return reply.code(404).send({ error: "no change folder discovered for this epic" });
@@ -346,7 +390,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         ref: wantRef,
         sha,
         markdown: content,
-        html: renderMarkdown(content),
+        html: renderMarkdown(content, { repoId: repo.id }),
         otherSha: wantRef === "approved" ? artifact.latestSha : artifact.mergedSha,
       };
     },
@@ -360,6 +404,15 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       await db.select().from(threads).where(and(eq(threads.id, req.params.id), inArray(threads.orgId, ctx.orgIds))).limit(1)
     )[0];
     if (!thread) return reply.code(404).send({ error: "thread not found" });
+
+    const epicRow = (
+      await db
+        .select({ repoId: issues.repoId })
+        .from(issues)
+        .where(and(eq(issues.id, thread.epicIssueId), inArray(issues.orgId, ctx.orgIds)))
+        .limit(1)
+    )[0];
+    const repoId = epicRow?.repoId;
 
     const entries = await db
       .select({ entry: threadEntries, comment: comments })
@@ -378,7 +431,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         id: entry.id,
         source: entry.source,
         author: entry.author ?? comment?.author ?? null,
-        bodyHtml: renderMarkdown(comment?.body ?? entry.body ?? ""),
+        bodyHtml: renderMarkdown(comment?.body ?? entry.body ?? "", repoId ? { repoId } : undefined),
         isAgent: comment?.isAgent ?? false,
         isApproval: comment?.isApproval ?? false,
         htmlUrl: comment?.htmlUrl ?? null,
