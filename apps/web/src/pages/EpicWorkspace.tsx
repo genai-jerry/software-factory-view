@@ -19,7 +19,6 @@ import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { Sheet } from "../components/Sheet.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { HaltBar } from "../components/HaltBar.js";
-import { EpicFactoryRunStatus } from "../components/EpicFactoryRunStatus.js";
 import { peopleLabel, factoryShort } from "../lib/labels.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tasks" | "threads" | "decisions";
@@ -99,14 +98,6 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
         </div>
       )}
       {data.orchestrator.canStart && <StartFactoryRun epicId={data.epic.id} state={data.epic.state} />}
-      {data.epic.labels.includes("factory:in-progress") && (
-        <EpicFactoryRunStatus
-          repo={data.repo.fullName}
-          issueNumber={data.epic.number}
-          inProgress
-          githubActions={data.orchestrator.githubActionsEnabled}
-        />
-      )}
       {data.blockedSubIssues.length > 0 && (
         <div className="banner error">
           {data.blockedSubIssues.map((b) => (
