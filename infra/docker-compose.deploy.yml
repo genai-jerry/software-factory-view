@@ -107,6 +107,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=lighthouse-network
+      # Console must win if orchestrator PUBLIC_BASE_URL was set to the same host.
+      - traefik.http.routers.factory-console.priority=100
       - traefik.http.routers.factory-console.rule=Host(`${CONSOLE_HOST}`)
       - traefik.http.routers.factory-console.entrypoints=websecure
       - traefik.http.routers.factory-console.tls=true

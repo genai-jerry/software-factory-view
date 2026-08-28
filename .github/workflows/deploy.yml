@@ -255,3 +255,10 @@ jobs:
 
             docker image prune -f >/dev/null || true
             echo "Deployment completed. Console reachable at https://${CONSOLE_HOST}/"
+
+      - name: Verify public routing
+        env:
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+        run: |
+          chmod +x scripts/verify-public-origin.sh
+          ./scripts/verify-public-origin.sh

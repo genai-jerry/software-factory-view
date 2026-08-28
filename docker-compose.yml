@@ -122,6 +122,7 @@ services:
     labels:
       - traefik.enable=${TRAEFIK_ENABLE:-false}
       - traefik.docker.network=lighthouse-network
+      - traefik.http.routers.factory-console.priority=100
       - traefik.http.routers.factory-console.rule=Host(`${CONSOLE_HOST:-localhost}`)
       - traefik.http.routers.factory-console.entrypoints=websecure
       - traefik.http.routers.factory-console.tls=true

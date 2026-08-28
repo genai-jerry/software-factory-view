@@ -417,4 +417,10 @@ REMOTE_EOF
 log "Running deploy on ${DEPLOY_HOST}..."
 ssh "${SSH_OPTS[@]}" -p "$DEPLOY_PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -s' < "$REMOTE_SCRIPT"
 
+if [[ -n "${PUBLIC_ORIGIN:-}" ]]; then
+  log "Verifying ${PUBLIC_ORIGIN} serves the Console..."
+  chmod +x scripts/verify-public-origin.sh
+  ./scripts/verify-public-origin.sh
+fi
+
 log "Done — Factory Console (${TARGET_ENV}) deployed from local machine."
