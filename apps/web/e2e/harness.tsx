@@ -238,7 +238,24 @@ function EpicRunStatusScreen() {
     artifacts: [],
     threads: [],
     freshness: { lastSyncedAt: null, stale: false },
-    orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
+    orchestrator: {
+      engine: "software-factory",
+      githubActionsEnabled: false,
+      canStart: false,
+      handoff: {
+        engine: "software-factory",
+        githubActionsEnabled: false,
+        status: "running",
+        headline: "",
+        detail: "",
+        nextStep: null,
+        canStart: false,
+        canClearMarker: false,
+        startsRole: null,
+        run: null,
+        runsError: null,
+      },
+    },
   };
   return (
     <QueryClientProvider client={demoClient}>

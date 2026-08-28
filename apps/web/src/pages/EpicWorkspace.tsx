@@ -13,6 +13,7 @@ import type {
 } from "../types.js";
 import { DecisionCard } from "./Decisions.js";
 import { QaPanel } from "./QaPanel.js";
+import { FactoryHandoffPanel } from "../components/FactoryHandoffPanel.js";
 import { FactoryRunStatus } from "../components/FactoryRunStatus.js";
 import { GitHubLink } from "../components/GitHubLink.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
@@ -97,7 +98,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           may be stale.
         </div>
       )}
-      {data.orchestrator.canStart && <StartFactoryRun epicId={data.epic.id} state={data.epic.state} />}
+      <FactoryHandoffPanel data={data} />
       {data.blockedSubIssues.length > 0 && (
         <div className="banner error">
           {data.blockedSubIssues.map((b) => (
@@ -159,44 +160,6 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
         <Sheet title="History" onClose={() => setHistoryOpen(false)}>
           <TimelineRail epicId={data.epic.id} />
         </Sheet>
-      )}
-    </div>
-  );
-}
-
-function StartFactoryRun({ epicId, state }: { epicId: string; state: string | null }) {
-  const queryClient = useQueryClient();
-  const start = useMutation({
-    mutationFn: () =>
-      api.post<{ queued: boolean; deliveryGuid: string; action: string; label: string | null }>(
-        `/api/epics/${epicId}/factory-run`,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["epic", epicId] });
-      void queryClient.invalidateQueries({ queryKey: ["timeline", epicId] });
-    },
-  });
-  const role =
-    state === "factory:fast-track"
-      ? "fast lane"
-      : state === "factory:profile"
-        ? "Profiler"
-        : "factory";
-  return (
-    <div className="banner info">
-      <p style={{ margin: "0 0 0.5rem" }}>
-        GitHub delivered this issue to the Console, which only records it. The Software Factory
-        orchestrator has not started the {role} yet.
-      </p>
-      <button onClick={() => start.mutate()} disabled={start.isPending}>
-        {start.isPending ? "Starting…" : "Start factory run"}
-      </button>
-      {start.isError && <p className="muted">{(start.error as ApiError).message}</p>}
-      {start.isSuccess && (
-        <p className="muted">
-          {start.data.queued ? "Queued with the orchestrator." : "The orchestrator already had this delivery."} Watch
-          the issue on GitHub for the start comment.
-        </p>
       )}
     </div>
   );

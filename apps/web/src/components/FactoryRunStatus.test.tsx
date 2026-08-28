@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { FactoryRunStatus } from "./FactoryRunStatus.js";
-import type { EpicWorkspace } from "../types.js";
+import type { EpicWorkspace, FactoryHandoff } from "../types.js";
 
 vi.mock("./OrchestratorRunView.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./OrchestratorRunView.js")>();
@@ -47,8 +47,29 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     artifacts: [],
     threads: [],
     freshness: { lastSyncedAt: null, stale: false },
-    orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
+    orchestrator: {
+      engine: "software-factory",
+      githubActionsEnabled: false,
+      canStart: false,
+      handoff: handoff("running"),
+    },
     ...overrides,
+  };
+}
+
+function handoff(status: FactoryHandoff["status"]): FactoryHandoff {
+  return {
+    engine: status === "actions" ? "github-actions" : "software-factory",
+    githubActionsEnabled: status === "actions",
+    status,
+    headline: "",
+    detail: "",
+    nextStep: null,
+    canStart: false,
+    canClearMarker: false,
+    startsRole: null,
+    run: null,
+    runsError: null,
   };
 }
 
@@ -72,7 +93,12 @@ describe("FactoryRunStatus", () => {
   it("shows a GitHub Actions banner when the engine is github-actions", () => {
     renderStatus(
       workspace({
-        orchestrator: { engine: "github-actions", githubActionsEnabled: true, canStart: false },
+        orchestrator: {
+          engine: "github-actions",
+          githubActionsEnabled: true,
+          canStart: false,
+          handoff: handoff("actions"),
+        },
       }),
     );
     expect(screen.getByText(/Factory run in progress/i)).toBeInTheDocument();

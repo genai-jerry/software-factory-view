@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
+  deriveFactoryState,
   factoryStartLabel,
+  factoryStartRole,
   githubActionsEnabled,
+  IN_PROGRESS_LABEL,
   InstallationClient,
   installationTokenForOrchestrator,
   postOrchestratorGitHubEvent,
   type GhIssue,
 } from "@console/core";
-import { estates, orgs } from "@console/db";
+import { estates, issues, orgs } from "@console/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, type AppDeps } from "../context.js";
+import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import {
   fetchOrchestratorRun,
@@ -107,8 +110,18 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     const [owner, name] = repo.fullName.split("/") as [string, string];
 
     const ghIssue = await liveGithubIssue(deps, estate.installationId, owner, name, epic.number);
+    // Falling back to the projection is not free: it is the Console's last
+    // known label set, which is exactly what goes stale when webhooks are
+    // behind — and the label set is what picks the role. Say which one was used.
     const issue = ghIssue ?? projectedGithubIssue(epic);
     const labels = githubLabelNames(issue);
+    if (labels.includes(IN_PROGRESS_LABEL)) {
+      return reply.code(409).send({
+        error:
+          `#${epic.number} still carries \`${IN_PROGRESS_LABEL}\`, so the orchestrator treats it as already in flight ` +
+          "and will refuse to start another role on it. If no run is live, clear the marker first.",
+      });
+    }
     const startLabel = factoryStartLabel(labels);
     const action = startLabel ? "labeled" : "opened";
     const payload: Record<string, unknown> = {
@@ -154,9 +167,73 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
       deliveryGuid: result.deliveryGuid,
       action,
       label: startLabel,
+      role: factoryStartRole(labels),
+      /** True when GitHub could not be read and the Console's projection decided the role. */
+      fromProjection: ghIssue === null,
     };
   });
+
+  /**
+   * Clear a `factory:in-progress` marker that outlived its run.
+   *
+   * The orchestrator applies the marker when a role starts and removes it in a
+   * `finally`, so it only survives a run when the process itself did not — and
+   * then it blocks everything: the router refuses to hand an "in-flight" issue
+   * to the fast lane, and this Console hides the start button. Nothing sweeps
+   * it, so a human has to say the run is gone. Removing the label is all this
+   * does; it starts nothing.
+   */
+  app.post<{ Params: { id: string } }>("/api/epics/:id/factory-run/clear-marker", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadEpic(deps, ctx, req.params.id);
+    if (!found) return reply.code(404).send({ error: "epic not found" });
+    const { epic, repo } = found;
+
+    const org = (await deps.dbh.db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
+    if (!org || githubActionsEnabled(org.orchestrator)) {
+      return reply.code(409).send({
+        error: "this org uses GitHub Actions — the in-progress marker there belongs to a workflow run",
+      });
+    }
+    const runs = await fetchOrchestratorRuns(deps.cfg, { repo: repo.fullName, issue: epic.number });
+    if (!("error" in runs)) {
+      const live = runs.runs.find(
+        (r) => r && typeof r === "object" && !(r as Record<string, unknown>).finished_at,
+      ) as Record<string, unknown> | undefined;
+      const startedAt = typeof live?.started_at === "string" ? Date.parse(live.started_at) : NaN;
+      // A run the orchestrator still considers live, started inside the role
+      // timeout, is not stuck — clearing its marker would hide a real run.
+      if (live && !Number.isNaN(startedAt) && Date.now() - startedAt < STALL_MS) {
+        return reply.code(409).send({
+          error: `the orchestrator reports a live ${String(live.role ?? "role")} run on this issue (started ${new Date(startedAt).toISOString()}). Wait for it, or stop it on the orchestrator first.`,
+        });
+      }
+    }
+
+    // Removed as the human, not as the App: this is an authoritative write on
+    // pipeline state, so GitHub's own permission check on their token decides.
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    try {
+      await userClient(deps, ctx).removeLabel(owner, name, epic.number, IN_PROGRESS_LABEL);
+    } catch (err) {
+      return reply.code(502).send({ error: `could not remove the marker on GitHub: ${(err as Error).message}` });
+    }
+
+    // Project it immediately — the label webhook will confirm, but the user is
+    // looking at this page now and the whole point is that it stopped lying.
+    const labels = epic.labels.filter((l) => l !== IN_PROGRESS_LABEL);
+    await deps.dbh.db
+      .update(issues)
+      .set({ labels, factoryState: deriveFactoryState(labels) })
+      .where(eq(issues.id, epic.id));
+
+    return { cleared: true, labels };
+  });
 }
+
+/** Matches the orchestrator's 45-minute ROLE_TIMEOUT_SECONDS, plus slack. */
+const STALL_MS = 50 * 60_000;
 
 function githubLabelNames(issue: Record<string, unknown>): string[] {
   const raw = issue.labels;

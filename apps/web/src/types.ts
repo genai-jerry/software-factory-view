@@ -306,7 +306,42 @@ export interface EpicWorkspace {
     engine: "github-actions" | "software-factory";
     githubActionsEnabled: boolean;
     canStart: boolean;
+    handoff: FactoryHandoff;
   };
+}
+
+export type HandoffStatus =
+  | "actions"
+  | "idle"
+  | "not-configured"
+  | "waiting"
+  | "failed"
+  | "running"
+  | "stalled"
+  | "orphaned"
+  | "unknown";
+
+/** Why this issue is (or is not) running under the Software Factory orchestrator. */
+export interface FactoryHandoff {
+  engine: "github-actions" | "software-factory";
+  githubActionsEnabled: boolean;
+  status: HandoffStatus;
+  headline: string;
+  detail: string;
+  nextStep: string | null;
+  canStart: boolean;
+  canClearMarker: boolean;
+  startsRole: { label: string; role: string; human: string } | null;
+  run: {
+    id: string;
+    role: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    outcome: string | null;
+    error: string | null;
+    minutesRunning: number;
+  } | null;
+  runsError: string | null;
 }
 
 export interface TimelineEvent {

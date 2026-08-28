@@ -165,10 +165,29 @@ function orchestratorBase(cfg: ConsoleConfig): { base: string; token: string } |
   return { base, token };
 }
 
+/**
+ * Whether this Console can talk to the orchestrator at all, and why not.
+ * The epic workspace says this out loud rather than letting the user find out
+ * by pressing a button that 502s.
+ */
+export function orchestratorConfigured(cfg: ConsoleConfig): { configured: boolean; detail: string | null } {
+  const dest = orchestratorBase(cfg);
+  if ("error" in dest) {
+    return {
+      configured: false,
+      detail:
+        dest.error === "ORCHESTRATOR_URL is not set"
+          ? "ORCHESTRATOR_URL is not set, so the Console never forwards GitHub events to the orchestrator."
+          : `ORCHESTRATOR_URL is ${cfg.ORCHESTRATOR_URL.trim()} but ORCHESTRATOR_DISPATCH_TOKEN is empty, so every call is rejected.`,
+    };
+  }
+  return { configured: true, detail: null };
+}
+
 async function orchestratorGet(
   cfg: ConsoleConfig,
   path: string,
-  opts: { asText?: boolean } = {},
+  opts: { asText?: boolean; timeoutMs?: number } = {},
 ): Promise<{ ok: true; status: number; body: unknown; text?: string } | OrchestratorProxyError> {
   const dest = orchestratorBase(cfg);
   if ("error" in dest) return dest;
@@ -176,7 +195,7 @@ async function orchestratorGet(
   try {
     res = await fetch(`${dest.base}${path}`, {
       headers: { authorization: `Bearer ${dest.token}` },
-      signal: AbortSignal.timeout(6_000),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 6_000),
     });
   } catch (err) {
     return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
@@ -214,9 +233,10 @@ export async function fetchOrchestratorTranscript(
 export async function fetchOrchestratorRuns(
   cfg: ConsoleConfig,
   query: { repo: string; issue: number },
+  opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: true; runs: unknown[] } | OrchestratorProxyError> {
   const params = new URLSearchParams({ repo: query.repo, issue: String(query.issue) });
-  const got = await orchestratorGet(cfg, `/runs?${params}`);
+  const got = await orchestratorGet(cfg, `/runs?${params}`, { timeoutMs: opts.timeoutMs });
   if ("error" in got) return got;
   return { ok: true, runs: Array.isArray(got.body) ? got.body : [] };
 }

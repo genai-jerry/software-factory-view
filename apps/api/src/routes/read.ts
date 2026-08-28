@@ -24,6 +24,7 @@ import {
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
+import { epicFactoryHandoff } from "../factory-status.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
@@ -260,6 +261,15 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
     const actions = githubActionsEnabled(org?.orchestrator);
     const pending = factoryRunIsPending({ open: epic.state === "open", labels: epic.labels });
+    // Labels say what the pipeline believes; the orchestrator says what is
+    // actually running. The workspace needs both to explain a stuck issue.
+    const handoff = await epicFactoryHandoff(deps.cfg, {
+      engine: org?.orchestrator,
+      open: epic.state === "open",
+      labels: epic.labels,
+      repoFullName: repo.fullName,
+      issueNumber: epic.number,
+    });
 
     return {
       epic: {
@@ -305,7 +315,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       orchestrator: {
         engine: actions ? "github-actions" : "software-factory",
         githubActionsEnabled: actions,
+        // Kept as the label-only answer the board and tests have always used;
+        // `handoff.canStart` is the same question asked with run facts in hand
+        // (it stays false while a marker from a dead run is still standing).
         canStart: !actions && pending,
+        handoff,
       },
     };
   });
