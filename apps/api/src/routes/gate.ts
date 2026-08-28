@@ -91,7 +91,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
             .where(and(eq(artifactCache.repoId, a.repoId), eq(artifactCache.path, a.path), eq(artifactCache.commitSha, sha)))
             .limit(1)
         )[0];
-        if (cached) html = renderMarkdown(decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY));
+        if (cached) html = renderMarkdown(decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY), { repoId: repo.id });
       }
       rendered.push({ path: a.path, kind: a.kind, sha, mergedSha: a.mergedSha, html });
     }
