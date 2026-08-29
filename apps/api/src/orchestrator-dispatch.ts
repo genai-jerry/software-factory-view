@@ -30,6 +30,9 @@ export async function dispatchFactoryRole(
     role: string;
     issue: number;
     githubToken?: string;
+    /** When the token above actually dies. Without it the orchestrator can
+     *  only assume, and a role that outlives the assumption 401s mid-run. */
+    githubTokenExpiresAt?: string;
     installationId?: number;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
@@ -61,6 +64,7 @@ export async function dispatchFactoryRole(
         role: args.role,
         issue: args.issue,
         ...(args.githubToken ? { github_token: args.githubToken } : {}),
+        ...(args.githubTokenExpiresAt ? { github_token_expires_at: args.githubTokenExpiresAt } : {}),
         ...(args.installationId ? { installation_id: args.installationId } : {}),
         ...(cfg.PUBLIC_ORIGIN ? { console_url: cfg.PUBLIC_ORIGIN.replace(/\/+$/, "") } : {}),
         ...(args.anthropicApiKey ? { anthropic_api_key: args.anthropicApiKey } : {}),
