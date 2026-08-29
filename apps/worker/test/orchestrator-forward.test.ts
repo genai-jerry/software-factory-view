@@ -93,7 +93,8 @@ describe("orchestrator event forward", () => {
     const org = (await db.select().from(orgs).limit(1))[0]!;
     await db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, org.id));
 
-    vi.spyOn(auth, "installationToken").mockResolvedValue("ghs_from_console");
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+    vi.spyOn(auth, "mintInstallationToken").mockResolvedValue({ token: "ghs_from_console", expiresAt });
 
     const opened = job("issues", {
       action: "labeled",
@@ -126,9 +127,13 @@ describe("orchestrator event forward", () => {
       delivery_guid: "fwd-ft",
       payload: { action: "labeled" },
       github_token: "ghs_from_console",
+      // The orchestrator queues this delivery and may not use the token for
+      // the better part of an hour, so it is told when the token actually dies
+      // rather than left to assume.
+      github_token_expires_at: new Date(expiresAt).toISOString(),
       console_url: "http://localhost:5173",
     });
-    expect(auth.installationToken).toHaveBeenCalledWith(INSTALLATION.id, expect.objectContaining({ minRemainingMs: 50 * 60 * 1000 }));
+    expect(auth.mintInstallationToken).toHaveBeenCalledWith(INSTALLATION.id, expect.objectContaining({ minRemainingMs: 50 * 60 * 1000 }));
   });
 
   it("throws on orchestrator network failure so ingest retries", async () => {

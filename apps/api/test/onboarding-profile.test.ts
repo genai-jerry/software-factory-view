@@ -241,6 +241,9 @@ describe("the profile step", () => {
       console_url: "http://localhost:5173",
       anthropic_api_key: "sk-ant-console",
     });
+    // The orchestrator holds this token across a queue and a role that can run
+    // for 45 minutes, so it is told the real expiry instead of assuming one.
+    expect(typeof (dispatch![1] as Record<string, unknown>).github_token_expires_at).toBe("string");
     const profile = (await deps.dbh.db.select().from(onboardingRuns)).find((s) => s.step === "profile");
     expect(profile!.detail).toMatchObject({ dispatched: true, dispatchId: "dispatch-profile" });
   });

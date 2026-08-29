@@ -5,7 +5,7 @@ import {
   GitHubHttpError,
   githubActionsEnabled,
   InstallationClient,
-  installationTokenForOrchestrator,
+  mintForOrchestrator,
   isAgentSecretName,
   parseApproverFile,
   parseRepoOrchestratorEngine,
@@ -894,9 +894,14 @@ async function dispatchProfiler(
   issue: number,
 ) {
   let githubToken: string | undefined;
+  let githubTokenExpiresAt: string | undefined;
   try {
     const auth = await deps.credentials.auth();
-    if (auth) githubToken = await installationTokenForOrchestrator(auth, installationId);
+    if (auth) {
+      const minted = await mintForOrchestrator(auth, installationId);
+      githubToken = minted.token;
+      githubTokenExpiresAt = new Date(minted.expiresAt).toISOString();
+    }
   } catch {
     /* orchestrator can still mint its own JWT if it has a real App key */
   }
@@ -907,6 +912,7 @@ async function dispatchProfiler(
     role: "profiler",
     issue,
     githubToken,
+    githubTokenExpiresAt,
     installationId,
     ...secrets,
   });

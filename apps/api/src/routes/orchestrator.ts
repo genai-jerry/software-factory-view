@@ -3,7 +3,7 @@ import {
   factoryStartLabel,
   githubActionsEnabled,
   InstallationClient,
-  installationTokenForOrchestrator,
+  mintForOrchestrator,
   postOrchestratorGitHubEvent,
   type GhIssue,
 } from "@console/core";
@@ -127,9 +127,14 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     };
 
     let githubToken: string | undefined;
+    let githubTokenExpiresAt: string | undefined;
     try {
       const auth = await deps.credentials.auth();
-      if (auth) githubToken = await installationTokenForOrchestrator(auth, estate.installationId);
+      if (auth) {
+        const minted = await mintForOrchestrator(auth, estate.installationId);
+        githubToken = minted.token;
+        githubTokenExpiresAt = new Date(minted.expiresAt).toISOString();
+      }
     } catch {
       /* orchestrator can still mint its own JWT if it has a real App key */
     }
@@ -140,6 +145,7 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
       payload,
       deliveryGuid,
       githubToken,
+      githubTokenExpiresAt,
       ...secrets,
     });
     if ("skipped" in result) {

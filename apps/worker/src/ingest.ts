@@ -3,7 +3,7 @@ import {
   githubActionsEnabled,
   postOrchestratorGitHubEvent,
   InstallationClient,
-  installationTokenForOrchestrator,
+  mintForOrchestrator,
   type AppAuth,
   type ConsoleConfig,
   type GhComment,
@@ -178,9 +178,12 @@ async function maybeForwardToOrchestrator(
 
   const installationId = (job.payload["installation"] as { id?: number } | undefined)?.id;
   let githubToken: string | undefined;
+  let githubTokenExpiresAt: string | undefined;
   if (installationId) {
     try {
-      githubToken = await installationTokenForOrchestrator(auth, installationId);
+      const minted = await mintForOrchestrator(auth, installationId);
+      githubToken = minted.token;
+      githubTokenExpiresAt = new Date(minted.expiresAt).toISOString();
     } catch {
       /* orchestrator can still mint its own JWT if it has a real App key */
     }
@@ -191,6 +194,7 @@ async function maybeForwardToOrchestrator(
     payload: job.payload,
     deliveryGuid: job.deliveryGuid,
     githubToken,
+    githubTokenExpiresAt,
     ...secrets,
   });
   if ("skipped" in result) return;

@@ -20,6 +20,7 @@ export async function postOrchestratorGitHubEvent(
     payload: Record<string, unknown>;
     deliveryGuid: string;
     githubToken?: string;
+    githubTokenExpiresAt?: string;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
   },
@@ -43,6 +44,7 @@ export async function postOrchestratorGitHubEvent(
         payload: args.payload,
         delivery_guid: args.deliveryGuid,
         ...(args.githubToken ? { github_token: args.githubToken } : {}),
+        ...(args.githubTokenExpiresAt ? { github_token_expires_at: args.githubTokenExpiresAt } : {}),
         ...(cfg.PUBLIC_ORIGIN ? { console_url: cfg.PUBLIC_ORIGIN.replace(/\/+$/, "") } : {}),
         ...(args.anthropicApiKey ? { anthropic_api_key: args.anthropicApiKey } : {}),
         ...(args.claudeCodeOauthToken ? { claude_code_oauth_token: args.claudeCodeOauthToken } : {}),

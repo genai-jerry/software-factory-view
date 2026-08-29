@@ -173,6 +173,22 @@ export function installationTokenForOrchestrator(auth: AppAuth, installationId: 
   return auth.installationToken(installationId, { minRemainingMs: ORCHESTRATOR_GITHUB_TOKEN_MIN_REMAINING_MS });
 }
 
+/**
+ * The same token, with the expiry the orchestrator needs to reason about it.
+ *
+ * Freshness at dispatch is not enough on its own: the orchestrator queues the
+ * delivery, roles wait on parallel slots, and the guard read that closes a run
+ * happens after the whole role timeout. Sending `expires_at` lets it re-mint on
+ * the way past instead of discovering the token is dead at the end of a
+ * 45-minute run.
+ */
+export function mintForOrchestrator(
+  auth: AppAuth,
+  installationId: number,
+): Promise<{ token: string; expiresAt: number }> {
+  return auth.mintInstallationToken(installationId, { minRemainingMs: ORCHESTRATOR_GITHUB_TOKEN_MIN_REMAINING_MS });
+}
+
 function normalisePem(pem: string): string {
   // Accept PKCS#1 keys ("BEGIN RSA PRIVATE KEY") by failing loudly with advice,
   // since jose requires PKCS#8. GitHub App keys download as PKCS#1.
