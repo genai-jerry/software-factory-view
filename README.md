@@ -150,7 +150,9 @@ The root `docker-compose.yml` is for local `build:` only. Do not point Hostinger
 
 The factory engine is a second compose project on this VPS (`~/factory-orchestrator`), deployed from `claude-software-factory` the same way: GitHub Actions, Traefik, `lighthouse-network`. Set `ORCHESTRATOR_DISPATCH_TOKEN` here to match that stack's `DISPATCH_TOKEN`, then redeploy this Console so api/worker can reach `http://factory-orchestrator:8080`. GitHub webhooks stay on this Console. Runbook: `claude-software-factory/orchestrator/README.md` § Cloud deploy.
 
-**Hostname collision:** `PUBLIC_ORIGIN` here (`sf.genaipeople.com`) and the orchestrator's `PUBLIC_BASE_URL` must be different hosts. If both point at `sf.genaipeople.com`, Traefik serves the orchestrator JSON at `/` instead of the Console SPA. Fix with [`scripts/fix-vps-host-routing.sh`](scripts/fix-vps-host-routing.sh) on the VPS and update `PUBLIC_BASE_URL` in `claude-software-factory`.
+**Hostname collision:** Traefik `Host()` for the Console (`CONSOLE_HOST` / `sf.genaipeople.com`) and for the orchestrator (`ORCHESTRATOR_HOST` / `factory.genaipeople.com`) must stay different. If both claim `sf.genaipeople.com`, Traefik serves orchestrator JSON at `/` instead of the Console SPA. Fix with [`scripts/fix-vps-host-routing.sh`](scripts/fix-vps-host-routing.sh) on the VPS.
+
+GitHub comments still link `{PUBLIC_BASE_URL}/runs/{id}`. That URL is JSON on the orchestrator. Console Traefik steals `PathPrefix(/runs)` on `ORCHESTRATOR_PUBLIC_HOST` (default `factory.genaipeople.com`) and redirects to `{PUBLIC_ORIGIN}/runs/{id}`, which is the live log page. Prefer setting orchestrator `PUBLIC_BASE_URL` to the Console origin **only if** Traefik uses a separate `ORCHESTRATOR_HOST`.
 
 ### Adopt your existing factory organisation
 

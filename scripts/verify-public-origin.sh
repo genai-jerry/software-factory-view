@@ -52,4 +52,26 @@ EOF
   exit 1
 fi
 
+ORCH_ORIGIN="${ORCHESTRATOR_PUBLIC_ORIGIN:-https://factory.genaipeople.com}"
+ORCH_ORIGIN="${ORCH_ORIGIN%/}"
+if [[ "$ORCH_ORIGIN" != "$ORIGIN" ]]; then
+  RUN_PATH="/runs/verify-placeholder"
+  HEADERS="$(curl -sS -D - -o /dev/null --max-time 15 "$ORCH_ORIGIN$RUN_PATH" || true)"
+  LOCATION="$(printf '%s' "$HEADERS" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/\r$/,""); print $2; exit}')"
+  EXPECTED="$ORIGIN$RUN_PATH"
+  if [[ "$LOCATION" != "$EXPECTED" && "$LOCATION" != "$EXPECTED/" ]]; then
+    cat >&2 <<EOF
+verify-public-origin: $ORCH_ORIGIN$RUN_PATH did not redirect to the Console run page.
+
+GitHub comments link the orchestrator host /runs/{id}, which is JSON. Traefik on
+the Console web container must redirect PathPrefix(/runs) on that host to
+$ORIGIN/runs/{id}.
+
+Got Location: ${LOCATION:-<none>}
+Response: $(printf '%s' "$HEADERS" | head -n 5)
+EOF
+    exit 1
+  fi
+fi
+
 echo "verify-public-origin: OK — $ORIGIN serves Factory Console"

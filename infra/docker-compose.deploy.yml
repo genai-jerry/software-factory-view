@@ -118,6 +118,21 @@ services:
       - traefik.http.routers.factory-console-http.entrypoints=web
       - traefik.http.routers.factory-console-http.middlewares=factory-console-https
       - traefik.http.middlewares.factory-console-https.redirectscheme.scheme=https
+      # GitHub comments link PUBLIC_BASE_URL/runs/{id} on the orchestrator
+      # host (JSON). Steal /runs so the browser lands on the Console SPA.
+      - traefik.http.routers.factory-console-runs.priority=200
+      - traefik.http.routers.factory-console-runs.rule=Host(`${ORCHESTRATOR_PUBLIC_HOST:-factory.genaipeople.com}`) && PathPrefix(`/runs`)
+      - traefik.http.routers.factory-console-runs.entrypoints=websecure
+      - traefik.http.routers.factory-console-runs.tls=true
+      - traefik.http.routers.factory-console-runs.tls.certresolver=letsencrypt
+      - traefik.http.routers.factory-console-runs.middlewares=factory-console-runs-redirect
+      - traefik.http.routers.factory-console-runs-http.priority=200
+      - traefik.http.routers.factory-console-runs-http.rule=Host(`${ORCHESTRATOR_PUBLIC_HOST:-factory.genaipeople.com}`) && PathPrefix(`/runs`)
+      - traefik.http.routers.factory-console-runs-http.entrypoints=web
+      - traefik.http.routers.factory-console-runs-http.middlewares=factory-console-runs-redirect
+      - traefik.http.middlewares.factory-console-runs-redirect.redirectregex.regex=^https?://[^/]+/(.*)
+      - traefik.http.middlewares.factory-console-runs-redirect.redirectregex.replacement=https://${CONSOLE_HOST}/$${1}
+      - traefik.http.middlewares.factory-console-runs-redirect.redirectregex.permanent=true
     networks:
       - default
       - lighthouse-network

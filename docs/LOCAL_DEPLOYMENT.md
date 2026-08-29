@@ -78,14 +78,16 @@ Re-enable later with `gh workflow enable`.
 ## Troubleshooting
 
 - **`sf.genaipeople.com` shows orchestrator JSON instead of the Console** — Traefik
-  is routing the Console hostname to `factory-orchestrator`. The orchestrator's
-  GitHub Environment variable `PUBLIC_BASE_URL` must **not** be the same as the
-  Console's `PUBLIC_ORIGIN` (`https://sf.genaipeople.com`). Set orchestrator
-  `PUBLIC_BASE_URL` to a different host (e.g. `https://factory.genaipeople.com`)
-  or keep it internal-only. On the VPS, run
+  is routing the Console hostname to `factory-orchestrator`. Keep orchestrator
+  Traefik on a different host (`ORCHESTRATOR_HOST`, e.g. `factory.genaipeople.com`
+  or `factory-orchestrator.internal`). On the VPS, run
   [`scripts/fix-vps-host-routing.sh`](../scripts/fix-vps-host-routing.sh) (or
   redeploy with `./scripts/local-deploy.sh production` after fixing the variable).
   `./scripts/verify-public-origin.sh` checks the public URL after deploy.
+- **`factory.genaipeople.com/runs/{id}` shows JSON instead of the run log** — that
+  host is the orchestrator API. After a Console deploy, Traefik redirects `/runs`
+  to `https://sf.genaipeople.com/runs/{id}`. Redeploy this Console so the web
+  container picks up those labels.
 - **`gh: Not Found (404)` fetching environment variables** — the environment
   name is missing, or the `gh` token cannot read it. Check
   `gh api repos/genai-jerry/software-factory-view/environments --jq '.environments[].name'`.
