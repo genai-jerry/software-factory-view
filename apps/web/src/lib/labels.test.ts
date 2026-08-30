@@ -19,7 +19,10 @@ describe("factoryShort", () => {
   it("keeps gate chips as G1–G3", () => {
     expect(factoryShort("factory:spec-ready")).toBe("G1");
     expect(factoryShort("factory:design-ready")).toBe("G2");
-    expect(factoryShort("factory:ready-to-ship")).toBe("G3");
+    // G3 holds at in-staging: ready-to-ship is now the release manager's
+    // integration merge, which no human approves.
+    expect(factoryShort("factory:in-staging")).toBe("G3");
+    expect(factoryShort("factory:ready-to-ship")).toBe("ready-to-ship");
   });
 });
 

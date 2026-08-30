@@ -392,21 +392,39 @@ export async function repairProfileStep(db: Db, repo: RepoRef, pulls: GhPull[], 
   if (pick) await updateProfileStepFromPull(db, repo, pick);
 }
 
-/** Refresh profile-derived repo facts: staging branch, factory enablement. */
+/** Refresh profile-derived repo facts: integration branch, factory enablement. */
 export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoReader): Promise<void> {
   const [owner, name] = repo.fullName.split("/") as [string, string];
   const profile = await reader.getFileAtRef(owner, name, ".factory/profile.json");
   const stub = await reader.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
   const orchestratorFile = await reader.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
-  let stagingBranch: string | null = null;
+  const branchPolicy = await reader.getFileAtRef(owner, name, ".github/factory-branches.json");
+  // FACTORY.md §6a: the org's policy file names the integration branch and says
+  // whether the step is mandatory; the profile overrides the NAME only, for a
+  // repo whose branch is called something else. A missing policy file means the
+  // defaults (staging, required) — not "no integration branch".
+  let policyName: string | null = null;
+  let stagingRequired = true;
+  if (branchPolicy) {
+    try {
+      const json = JSON.parse(branchPolicy.content) as { staging?: string | null; required?: boolean };
+      policyName = typeof json.staging === "string" && json.staging ? json.staging : null;
+      stagingRequired = json.required !== false;
+    } catch {
+      /* malformed policy — validation suite's problem; keep the defaults */
+    }
+  }
+  let profileOverride: string | null = null;
   if (profile) {
     try {
       const json = JSON.parse(profile.content) as { branches?: { staging?: string | null } };
-      stagingBranch = json.branches?.staging ?? null;
+      const v = json.branches?.staging;
+      profileOverride = typeof v === "string" && v ? v : null;
     } catch {
       /* malformed profile — validation suite's problem */
     }
   }
+  const stagingBranch = profileOverride ?? (stagingRequired ? policyName ?? "staging" : null);
   await db
     .update(repos)
     .set({

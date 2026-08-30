@@ -52,7 +52,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   if (!ws.data) return <p className="muted">Loading workspace…</p>;
   const data = ws.data;
 
-  const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:ready-to-ship");
+  const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:in-staging");
   const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
   const tabItems: Array<{ id: Tab; label: string }> = (
     ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tasks", "threads", "decisions"] as Tab[]
@@ -528,7 +528,7 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
     { title: "Ready", match: (s, open) => open && s === "factory:ready" },
     { title: "In review", match: (s, open) => open && s === "factory:in-review" },
     { title: "In test", match: (s, open) => open && s === "factory:in-test" },
-    { title: "Ship/Done", match: (s, open) => !open || s === "factory:ready-to-ship" || s === "factory:deployed" },
+    { title: "Ship/Done", match: (s, open) => !open || s === "factory:ready-to-ship" || s === "factory:in-staging" || s === "factory:deployed" },
     { title: "Blocked", match: (s, open) => open && s === "factory:blocked" },
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;

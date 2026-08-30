@@ -61,6 +61,17 @@ describe("PR kind from branch naming (FACTORY.md §6)", () => {
   it("staging promotion", () => {
     expect(derivePrKind("staging", "main")).toEqual({ kind: "promotion", issueNumber: null });
   });
+
+  it("promotion follows the org's integration branch, not the name 'staging'", () => {
+    // FACTORY.md §6a: the branch is the org's (develop, qa, integration, ...)
+    // and the default branch is not always main.
+    expect(derivePrKind("develop", "master", { integration: "develop", default: "master" }))
+      .toEqual({ kind: "promotion", issueNumber: null });
+    // A branch that merely looks like one is not a promotion.
+    expect(derivePrKind("staging", "main", { integration: "develop", default: "main" }).kind).toBe("other");
+    // Null/empty (a repo the Console has not resolved yet) falls back to staging -> main.
+    expect(derivePrKind("staging", "main", { integration: null, default: null }).kind).toBe("promotion");
+  });
   it("anything else is other", () => {
     expect(derivePrKind("feature/foo", "main").kind).toBe("other");
   });

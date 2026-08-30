@@ -19,6 +19,8 @@ Implemented (Phases 0–2 of the [delivery plan](docs/plan/04-delivery-plan.md),
   threads overlaid on GitHub comments via hidden `<!-- console:thread=… -->` markers, `[≡ raw]` links everywhere.
 - **Gate panel** — the exact document PRs, what-changed-since-you-looked, open-questions guard with recorded
   "approve anyway", **Approve** (posts the literal `Approved` as you), request changes, per-PR merge buttons for G3.
+  G3 holds at `factory:in-staging`: by then the change is already merged onto the org's integration branch and
+  green there (FACTORY.md §6a), and what the buttons merge is the promotion PR onto the default branch.
 - **Blocked inbox** — reply to `factory:blocked` issues as an ordinary comment; the factory's own trigger unblocks.
 - **Decision log** — structured decisions posted to the epic with `<!-- console:decision=… -->`, indexed and
   searchable; gate approvals auto-record.

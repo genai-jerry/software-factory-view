@@ -2,7 +2,7 @@ import { GATE_STATES } from "./factory.js";
 
 /**
  * The individual's five-phase compression of the label state machine
- * (plan 07 §4.2). Eleven columns is the factory's resolution; five phases is
+ * (plan 07 §4.2). Twelve columns is the factory's resolution; five phases is
  * the requester's. Pure data, shared by API and web so the grouping cannot
  * drift — the full `factory:*` label stays the state (F-R3), phases only
  * re-group it for display.
@@ -33,6 +33,7 @@ const PHASE_MAP: Record<string, Phase> = {
   "factory:in-review": "building",
   "factory:in-test": "building",
   "factory:ready-to-ship": "shipping",
+  "factory:in-staging": "shipping",
   "factory:deployed": "shipping",
   "factory:blocked": "held",
   "factory:incident": "held",
@@ -63,7 +64,8 @@ export const STATE_SENTENCE: Record<string, string> = {
   "factory:ready": "Unblocked and waiting for an implementation start ({approvers} may approve it).",
   "factory:in-review": "Draft PR under agent review.",
   "factory:in-test": "QA is verifying the WHEN/THEN scenarios.",
-  "factory:ready-to-ship": "Green and approved, awaiting merge order and gate G3 — approvers: {approvers}.",
+  "factory:ready-to-ship": "Green; the release manager is merging it onto the staging branch and checking it there.",
+  "factory:in-staging": "On staging and verified there, awaiting gate G3 — the promotion to the default branch. Approvers: {approvers}.",
   "factory:deployed": "In production; soak in progress.",
   "factory:blocked": "Halted — an agent needs a human reply to continue.",
   "factory:incident": "A post-deploy regression is under investigation.",
@@ -85,7 +87,8 @@ export const NEXT_MOVER: Record<string, string> = {
   "factory:ready": "An implementation approver comments Approved to start the implementer.",
   "factory:in-review": "The Reviewer approves (→ in-test) or requests changes (→ ready).",
   "factory:in-test": "QA posts the test report and moves it to ready-to-ship.",
-  "factory:ready-to-ship": "A human merges the PR(s) via the GitHub UI (G3).",
+  "factory:ready-to-ship": "The Release Manager merges it onto the staging branch and verifies the staging deploy.",
+  "factory:in-staging": "A human merges the promotion PR(s) via the GitHub UI (G3).",
   "factory:deployed": "Ops verifies health, archives the change, and closes the issue.",
   "factory:blocked": "Any collaborator replies on the issue; the factory clears the label and resumes.",
   "factory:incident": "A human decides rollback or fix-forward with the Release Manager.",
