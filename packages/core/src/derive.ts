@@ -34,10 +34,21 @@ export function deriveIssueKind(input: {
 /**
  * PR kind from the factory's branch naming convention (FACTORY.md §6):
  *   factory/<epic>-spec, factory/<epic>-design, factory/<task>-<slug>,
- *   staging -> main promotion.
+ *   and the integration -> default-branch promotion (FACTORY.md §6a).
+ *
+ * The integration branch is the org's, so its name is not fixed: it comes from
+ * `.github/factory-branches.json` (or the repo profile's `branches.staging`
+ * override), projected onto `repos.staging_branch`. The defaults keep the
+ * pre-policy behaviour — `staging` -> `main` — for callers that have neither.
  */
-export function derivePrKind(headRef: string, baseRef: string): { kind: PrKind; issueNumber: number | null } {
-  if (headRef === "staging" && baseRef === "main") return { kind: "promotion", issueNumber: null };
+export function derivePrKind(
+  headRef: string,
+  baseRef: string,
+  branches: { integration?: string | null; default?: string | null } = {},
+): { kind: PrKind; issueNumber: number | null } {
+  const integration = branches.integration || "staging";
+  const defaultBranch = branches.default || "main";
+  if (headRef === integration && baseRef === defaultBranch) return { kind: "promotion", issueNumber: null };
   const m = headRef.match(/^factory\/(\d+)-(.+)$/);
   if (!m) return { kind: "other", issueNumber: null };
   const issueNumber = Number(m[1]);

@@ -1,0 +1,6 @@
+{
+  "_comment": "Staging integration policy (FACTORY.md §6a). Every implementation PR the factory opens here is based on `staging`, and nothing reaches `main` except a promotion PR from it. `auto_create` cuts the branch from `main` the first time it is needed, so this needs no manual setup. Document PRs (spec, plan+design, profile) are the documented exception and still merge straight to `main`.",
+  "staging": "staging",
+  "required": true,
+  "auto_create": true
+}

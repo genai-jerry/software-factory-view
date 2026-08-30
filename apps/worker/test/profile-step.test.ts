@@ -34,7 +34,7 @@ async function seed() {
       .values({ orgId: org.id, estateId: estate.id, ghNodeId: "R_1", fullName: "acme/api", defaultBranch: "main" })
       .returning()
   )[0]!;
-  return { db, repoRef: { id: repo.id, orgId: org.id, estateId: estate.id, fullName: "acme/api", defaultBranch: "main" } };
+  return { db, repoRef: { id: repo.id, orgId: org.id, estateId: estate.id, fullName: "acme/api", defaultBranch: "main", stagingBranch: null } };
 }
 
 const PROFILE = { content: JSON.stringify({ repo: "acme/api", branches: { staging: "staging" } }), sha: "p1" };
@@ -292,6 +292,36 @@ describe("refreshRepoProfile", () => {
     expect(repo).toMatchObject({ profileSha: "p1", stagingBranch: "staging", factoryEnabled: true });
     const step = (await db.select().from(onboardingRuns))[0];
     expect(step).toMatchObject({ step: "profile", status: "ok" });
+  });
+
+  it("takes the integration branch from the org policy when the profile does not override it", async () => {
+    // FACTORY.md §6a: the policy file names the branch; the profile's
+    // `branches.staging` only overrides that name for a repo that differs.
+    const { db, repoRef } = await seed();
+    await refreshRepoProfile(db, repoRef, reader({
+      ".factory/profile.json": { content: JSON.stringify({ repo: "acme/api", branches: { staging: null } }), sha: "p2" },
+      ".github/factory-branches.json": { content: JSON.stringify({ staging: "develop", required: true }), sha: "b1" },
+      ".github/workflows/factory-pipeline.yml": STUB,
+    }));
+    expect((await db.select().from(repos))[0]!).toMatchObject({ stagingBranch: "develop" });
+  });
+
+  it("defaults to staging with no policy file, and to none when the org opts out", async () => {
+    const nullStaging = { content: JSON.stringify({ repo: "acme/api", branches: { staging: null } }), sha: "p3" };
+    {
+      const { db, repoRef } = await seed();
+      await refreshRepoProfile(db, repoRef, reader({ ".factory/profile.json": nullStaging, ".github/workflows/factory-pipeline.yml": STUB }));
+      expect((await db.select().from(repos))[0]!).toMatchObject({ stagingBranch: "staging" });
+    }
+    {
+      const { db, repoRef } = await seed();
+      await refreshRepoProfile(db, repoRef, reader({
+        ".factory/profile.json": nullStaging,
+        ".github/factory-branches.json": { content: JSON.stringify({ staging: "develop", required: false }), sha: "b2" },
+        ".github/workflows/factory-pipeline.yml": STUB,
+      }));
+      expect((await db.select().from(repos))[0]!).toMatchObject({ stagingBranch: null });
+    }
   });
 
   it("leaves the step alone while the PR is still open", async () => {

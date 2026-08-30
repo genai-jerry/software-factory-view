@@ -12,7 +12,8 @@ export const PEOPLE_LABEL: Record<string, string> = {
   "factory:ready": "Ready to build",
   "factory:in-review": "In review",
   "factory:in-test": "In test",
-  "factory:ready-to-ship": "Merge to ship",
+  "factory:ready-to-ship": "Staging",
+  "factory:in-staging": "Merge to ship",
   "factory:deployed": "Shipped",
   "factory:blocked": "Agent halted",
   "factory:fast-track": "Fast track",
@@ -24,7 +25,7 @@ export const PEOPLE_LABEL: Record<string, string> = {
 export const GATE_SHORT: Record<string, string> = {
   "factory:spec-ready": "G1",
   "factory:design-ready": "G2",
-  "factory:ready-to-ship": "G3",
+  "factory:in-staging": "G3",
 };
 
 export const PHASE_LABELS = {
@@ -52,7 +53,7 @@ export function attentionReason(kind: string, rank: number, whyYou: string, stat
   if (kind === "gate") {
     if (state === "factory:spec-ready") return "Approve the spec";
     if (state === "factory:design-ready") return "Approve the design";
-    if (state === "factory:ready-to-ship") return "Merge to ship";
+    if (state === "factory:in-staging") return "Merge to ship";
     return "Approve at this gate";
   }
   if (kind === "task-start") return "Approve implementation start";

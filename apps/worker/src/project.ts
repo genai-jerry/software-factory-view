@@ -41,6 +41,8 @@ export interface RepoRef {
   estateId: string;
   fullName: string;
   defaultBranch: string;
+  /** The org's integration branch (FACTORY.md §6a); null until a profile sync resolves it. */
+  stagingBranch: string | null;
 }
 
 /** Find or create the estate/org/repo rows for a webhook's repository. */
@@ -52,7 +54,10 @@ export async function ensureRepo(
   const existing = await db.select().from(repos).where(eq(repos.ghNodeId, repository.node_id)).limit(1);
   if (existing[0]) {
     const r = existing[0];
-    return { id: r.id, orgId: r.orgId, estateId: r.estateId, fullName: r.fullName, defaultBranch: r.defaultBranch };
+    return {
+      id: r.id, orgId: r.orgId, estateId: r.estateId, fullName: r.fullName,
+      defaultBranch: r.defaultBranch, stagingBranch: r.stagingBranch,
+    };
   }
 
   let estate = (await db.select().from(estates).where(eq(estates.installationId, installationId)).limit(1))[0];
@@ -79,7 +84,10 @@ export async function ensureRepo(
     .onConflictDoNothing({ target: repos.ghNodeId })
     .returning();
   const row = inserted[0] ?? (await db.select().from(repos).where(eq(repos.ghNodeId, repository.node_id)).limit(1))[0]!;
-  return { id: row.id, orgId: row.orgId, estateId: row.estateId, fullName: row.fullName, defaultBranch: row.defaultBranch };
+  return {
+    id: row.id, orgId: row.orgId, estateId: row.estateId, fullName: row.fullName,
+    defaultBranch: row.defaultBranch, stagingBranch: row.stagingBranch,
+  };
 }
 
 function labelNames(labels: GhIssue["labels"]): string[] {
@@ -233,6 +241,7 @@ const GATE_THREAD_FOR_STATE: Record<string, string> = {
   "factory:design-ready": "gate/design",
   "factory:design-approved": "gate/design",
   "factory:ready-to-ship": "gate/release",
+  "factory:in-staging": "gate/release",
   "factory:deployed": "gate/release",
 };
 
@@ -325,7 +334,10 @@ export async function projectComment(
 }
 
 export async function projectPull(db: Db, repo: RepoRef, gh: GhPull): Promise<void> {
-  const { kind, issueNumber } = derivePrKind(gh.head.ref, gh.base.ref);
+  const { kind, issueNumber } = derivePrKind(gh.head.ref, gh.base.ref, {
+    integration: repo.stagingBranch,
+    default: repo.defaultBranch,
+  });
   const ghUpdatedAt = new Date(gh.updated_at);
   await db
     .insert(pullRequests)

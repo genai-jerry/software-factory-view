@@ -32,7 +32,7 @@ async function seedRepo(db: Awaited<ReturnType<typeof testDb>>["db"]): Promise<R
   const repo = (
     await db.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: "R_1", fullName: "acme/app" }).returning()
   )[0]!;
-  return { id: repo.id, orgId: org.id, estateId: estate.id, fullName: "acme/app", defaultBranch: "main" };
+  return { id: repo.id, orgId: org.id, estateId: estate.id, fullName: "acme/app", defaultBranch: "main", stagingBranch: null };
 }
 
 describe("assignee projection", () => {

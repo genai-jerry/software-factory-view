@@ -177,8 +177,8 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       entries.push({ kind: "gate", rank: 2, whyYou: `${gateInfo.label} awaits approval — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });
     } else if (issue.kind === "task" && state === "factory:ready") {
       entries.push({ kind: "task-start", rank: 3, whyYou: `task awaits an implementation start — ${whyBase}`, ...base, link: `/epics/${epicId}?tab=tasks` });
-    } else if (issue.kind === "epic" && state === "factory:ready-to-ship") {
-      entries.push({ kind: "merge", rank: 2, whyYou: `release train awaits merges — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });
+    } else if (issue.kind === "epic" && state === "factory:in-staging") {
+      entries.push({ kind: "merge", rank: 2, whyYou: `release train is green on staging and awaits promotion — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });
     }
   }
 

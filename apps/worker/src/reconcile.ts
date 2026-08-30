@@ -43,6 +43,7 @@ export async function reconcileEstate(db: Db, cfg: ConsoleConfig, auth: AppAuth,
       estateId: repoRow.estateId,
       fullName: repoRow.fullName,
       defaultBranch: repoRow.defaultBranch,
+      stagingBranch: repoRow.stagingBranch,
     };
     const [owner, name] = repoRow.fullName.split("/") as [string, string];
     try {
