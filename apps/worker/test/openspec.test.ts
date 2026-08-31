@@ -120,6 +120,36 @@ describe("runOpenspecInit", () => {
     expect((await stepRow())?.detail).toMatchObject({ found: true });
   });
 
+  it("forced re-run adds only the scaffold files the repo is missing", async () => {
+    // Set up against an older CLI: openspec/ exists but the opsx commands the
+    // newer scaffold ships do not. The plain re-run says "nothing to do"; the
+    // forced one is how the repo catches up.
+    const gh = new FakeGitHub({ "openspec/config.yaml": "schema: spec-driven\n# hand-edited context\n" });
+    const result = await runOpenspecInit(db, cfg, auth, { repoId, force: true }, { scaffold, client: gh });
+
+    expect(result.pushed).toBe(1);
+    const synced = gh.branches.get("factory-console/sync-openspec");
+    expect(synced?.get(".claude/commands/opsx/propose.md")).toBe("# propose\n");
+    // The hand-edited file it already had is untouched — a re-run must not
+    // quietly revert local edits.
+    expect(synced?.get("openspec/config.yaml")).toBe("schema: spec-driven\n# hand-edited context\n");
+    expect(gh.pulls).toHaveLength(1);
+    expect(gh.pulls[0]!.title).toBe("Sync the OpenSpec scaffold");
+    expect(gh.pulls[0]!.head.ref).toBe("factory-console/sync-openspec");
+  });
+
+  it("forced re-run with nothing missing opens no PR", async () => {
+    const gh = new FakeGitHub({
+      "openspec/config.yaml": "schema: spec-driven\n",
+      ".claude/commands/opsx/propose.md": "# propose\n",
+    });
+    const result = await runOpenspecInit(db, cfg, auth, { repoId, force: true }, { scaffold, client: gh });
+
+    expect(result.pushed).toBe(0);
+    expect(gh.pulls).toHaveLength(0); // an empty PR would 422 on "No commits between"
+    expect((await stepRow())?.detail).toMatchObject({ inSync: true });
+  });
+
   it("skips content-identical files and reuses the open PR on re-run", async () => {
     const gh = new FakeGitHub();
     await runOpenspecInit(db, cfg, auth, { repoId }, { scaffold, client: gh });
