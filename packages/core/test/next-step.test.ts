@@ -67,3 +67,54 @@ describe("nextStep", () => {
     expect(isStartableRole("rm -rf")).toBe(false);
   });
 });
+
+/**
+ * Two labels each cover a whole stage, so the label alone answers for the
+ * moment the stage opened. `factory:ready` asked for an approval while an
+ * implementer was already running on it — the exact double-approval the
+ * badge beside it had just been fixed to stop offering.
+ */
+describe("nextStep with the facts the label cannot carry", () => {
+  it("stops asking for an approval the factory already has", () => {
+    const running = nextStep("factory:ready", ["jerry"], { startStatus: "running" });
+    expect(running.how).not.toMatch(/Approve/);
+    expect(running.who).toBe("the Implementer");
+    expect(running.waitsOnPerson).toBe(false);
+
+    const approved = nextStep("factory:ready", ["jerry"], { startStatus: "approved" });
+    expect(approved.how).not.toMatch(/Approve to start/);
+    expect(approved.waitsOnPerson).toBe(false);
+  });
+
+  it("asks again only when the approval went nowhere", () => {
+    const stalled = nextStep("factory:ready", ["jerry"], { startStatus: "stalled" });
+    expect(stalled.how).toMatch(/approve again/i);
+    expect(stalled.who).toBe("the implementation approvers — @jerry");
+    expect(stalled.waitsOnPerson).toBe(true);
+  });
+
+  it("keeps the plain ask where an approval really is the move", () => {
+    for (const ctx of [{}, { startStatus: "awaiting" as const }]) {
+      expect(nextStep("factory:ready", ["jerry"], ctx).how).toBe("Approve to start the Implementer on this task.");
+    }
+  });
+
+  it("reports an epic's build instead of the dispatcher that started it", () => {
+    const step = nextStep("factory:design-approved", [], { tasks: { total: 4, done: 1, blocked: 0 } });
+    expect(step.how).toMatch(/1 of 4 tasks done/);
+    expect(step.how).not.toMatch(/Dispatcher/);
+  });
+
+  it("names a halted task on the epic, and the release once every task is done", () => {
+    expect(nextStep("factory:design-approved", [], { tasks: { total: 4, done: 1, blocked: 1 } }).waitsOnPerson).toBe(true);
+    const done = nextStep("factory:design-approved", [], { tasks: { total: 4, done: 4, blocked: 0 } });
+    expect(done.startRole).toBe("release");
+    expect(done.how).toMatch(/All 4 tasks are done/);
+  });
+
+  it("leaves a not-yet-dispatched epic on the table's own answer", () => {
+    const step = nextStep("factory:design-approved", [], { tasks: { total: 0, done: 0, blocked: 0 } });
+    expect(step.how).toMatch(/Dispatcher/);
+    expect(step.startRole).toBeNull();
+  });
+});

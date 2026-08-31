@@ -39,6 +39,18 @@ export const RELEASE_KIND_LABEL = "factory:release";
 /** The run marker: a factory agent is working on this issue right now. */
 export const IN_PROGRESS_LABEL = "factory:in-progress";
 
+/**
+ * The state an epic holds for the whole of its build.
+ *
+ * FACTORY.md §3 reads it "Released for implementation", not "the design gate
+ * passed": every state after it belongs to a *task*, so an epic sits here
+ * from gate G2 until the Release Manager carries it onward. It is also the
+ * dispatcher's guard for re-running on task close (FACTORY.md §2a), so it
+ * must not be advanced to make a badge read better — a task freed by a later
+ * merge would then strand with no factory state at all.
+ */
+export const DESIGN_APPROVED_STATE = "factory:design-approved";
+
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
   { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },

@@ -80,7 +80,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           <GitHubLink href={data.epic.htmlUrl} />
         </h1>
         <span className="badge state" title={data.epic.state ?? undefined}>
-          {peopleLabel(data.epic.state)}
+          {data.epic.status ?? peopleLabel(data.epic.state)}
         </span>
       </div>
 

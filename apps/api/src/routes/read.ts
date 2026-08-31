@@ -1,5 +1,6 @@
 import {
   decryptSecret,
+  epicStatus,
   factoryRunIsPending,
   GATE_STATES,
   githubActionsEnabled,
@@ -310,7 +311,8 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         author: epic.author,
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
-        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers),
+        status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup),
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup }),
       },
       repo: { id: repo.id, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       pipeline: PIPELINE_ORDER,
@@ -327,7 +329,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           htmlUrl: t.htmlUrl,
           blockedBy: deps_.get(t.id)?.blockedBy ?? [],
           blocks: deps_.get(t.id)?.blocks ?? [],
-          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers),
+          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers, { startStatus }),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };
@@ -683,16 +685,27 @@ export async function loadDependencies(
   return out;
 }
 
-export async function taskRollup(
-  deps: AppDeps,
-  epicIssueId: string,
-): Promise<{ total: number; ready: number; inReview: number; inTest: number; done: number; blocked: number; waiting: number }> {
+/** Green, merged onto a branch, not yet closed — the states between in-test and done. */
+const SHIPPING_STATES = new Set(["factory:ready-to-ship", "factory:on-epic", "factory:in-staging"]);
+
+export interface TaskRollup {
+  total: number;
+  ready: number;
+  inReview: number;
+  inTest: number;
+  shipping: number;
+  done: number;
+  blocked: number;
+  waiting: number;
+}
+
+export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<TaskRollup> {
   const { db } = deps.dbh;
   const tasks = await db
     .select({ id: issues.id, factoryState: issues.factoryState, state: issues.state })
     .from(issues)
     .where(eq(issues.parentIssueId, epicIssueId));
-  const rollup = { total: tasks.length, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0, waiting: 0 };
+  const rollup = { total: tasks.length, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0 };
   const openIds: string[] = [];
   for (const t of tasks) {
     if (t.state === "open") openIds.push(t.id);
@@ -700,6 +713,11 @@ export async function taskRollup(
     else if (t.factoryState === "factory:ready") rollup.ready++;
     else if (t.factoryState === "factory:in-review") rollup.inReview++;
     else if (t.factoryState === "factory:in-test") rollup.inTest++;
+    // Green and on a branch: ready-to-ship, on-epic and in-staging used to
+    // fall through every bucket and be counted only in `total`, so an epic
+    // whose every task was waiting on the Release Manager rolled up as
+    // "0 done, 0 ready" — reading as if nothing had happened.
+    else if (SHIPPING_STATES.has(t.factoryState ?? "")) rollup.shipping++;
     else if (t.factoryState === "factory:blocked") rollup.blocked++;
   }
   if (openIds.length > 0) {

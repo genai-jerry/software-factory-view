@@ -1,3 +1,6 @@
+import { DESIGN_APPROVED_STATE } from "./factory.js";
+import { READY_STATE, type TaskStartStatus } from "./start-gate.js";
+
 /**
  * What is expected of the next actor, per factory state.
  *
@@ -13,6 +16,35 @@
  * than telling someone to go and find Run workflow. Where the move is an
  * approval, `startRole` is null — the Approve button already owns that.
  */
+
+/**
+ * A factory label is a coarse phase marker, not progress, and two of them
+ * cover a whole stage on their own: `factory:ready` stays on a task from the
+ * dispatcher releasing it until the implementer finishes, and
+ * `factory:design-approved` stays on an epic for the entire build (FACTORY.md
+ * §3 — "Released for implementation"; the dispatcher's re-dispatch guard is
+ * that label, so it deliberately does not advance). Answering "what now?"
+ * from the label alone therefore freezes at the moment the stage opened: a
+ * card asked for an approval an implementer was already running on, and an
+ * epic three tasks into its build still said the Dispatcher was releasing
+ * them.
+ *
+ * These are the facts that separate the moments the label runs together —
+ * the same two the badges beside this line already read.
+ */
+export interface NextStepContext {
+  /** For a task at `factory:ready`: what its start gate is actually waiting for. */
+  startStatus?: TaskStartStatus;
+  /** For an epic at `factory:design-approved`: how far its tasks have got. */
+  tasks?: NextStepProgress;
+}
+
+/** The slice of the task rollup that changes what an epic's next step is. */
+export interface NextStepProgress {
+  total: number;
+  done: number;
+  blocked: number;
+}
 
 /** Roles a person starts by hand; the factory routes everything else itself. */
 export const STARTABLE_ROLES = ["architect", "reviewer", "qa", "release", "ops"] as const;
@@ -153,6 +185,62 @@ const TABLE: Record<string, Entry> = {
   },
 };
 
+/**
+ * What `factory:ready` means right now. `awaiting` (and an absent status, for
+ * a caller that has not read the start gate) keeps the table's own entry:
+ * there, asking for the approval is right.
+ */
+function readyEntry(status: TaskStartStatus | undefined): Entry | undefined {
+  switch (status) {
+    case "running":
+      return {
+        who: "the Implementer",
+        how: "An implementer is working on this now — nothing to approve.",
+      };
+    case "approved":
+      return {
+        who: "the factory",
+        how: "Approved. The factory is starting the implementer.",
+      };
+    case "stalled":
+      return {
+        who: "the implementation approvers — {approvers}",
+        how: "Approved, but no implementer started — approve again to retry.",
+        waitsOnPerson: true,
+      };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * What `factory:design-approved` means once the Dispatcher has fanned the
+ * epic out. Before that (no tasks yet) the table's entry is still true.
+ */
+function buildingEntry(tasks: NextStepProgress | undefined): Entry | undefined {
+  if (!tasks || tasks.total === 0) return undefined;
+  if (tasks.blocked > 0) {
+    return {
+      who: "you — an agent halted",
+      how: `${tasks.blocked} of this epic's ${tasks.total} tasks need a human reply before they continue. Answer on the task and the factory resumes.`,
+      waitsOnPerson: true,
+    };
+  }
+  if (tasks.done === tasks.total) {
+    return {
+      who: "you, then the Release Manager",
+      how: `All ${tasks.total} tasks are done. Start the Release Manager to carry the epic onward — this state starts nothing on its own.`,
+      startRole: "release",
+      startLabel: "Start the Release Manager",
+      waitsOnPerson: true,
+    };
+  }
+  return {
+    who: "its tasks",
+    how: `Building — ${tasks.done} of ${tasks.total} tasks done. Each one moves on its own card; the tabs below have them.`,
+  };
+}
+
 const OFF_RAIL: Entry = {
   who: "nobody — this issue is off the rail",
   how: "It carries no factory state, so nothing routes it. Apply the state it belongs in to put it back.",
@@ -162,9 +250,18 @@ const OFF_RAIL: Entry = {
 /**
  * The one-line answer to "what now?" for a state. `approvers` fills the gate
  * lists; an empty list reads as "any collaborator", matching the router.
+ *
+ * `ctx` carries the facts the label cannot (see `NextStepContext`). Omit it
+ * and every state answers exactly as it did — a caller that has not read the
+ * start gate or the rollup gets the stage's opening move, which is right
+ * until the stage has moved on.
  */
-export function nextStep(state: string | null, approvers: string[] = []): NextStep {
-  const entry = (state ? TABLE[state] : undefined) ?? (state ? undefined : OFF_RAIL);
+export function nextStep(state: string | null, approvers: string[] = [], ctx: NextStepContext = {}): NextStep {
+  const live =
+    state === READY_STATE ? readyEntry(ctx.startStatus)
+    : state === DESIGN_APPROVED_STATE ? buildingEntry(ctx.tasks)
+    : undefined;
+  const entry = live ?? (state ? TABLE[state] : undefined) ?? (state ? undefined : OFF_RAIL);
   const e = entry ?? { who: `whoever owns ${state}`, how: "No instruction on file for this state.", waitsOnPerson: true };
   const who = approvers.length > 0 ? approvers.map((a) => `@${a}`).join(", ") : "any collaborator";
   const fill = (text: string) => text.replace("{approvers}", who);
