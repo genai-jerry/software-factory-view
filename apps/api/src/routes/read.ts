@@ -256,6 +256,20 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       };
     }
 
+    // The task start gate (the `implementation` gate): who may put `Approved`
+    // on a `factory:ready` task. Same shape the tree tab reads, so every tab
+    // renders the one Approve button under the same rule. Empty list = any
+    // collaborator, matching the router.
+    const startApproverRows = await db
+      .select()
+      .from(gateAssignments)
+      .where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.gate, "implementation")));
+    const startApprovers = [...new Set(startApproverRows.map((a) => a.login))];
+    const startGate = {
+      approvers: startApprovers,
+      amApprover: startApprovers.length === 0 || startApprovers.includes(ctx.login),
+    };
+
     const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
@@ -278,6 +292,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       repo: { id: repo.id, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       pipeline: PIPELINE_ORDER,
       gate: myGate,
+      startGate,
       tasks: taskRows.map((t) => ({
         id: t.id,
         number: t.number,
@@ -287,6 +302,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         htmlUrl: t.htmlUrl,
         blockedBy: deps_.get(t.id)?.blockedBy ?? [],
         blocks: deps_.get(t.id)?.blocks ?? [],
+        approvable: t.state === "open" && t.factoryState === "factory:ready",
       })),
       rollup,
       blockedSubIssues: blockedSubs.map((t) => ({ id: t.id, number: t.number, title: t.title, htmlUrl: t.htmlUrl })),

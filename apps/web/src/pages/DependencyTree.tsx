@@ -5,13 +5,14 @@ import type { EpicTree, TreeDep, TreeNode } from "../types.js";
 import { GitHubLink } from "../components/GitHubLink.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { peopleLabel } from "../lib/labels.js";
+import { TaskApproveButton } from "../components/Approve.js";
 
 /**
  * The epic's dependency tree (plan 11 §1): tasks laid out in dependency waves
  * — wave 1 has no open prerequisites, each later wave waits on the ones above
  * — with the actions that unstick a node right on it: Approve for a ready
- * task (the start gate), a comment box for anything else, and the epic's own
- * gate handed off to the gate panel.
+ * task (the start gate, the shared button every tab renders), a comment box
+ * for anything else, and the epic's own gate handed off to the gate panel.
  */
 
 export function DependencyTreeTab({ epicId, onOpenGate }: { epicId: string; onOpenGate: () => void }) {
@@ -104,10 +105,6 @@ function TreeNodeCard({ epicId, node, startGate }: { epicId: string; node: TreeN
     void qc.invalidateQueries({ queryKey: ["tree", epicId] });
     void qc.invalidateQueries({ queryKey: ["epic", epicId] });
   };
-  const approve = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; commentUrl: string }>(`/api/issues/${node.id}/approve`),
-    onSuccess: refresh,
-  });
   const reply = useMutation({
     mutationFn: () => api.post<{ ok: boolean; commentUrl: string }>(`/api/issues/${node.id}/reply`, { body: comment }),
     onSuccess: () => {
@@ -153,31 +150,11 @@ function TreeNodeCard({ epicId, node, startGate }: { epicId: string; node: TreeN
       )}
       {node.agentHalted && <div className="dep-halt">Agent halted — it needs a human reply to continue. Comment below.</div>}
       <div className="dep-actions">
-        {node.approvable && (
-          <button
-            type="button"
-            className="primary"
-            disabled={!startGate.amApprover || approve.isPending}
-            title={
-              startGate.amApprover
-                ? "Posts the literal “Approved” as you — the factory starts the implementer"
-                : `Starting implementers is assigned to: ${startGate.approvers.join(", ")}`
-            }
-            onClick={() => approve.mutate()}
-          >
-            {approve.isPending ? "Approving…" : "Approve — start implementer"}
-          </button>
-        )}
+        {node.approvable && <TaskApproveButton epicId={epicId} taskId={node.id} startGate={startGate} />}
         <button type="button" onClick={() => setComposerOpen((v) => !v)}>
           {composerOpen ? "Cancel" : "Comment"}
         </button>
-        {approve.isSuccess && (
-          <a href={approve.data.commentUrl} target="_blank" rel="noreferrer" className="muted">
-            Approved ✓
-          </a>
-        )}
       </div>
-      {approve.isError && <div className="banner error">{(approve.error as ApiError).message}</div>}
       {composerOpen && (
         <div className="dep-composer">
           <textarea
