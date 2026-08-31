@@ -346,7 +346,7 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
   );
 }
 
-function GateTab({ epicId, me }: { epicId: string; me: Me }) {
+export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
   const qc = useQueryClient();
   const gate = useQuery({
     queryKey: ["gate", epicId],
@@ -356,8 +356,13 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
   const [requestBody, setRequestBody] = useState("");
   const [showRequest, setShowRequest] = useState(false);
   const [ack, setAck] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // `what` names the action that failed, so the message reads as feedback on
+  // the button that was actually pressed.
+  const [actionError, setActionError] = useState<{ what: string; message: string } | null>(null);
   const [actionOk, setActionOk] = useState<string | null>(null);
+  // Open questions the server refused over that the panel had not listed — the
+  // approve guard is authoritative, so its count re-enables the acknowledgement.
+  const [serverOpenQuestions, setServerOpenQuestions] = useState<number | null>(null);
 
   // Record "I looked at this at this sha" for the next what-changed diff.
   useEffect(() => {
@@ -371,9 +376,21 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
     onSuccess: (r) => {
       setActionOk(`Approved — comment posted as you (${r.commentUrl}). The factory router takes it from here.`);
       setActionError(null);
+      setServerOpenQuestions(null);
       void qc.invalidateQueries({ queryKey: ["epic", epicId] });
+      void qc.invalidateQueries({ queryKey: ["gate", epicId] });
     },
-    onError: (e) => setActionError((e as ApiError).message),
+    onError: (e) => {
+      const err = e as ApiError;
+      const body = err.body as { openQuestionCount?: number } | null;
+      if (err.status === 409 && typeof body?.openQuestionCount === "number") {
+        // The guard found questions the panel did not show. Offer the
+        // acknowledgement anyway, and refetch so they are listed.
+        setServerOpenQuestions(body.openQuestionCount);
+        void qc.invalidateQueries({ queryKey: ["gate", epicId] });
+      }
+      setActionError({ what: "Approval was not posted", message: err.message });
+    },
   });
 
   const requestChanges = useMutation({
@@ -384,26 +401,36 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
       setRequestBody("");
       setActionError(null);
     },
-    onError: (e) => setActionError((e as ApiError).message),
+    onError: (e) => setActionError({ what: "Comment was not posted", message: (e as ApiError).message }),
   });
 
   const merge = useMutation({
     mutationFn: (prId: string) => api.post(`/api/prs/${prId}/merge`),
     onSuccess: () => {
       setActionOk("Merged.");
+      setActionError(null);
       void qc.invalidateQueries({ queryKey: ["gate", epicId] });
     },
-    onError: (e) => setActionError((e as ApiError).message),
+    onError: (e) => setActionError({ what: "Merge failed", message: (e as ApiError).message }),
   });
 
   if (gate.isError) return <div className="banner error">{(gate.error as ApiError).message}</div>;
   if (!gate.data) return <p className="muted">Loading gate panel…</p>;
   const g = gate.data;
+  const openQuestionCount = Math.max(g.openQuestions.length, serverOpenQuestions ?? 0);
+  const needsAck = openQuestionCount > 0;
+  // The Decide card carries its own feedback; the top banner is for the release
+  // gate's merge buttons, which are the only actions shown without it.
+  const showDecide = g.commentApprovable && g.amApprover;
 
   return (
     <div>
-      {actionOk && <div className="banner info">{actionOk}</div>}
-      {actionError && <div className="banner error">{actionError}</div>}
+      {!showDecide && actionOk && <div className="banner info">{actionOk}</div>}
+      {!showDecide && actionError && (
+        <div className="banner error">
+          {actionError.what} — {actionError.message}
+        </div>
+      )}
 
       <div className="card">
         <div className="spread">
@@ -478,19 +505,23 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
         </div>
       )}
 
-      {g.commentApprovable && g.amApprover && (
+      {showDecide && (
         <div className="card">
           <h3>Decide</h3>
-          {g.openQuestions.length > 0 && (
+          {needsAck && (
             <div className="banner stale">
-              <strong>{g.openQuestions.length} open question(s)</strong> on this gate's artifacts:
-              <ul style={{ margin: "0.4rem 0" }}>
-                {g.openQuestions.map((t) => (
-                  <li key={t.id}>
-                    {t.title} ({t.entryCount} entries)
-                  </li>
-                ))}
-              </ul>
+              <strong>{openQuestionCount} open question(s)</strong> on this gate's artifacts:
+              {g.openQuestions.length > 0 ? (
+                <ul style={{ margin: "0.4rem 0" }}>
+                  {g.openQuestions.map((t) => (
+                    <li key={t.id}>
+                      {t.title} ({t.entryCount} entries)
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ margin: "0.4rem 0" }}>See the Threads tab for the details.</p>
+              )}
               <label>
                 <input type="checkbox" style={{ width: "auto", marginRight: 6 }} checked={ack} onChange={(e) => setAck(e.target.checked)} />
                 Approve anyway — this acknowledgement is recorded in the audit log
@@ -500,7 +531,7 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
           <ActionBar>
             <button
               className="approve"
-              disabled={approve.isPending || (g.openQuestions.length > 0 && !ack)}
+              disabled={approve.isPending || (needsAck && !ack)}
               onClick={() => approve.mutate()}
               title='Posts the literal comment "Approved" on the epic as you'
             >
@@ -508,6 +539,19 @@ function GateTab({ epicId, me }: { epicId: string; me: Me }) {
             </button>
             <button onClick={() => setShowRequest(!showRequest)}>Request changes</button>
           </ActionBar>
+          {/* Beside the control that produced it: the Decide card sits below a
+              full rendered spec, so a banner at the top of the tab is off-screen
+              and a failed approve reads as the button doing nothing. */}
+          {actionError && (
+            <div className="banner error" style={{ marginTop: "0.5rem" }}>
+              {actionError.what} — {actionError.message}
+            </div>
+          )}
+          {actionOk && (
+            <div className="banner info" style={{ marginTop: "0.5rem" }}>
+              {actionOk}
+            </div>
+          )}
           <p className="muted" style={{ marginTop: "0.5rem" }}>
             Approve posts the literal comment <code>Approved</code> under your GitHub identity; the factory router merges the
             document PR and advances the pipeline exactly as if you had typed it on GitHub.

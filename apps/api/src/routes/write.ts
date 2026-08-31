@@ -2,7 +2,8 @@ import { decisionMarker, threadMarker } from "@console/core";
 import { auditLog, comments, decisions, issues, repos, threadEntries, threads } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, userClient, type AppDeps } from "../context.js";
+import { requireAuth, type AppDeps } from "../context.js";
+import { postComment } from "../gh-write.js";
 import { loadEpic } from "./read.js";
 
 /**
@@ -55,9 +56,9 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       const repo = (await db.select().from(repos).where(eq(repos.id, targetIssue.repoId)).limit(1))[0]!;
       const [owner, name] = repo.fullName.split("/") as [string, string];
 
-      const gh = userClient(deps, ctx);
       const marked = `${body}\n\n${threadMarker(thread.topicRef)}`;
-      const comment = await gh.createComment(owner, name, targetIssue.number, marked);
+      const comment = await postComment(deps, ctx, reply, owner, name, targetIssue.number, marked);
+      if (!comment) return;
 
       await db.insert(auditLog).values({
         orgId: thread.orgId,
@@ -112,8 +113,8 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!issue) return reply.code(404).send({ error: "issue not found" });
     const repo = (await db.select().from(repos).where(eq(repos.id, issue.repoId)).limit(1))[0]!;
     const [owner, name] = repo.fullName.split("/") as [string, string];
-    const gh = userClient(deps, ctx);
-    const comment = await gh.createComment(owner, name, issue.number, body);
+    const comment = await postComment(deps, ctx, reply, owner, name, issue.number, body);
+    if (!comment) return;
     await db.insert(auditLog).values({
       orgId: issue.orgId,
       actorUserId: ctx.userId,
@@ -168,8 +169,8 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       decisionMarker(row.id),
     ];
     const [owner, name] = repo.fullName.split("/") as [string, string];
-    const gh = userClient(deps, ctx);
-    const comment = await gh.createComment(owner, name, epic.number, lines.join("\n"));
+    const comment = await postComment(deps, ctx, reply, owner, name, epic.number, lines.join("\n"));
+    if (!comment) return;
 
     await db.update(decisions).set({ ghCommentNodeId: comment.node_id }).where(eq(decisions.id, row.id));
     if (req.body.supersedesId) {

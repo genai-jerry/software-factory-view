@@ -1,4 +1,4 @@
-import { APPROVED_BODY, GATE_STATES, decryptSecret } from "@console/core";
+import { APPROVED_BODY, GATE_STATES, GitHubHttpError, decryptSecret } from "@console/core";
 import {
   artifactCache,
   auditLog,
@@ -9,11 +9,13 @@ import {
   gateViews,
   pullRequests,
   threads,
-  threadEntries,
+  type Db,
 } from "@console/db";
 import { and, eq, inArray, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
+import { githubMessage, postComment } from "../gh-write.js";
+import { countThreadEntries } from "../threads.js";
 import { renderMarkdown } from "../render.js";
 import { loadEpic } from "./read.js";
 
@@ -75,9 +77,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     const artifactRows = change
       ? await db.select().from(changeArtifacts).where(eq(changeArtifacts.changeId, change.id))
       : [];
-    const relevant = artifactRows.filter((a) =>
-      gateInfo.gate === "spec" ? a.kind === "proposal" || a.kind === "spec" : gateInfo.gate === "design" ? a.kind === "design" || a.kind === "tasks" : true,
-    );
+    const relevant = artifactRows.filter((a) => artifactIsRelevant(gateInfo.gate, a.kind));
 
     const rendered = [];
     for (const a of relevant) {
@@ -107,18 +107,10 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     const currentSha = rendered[0]?.sha ?? null;
     const changedSinceLastView = Boolean(lastView?.lastViewedSha && currentSha && lastView.lastViewedSha !== currentSha);
 
-    // Open-questions guard: unresolved threads attached to this gate's artifacts or the gate itself.
-    const openThreads = await db
-      .select({
-        id: threads.id,
-        title: threads.title,
-        topicRef: threads.topicRef,
-        entryCount: dsql<number>`(select count(*) from ${threadEntries} where ${threadEntries.threadId} = ${threads.id})`,
-      })
-      .from(threads)
-      .where(and(eq(threads.epicIssueId, epic.id), eq(threads.status, "open")));
-    const guardRefs = new Set<string>([`gate/${gateInfo.gate}`, ...relevant.map((a) => `artifact/${a.kind}`)]);
-    const openQuestions = openThreads.filter((t) => guardRefs.has(t.topicRef) && Number(t.entryCount) > 0);
+    // Open-questions guard: unresolved threads attached to this gate's artifacts
+    // or the gate itself — the same computation the approve guard runs, so the
+    // panel can never enable a button the guard then refuses.
+    const openQuestions = await openGateQuestions(db, epic.id, gateInfo.gate);
 
     return {
       gate: gateInfo.gate,
@@ -162,29 +154,22 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
         return reply.code(403).send({ error: `you are not on the ${gateInfo.gate} approver list` });
       }
 
-      // Open-questions guard: approving over open questions needs an explicit, recorded acknowledgement.
-      const openThreadRows = await db
-        .select({ id: threads.id, topicRef: threads.topicRef })
-        .from(threads)
-        .where(and(eq(threads.epicIssueId, epic.id), eq(threads.status, "open")));
-      const guardRefs = new Set([`gate/${gateInfo.gate}`, "artifact/proposal", "artifact/design", "artifact/tasks"]);
-      const withEntries = [];
-      for (const t of openThreadRows) {
-        if (!guardRefs.has(t.topicRef)) continue;
-        const count = await db.select({ n: dsql<number>`count(*)` }).from(threadEntries).where(eq(threadEntries.threadId, t.id));
-        if (Number(count[0]?.n ?? 0) > 0) withEntries.push(t);
-      }
+      // Open-questions guard: approving over open questions needs an explicit,
+      // recorded acknowledgement. Computed by the same helper the panel uses —
+      // the guard must never see questions the panel did not offer to acknowledge.
+      const withEntries = await openGateQuestions(db, epic.id, gateInfo.gate);
       if (withEntries.length > 0 && !req.body?.acknowledgeOpenQuestions) {
         return reply.code(409).send({
-          error: "open questions exist on this gate's artifacts",
+          error: `open questions exist on this gate's artifacts: ${withEntries.map((t) => t.title).join(", ")}`,
           openQuestionCount: withEntries.length,
+          openQuestions: withEntries,
           hint: "pass acknowledgeOpenQuestions: true to approve anyway (the acknowledgement is recorded)",
         });
       }
 
       const [owner, name] = repo.fullName.split("/") as [string, string];
-      const gh = userClient(deps, ctx);
-      const comment = await gh.createComment(owner, name, epic.number, APPROVED_BODY);
+      const comment = await postComment(deps, ctx, reply, owner, name, epic.number, APPROVED_BODY);
+      if (!comment) return;
 
       await db.insert(auditLog).values({
         orgId: epic.orgId,
@@ -230,8 +215,8 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!found) return reply.code(404).send({ error: "epic not found" });
     const { epic, repo } = found;
     const [owner, name] = repo.fullName.split("/") as [string, string];
-    const gh = userClient(deps, ctx);
-    const comment = await gh.createComment(owner, name, epic.number, body);
+    const comment = await postComment(deps, ctx, reply, owner, name, epic.number, body);
+    if (!comment) return;
     await db.insert(auditLog).values({
       orgId: epic.orgId,
       actorUserId: ctx.userId,
@@ -271,10 +256,55 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       return { ok: true, sha: result.sha };
     } catch (err) {
       // GitHub said no — surface that as GitHub's answer, not a Console fault.
-      const message = (err as Error).message;
+      const message = err instanceof GitHubHttpError ? githubMessage(err) : (err as Error).message;
       return reply.code(409).send({ error: `GitHub declined the merge: ${message}` });
     }
   });
+}
+
+/** Artifact kinds a gate is actually about — the set the gate panel renders. */
+function artifactIsRelevant(gate: string, kind: string): boolean {
+  if (gate === "spec") return kind === "proposal" || kind === "spec";
+  if (gate === "design") return kind === "design" || kind === "tasks";
+  return true;
+}
+
+/**
+ * The open questions that hold a gate: the gate's own thread plus the threads
+ * on the artifacts that gate is about, counting only threads that actually have
+ * entries.
+ *
+ * One definition, called by both the panel and the approve guard. They used to
+ * compute two different sets — the panel from the gate's own artifacts, the
+ * guard from a fixed proposal/design/tasks list — so a question filed on an
+ * artifact belonging to a *later* gate was invisible in the panel (no
+ * acknowledge checkbox to tick) yet still blocked approve with a 409. The
+ * button looked live, the click posted nothing, and the acknowledgement the
+ * server asked for was unreachable.
+ */
+async function openGateQuestions(
+  db: Db,
+  epicIssueId: string,
+  gate: string,
+): Promise<Array<{ id: string; title: string; topicRef: string; entryCount: number }>> {
+  const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epicIssueId)).limit(1))[0];
+  const artifactRows = change
+    ? await db.select({ kind: changeArtifacts.kind }).from(changeArtifacts).where(eq(changeArtifacts.changeId, change.id))
+    : [];
+  const guardRefs = new Set<string>([
+    `gate/${gate}`,
+    ...artifactRows.filter((a) => artifactIsRelevant(gate, a.kind)).map((a) => `artifact/${a.kind}`),
+  ]);
+  const rows = (
+    await db
+      .select({ id: threads.id, title: threads.title, topicRef: threads.topicRef })
+      .from(threads)
+      .where(and(eq(threads.epicIssueId, epicIssueId), eq(threads.status, "open")))
+  ).filter((t) => guardRefs.has(t.topicRef));
+  const counts = await countThreadEntries(db, rows.map((t) => t.id));
+  return rows
+    .map((t) => ({ ...t, entryCount: counts.get(t.id) ?? 0 }))
+    .filter((t) => t.entryCount > 0);
 }
 
 function prDto(pr: typeof pullRequests.$inferSelect) {

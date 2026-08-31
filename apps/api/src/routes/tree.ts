@@ -2,7 +2,8 @@ import { APPROVED_BODY, GATE_STATES } from "@console/core";
 import { auditLog, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, userClient, type AppDeps } from "../context.js";
+import { requireAuth, type AppDeps } from "../context.js";
+import { postComment } from "../gh-write.js";
 import { loadEpic, loadIssue } from "./read.js";
 
 /**
@@ -159,8 +160,8 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
 
     const [owner, name] = repo.fullName.split("/") as [string, string];
-    const gh = userClient(deps, ctx);
-    const comment = await gh.createComment(owner, name, issue.number, APPROVED_BODY);
+    const comment = await postComment(deps, ctx, reply, owner, name, issue.number, APPROVED_BODY);
+    if (!comment) return;
     await db.insert(auditLog).values({
       orgId: issue.orgId,
       actorUserId: ctx.userId,
