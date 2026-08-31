@@ -1,11 +1,11 @@
-import { APPROVED_BODY, GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
+import { APPROVED_BODY, epicStatus, GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
 import { auditLog, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import { postComment } from "../gh-write.js";
 import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
-import { loadEpic, loadIssue } from "./read.js";
+import { loadEpic, loadIssue, taskRollup } from "./read.js";
 
 /**
  * The epic's dependency tree (plan 11 §1): every task sub-issue — sibling-repo
@@ -104,6 +104,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     // use — a node whose implementer is already running says so instead of
     // offering the button that started it.
     const gateApprovers = await loadGateApprovers(deps, repo.estateId);
+    const rollup = await taskRollup(deps, epic.id);
     const startFacts = await loadTaskStartFacts(
       deps,
       taskRows.filter((t) => t.issue.state === "open" && t.issue.factoryState === READY_STATE).map((t) => t.issue.id),
@@ -119,6 +120,12 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
         htmlUrl: epic.htmlUrl,
         repo: repo.fullName,
         gate: epicGate ? { gate: epicGate.gate, label: epicGate.label } : null,
+        // The same rollup the workspace payload carries, from the same
+        // function: the Tree's epic header shows a derived status, and two
+        // tabs deriving it from separately-counted tasks would drift.
+        rollup,
+        status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup),
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup }),
       },
       startGate: { approvers, amApprover },
       nodes: taskRows.map((t) => {
@@ -138,7 +145,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
           blocks: blocks.get(t.issue.id) ?? [],
           waiting: t.issue.state === "open" && up.some((d) => d.open),
           agentHalted: t.issue.factoryState === "factory:blocked",
-          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers),
+          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers, { startStatus }),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };

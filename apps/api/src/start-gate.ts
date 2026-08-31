@@ -4,6 +4,7 @@ import {
   READY_STATE,
   taskStartStatus,
   type NextStep,
+  type NextStepContext,
   type TaskStartStatus,
 } from "@console/core";
 import { comments, gateAssignments, issueStateHistory } from "@console/db";
@@ -75,13 +76,19 @@ export function startStatusOf(
  * an instruction, and three of them (`in-review`, `in-test`,
  * `ready-to-ship`) start nothing on their own — the factory is waiting on a
  * person, and nothing on the card used to say so.
+ *
+ * Pass `ctx` wherever the caller has already read the start gate or the task
+ * rollup: `factory:ready` and `factory:design-approved` each span a whole
+ * stage, so without it the line answers for the moment the stage opened and
+ * goes on asking for an approval the factory already has.
  */
 export function nextStepFor(
   state: string | null,
   approversByGate: Map<string, string[]>,
+  ctx: NextStepContext = {},
 ): NextStep {
   const gate = state ? GATE_FOR_APPROVERS[state] : undefined;
-  return nextStep(state, gate ? (approversByGate.get(gate) ?? []) : []);
+  return nextStep(state, gate ? (approversByGate.get(gate) ?? []) : [], ctx);
 }
 
 /** Every gate's approver list for one estate, in one query. */
