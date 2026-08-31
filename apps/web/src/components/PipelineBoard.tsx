@@ -14,6 +14,7 @@ const STATE_SHORT: Record<string, string> = {
   "factory:in-review": "in-review",
   "factory:in-test": "in-test",
   "factory:ready-to-ship": "ready-to-ship",
+  "factory:on-epic": "on-epic",
   "factory:in-staging": "in-staging",
   "factory:deployed": "deployed",
   [FAST_TRACK_COLUMN]: "fast track",
@@ -25,7 +26,7 @@ const LIST_PHASES: Array<{ id: string; label: string; match: (state: string | nu
   { id: "spec", label: PHASE_LABELS.specifying, match: (s) => s === "factory:intake" || s === "factory:spec-ready" },
   { id: "plan", label: PHASE_LABELS.planning, match: (s) => s === "factory:spec-approved" || s === "factory:planned" || s === "factory:design-ready" },
   { id: "build", label: PHASE_LABELS.building, match: (s) => s === "factory:design-approved" || s === "factory:ready" || s === "factory:in-review" || s === "factory:in-test" },
-  { id: "ship", label: PHASE_LABELS.shipping, match: (s) => s === "factory:ready-to-ship" || s === "factory:in-staging" || s === "factory:deployed" },
+  { id: "ship", label: PHASE_LABELS.shipping, match: (s) => s === "factory:ready-to-ship" || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed" },
   { id: "fast", label: "Fast track", match: (s) => s === FAST_TRACK_COLUMN || s === "factory:fast-track" },
 ];
 

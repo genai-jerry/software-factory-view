@@ -257,6 +257,7 @@ const GATE_THREAD_FOR_STATE: Record<string, string> = {
   "factory:design-ready": "gate/design",
   "factory:design-approved": "gate/design",
   "factory:ready-to-ship": "gate/release",
+  "factory:on-epic": "gate/release",
   "factory:in-staging": "gate/release",
   "factory:deployed": "gate/release",
 };

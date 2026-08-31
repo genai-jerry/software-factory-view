@@ -80,6 +80,16 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
         </span>
       </div>
 
+      {/* The epic branch (FACTORY.md §6b) is named factory/epic-<epic issue
+          number>. The Console cannot read the estate's branch policy, so it
+          shows the name only when a factory:on-epic state proves the branch
+          is in use for this epic. */}
+      {(data.epic.state === "factory:on-epic" || data.tasks.some((t) => t.state === "factory:on-epic")) && (
+        <p className="muted" style={{ marginTop: 4 }}>
+          Assembling on epic branch <code>factory/epic-{data.epic.number}</code>
+        </p>
+      )}
+
       <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
 
       <FactoryRunStatus data={data} />
@@ -531,7 +541,7 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
     { title: "Ready", match: (s, open) => open && s === "factory:ready" },
     { title: "In review", match: (s, open) => open && s === "factory:in-review" },
     { title: "In test", match: (s, open) => open && s === "factory:in-test" },
-    { title: "Ship/Done", match: (s, open) => !open || s === "factory:ready-to-ship" || s === "factory:in-staging" || s === "factory:deployed" },
+    { title: "Ship/Done", match: (s, open) => !open || s === "factory:ready-to-ship" || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed" },
     { title: "Blocked", match: (s, open) => open && s === "factory:blocked" },
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;

@@ -18,7 +18,8 @@ export const FACTORY_LABELS = [
   { name: "factory:ready", color: "B07D2B", description: "Task unblocked; implementer may start" },
   { name: "factory:in-review", color: "C98A1B", description: "Draft PR under agent review" },
   { name: "factory:in-test", color: "D4A017", description: "QA verifying WHEN/THEN scenarios" },
-  { name: "factory:ready-to-ship", color: "6AA84F", description: "Green + approved; awaiting the integration merge onto the staging branch" },
+  { name: "factory:ready-to-ship", color: "6AA84F", description: "Green + approved; awaiting the merge onto the epic branch (or staging when the epic has none)" },
+  { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; awaiting the epic's integration merge" },
   { name: "factory:in-staging", color: "3D9970", description: "Merged to staging and verified there; awaiting gate G3 promotion to the default branch" },
   { name: "factory:deployed", color: "0B8043", description: "In production; soak in progress" },
   { name: "factory:fast-track", color: "8C8C8C", description: "Small fix bypassing OpenSpec ceremony" },
@@ -64,6 +65,7 @@ export const PIPELINE_ORDER: readonly FactoryState[] = [
   "factory:in-review",
   "factory:in-test",
   "factory:ready-to-ship",
+  "factory:on-epic",
   "factory:in-staging",
   "factory:deployed",
 ];
@@ -75,9 +77,11 @@ export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
   "factory:spec-ready": { gate: "spec", label: "G1" },
   "factory:design-ready": { gate: "design", label: "G2" },
   "factory:ready": { gate: "implementation", label: "start" },
-  // G3 holds at in-staging, not ready-to-ship: the merge onto the integration
-  // branch is the Release Manager's step (FACTORY.md §6a), and only once the
-  // change is proved there does a human decide whether to promote it.
+  // G3 holds at in-staging, not ready-to-ship or on-epic: the merges onto the
+  // epic branch (FACTORY.md §6b) and the integration branch (§6a) are the
+  // Release Manager's steps — factory:on-epic deliberately has NO gate — and
+  // only once the change is proved on staging does a human decide whether to
+  // promote it.
   "factory:in-staging": { gate: "release", label: "G3" },
 };
 
