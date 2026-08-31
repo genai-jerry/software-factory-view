@@ -62,6 +62,16 @@ export const orgs = pgTable("orgs", {
    * or rely on workflow stubs.
    */
   orchestrator: text("orchestrator").notNull().default("github-actions"),
+  /**
+   * Org-wide branch defaults (FACTORY.md §6a). GitHub stays authoritative for
+   * a repo's real default branch, and a repo's own policy file / profile for
+   * its integration branch; these fill the gaps: `stagingBranch` is the
+   * integration-branch name used when a repo carries no policy file, and both
+   * template the stub-files PR for newly connected repos. Null = the
+   * factory's built-ins (main / staging).
+   */
+  defaultBranch: text("default_branch"),
+  stagingBranch: text("staging_branch"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

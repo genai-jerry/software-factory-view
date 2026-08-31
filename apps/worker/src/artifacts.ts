@@ -6,6 +6,7 @@ import {
   gateAssignments,
   issues,
   onboardingRuns,
+  orgs,
   pullRequests,
   repos,
   taskDependencies,
@@ -424,7 +425,16 @@ export async function refreshRepoProfile(db: Db, repo: RepoRef, reader: RepoRead
       /* malformed profile — validation suite's problem */
     }
   }
-  const stagingBranch = profileOverride ?? (stagingRequired ? policyName ?? "staging" : null);
+  // Name resolution: profile override → repo policy file → the org's
+  // configured default → "staging". The org setting only fills in when the
+  // repo carries no policy file of its own — GitHub content stays
+  // authoritative wherever it exists.
+  let orgStaging: string | null = null;
+  if (!branchPolicy && !profileOverride) {
+    const org = (await db.select({ stagingBranch: orgs.stagingBranch }).from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
+    orgStaging = org?.stagingBranch ?? null;
+  }
+  const stagingBranch = profileOverride ?? (stagingRequired ? policyName ?? orgStaging ?? "staging" : null);
   await db
     .update(repos)
     .set({

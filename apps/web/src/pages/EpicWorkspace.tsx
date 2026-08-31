@@ -12,6 +12,7 @@ import type {
   TimelineEvent,
 } from "../types.js";
 import { DecisionCard } from "./Decisions.js";
+import { DependencyTreeTab } from "./DependencyTree.js";
 import { QaPanel } from "./QaPanel.js";
 import { FactoryRunStatus } from "../components/FactoryRunStatus.js";
 import { GitHubLink } from "../components/GitHubLink.js";
@@ -21,12 +22,13 @@ import { ActionBar } from "../components/ActionBar.js";
 import { HaltBar } from "../components/HaltBar.js";
 import { peopleLabel, factoryShort } from "../lib/labels.js";
 
-type Tab = "overview" | "artifacts" | "gate" | "tasks" | "threads" | "decisions";
+type Tab = "overview" | "artifacts" | "gate" | "tree" | "tasks" | "threads" | "decisions";
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: "Overview",
   artifacts: "Spec",
   gate: "Gate",
+  tree: "Tree",
   tasks: "Tasks",
   threads: "Threads",
   decisions: "Decisions",
@@ -55,7 +57,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:in-staging");
   const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
   const tabItems: Array<{ id: Tab; label: string }> = (
-    ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tasks", "threads", "decisions"] as Tab[]
+    ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tree", "tasks", "threads", "decisions"] as Tab[]
   ).map((t) => ({
     id: t,
     label:
@@ -133,6 +135,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           {tab === "overview" && <OverviewTab data={data} />}
           {tab === "artifacts" && <ArtifactsTab data={data} />}
           {tab === "gate" && gateOpen && <GateTab epicId={data.epic.id} me={me} />}
+          {tab === "tree" && <DependencyTreeTab epicId={data.epic.id} onOpenGate={() => setTab("gate")} />}
           {tab === "tasks" && <TasksTab data={data} />}
           {tab === "threads" && <ThreadsTab data={data} />}
           {tab === "decisions" && <DecisionsTab epicId={data.epic.id} />}

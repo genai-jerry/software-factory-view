@@ -50,10 +50,69 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
         globalKeyConfigured: Boolean(deps.cfg.ANTHROPIC_API_KEY) || hasRetainedAnthropic,
         providers: INSIGHT_PROVIDERS,
       },
+      branches: {
+        defaultBranch: found.org.defaultBranch,
+        stagingBranch: found.org.stagingBranch,
+      },
       allowedSecrets: [...AGENT_SECRET_NAMES],
       retainedSecrets,
     };
   });
+
+  /**
+   * Org-wide branch defaults (FACTORY.md §6a). The staging name is the
+   * integration branch every implementation PR merges to — the factory cuts
+   * it from the default branch on first need (`auto_create`), so naming it
+   * here is enough; no branch is created from the Console. Applied to repos
+   * without their own `.github/factory-branches.json`, and templated into the
+   * stub-files PR for newly connected repos.
+   */
+  app.post<{ Params: { id: string }; Body: { defaultBranch?: string | null; stagingBranch?: string | null } }>(
+    "/api/orgs/:id/settings/branches",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: true });
+      if (!found) return;
+
+      const set: Partial<typeof orgs.$inferInsert> = {};
+      for (const key of ["defaultBranch", "stagingBranch"] as const) {
+        if (!req.body || !(key in req.body)) continue;
+        const raw = req.body[key]?.trim();
+        if (!raw) {
+          set[key] = null;
+          continue;
+        }
+        if (!isValidBranchName(raw)) {
+          return reply.code(400).send({ error: `${key} is not a valid git branch name` });
+        }
+        set[key] = raw;
+      }
+      if (set.defaultBranch !== undefined || set.stagingBranch !== undefined) {
+        const effDefault = "defaultBranch" in set ? set.defaultBranch : found.org.defaultBranch;
+        const effStaging = "stagingBranch" in set ? set.stagingBranch : found.org.stagingBranch;
+        if (effDefault && effStaging && effDefault === effStaging) {
+          return reply.code(400).send({
+            error: "staging and default cannot be the same branch — the promotion PR merges staging into default",
+          });
+        }
+      }
+      if (Object.keys(set).length === 0) {
+        return reply.code(400).send({ error: "nothing to update — pass defaultBranch and/or stagingBranch" });
+      }
+
+      await db.update(orgs).set(set).where(eq(orgs.id, found.org.id));
+      await db.insert(auditLog).values({
+        orgId: found.org.id,
+        actorUserId: ctx.userId,
+        action: "settings.branches",
+        target: found.org.name,
+        payload: set,
+      });
+      const fresh = (await db.select().from(orgs).where(eq(orgs.id, found.org.id)).limit(1))[0]!;
+      return { ok: true, defaultBranch: fresh.defaultBranch, stagingBranch: fresh.stagingBranch };
+    },
+  );
 
   /**
    * Pick which engine drives this org's factory pipeline. Switching does not
@@ -277,6 +336,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
       return { name, stored, githubActions: actions, results };
     },
   );
+}
+
+/** git-check-ref-format, the parts that matter for a typed-in branch name. */
+function isValidBranchName(name: string): boolean {
+  if (name.length > 200) return false;
+  if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false;
+  if (name.startsWith("-") || name.startsWith("/") || name.endsWith("/") || name.endsWith(".lock")) return false;
+  if (name.includes("..") || name.includes("//")) return false;
+  return true;
 }
 
 export async function loadOrg(

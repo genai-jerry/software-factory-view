@@ -409,6 +409,49 @@ export interface QaData {
   budget: { used: number; total: number } | null;
 }
 
+export interface TreeDep {
+  id: string;
+  number: number;
+  title: string;
+  state: string | null;
+  open: boolean;
+  htmlUrl: string;
+  repo: string;
+  inTree: boolean;
+}
+
+export interface TreeNode {
+  id: string;
+  number: number;
+  title: string;
+  state: string | null;
+  open: boolean;
+  htmlUrl: string;
+  repo: string;
+  crossRepo: boolean;
+  assignees: string[];
+  blockedBy: TreeDep[];
+  blocks: TreeDep[];
+  waiting: boolean;
+  agentHalted: boolean;
+  approvable: boolean;
+}
+
+export interface EpicTree {
+  epic: {
+    id: string;
+    number: number;
+    title: string;
+    state: string | null;
+    open: boolean;
+    htmlUrl: string;
+    repo: string;
+    gate: { gate: string; label: string } | null;
+  };
+  startGate: { approvers: string[]; amApprover: boolean };
+  nodes: TreeNode[];
+}
+
 export interface OrgSettings {
   id: string;
   name: string;
@@ -424,6 +467,10 @@ export interface OrgSettings {
     defaultModel: string;
     globalKeyConfigured: boolean;
     providers: string[];
+  };
+  branches: {
+    defaultBranch: string | null;
+    stagingBranch: string | null;
   };
   allowedSecrets: string[];
   retainedSecrets: Array<{ name: string; updatedAt: string; updatedBy: string | null }>;

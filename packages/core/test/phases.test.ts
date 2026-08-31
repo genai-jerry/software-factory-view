@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockerNumbersFromBody } from "../src/derive.js";
+import { blockerNumbersFromBody, blockerRefsFromBody, parentRefFromBody } from "../src/derive.js";
 import { FACTORY_LABELS } from "../src/factory.js";
 import { NEXT_MOVER, phaseOfState, STATE_SENTENCE, stateSentence } from "../src/phases.js";
 
@@ -51,5 +51,39 @@ describe("blockerNumbersFromBody", () => {
     expect(blockerNumbersFromBody("blocked by #12\ndepends on #12")).toEqual([12]);
     expect(blockerNumbersFromBody(null)).toEqual([]);
     expect(blockerNumbersFromBody("no markers here")).toEqual([]);
+  });
+});
+
+describe("blockerRefsFromBody", () => {
+  it("parses qualified cross-repo refs alongside bare numbers", () => {
+    expect(blockerRefsFromBody("Blocked by acme/api#12")).toEqual([{ repo: "acme/api", number: 12 }]);
+    expect(blockerRefsFromBody("Blocked by #5, acme/api#12")).toEqual([
+      { repo: null, number: 5 },
+      { repo: "acme/api", number: 12 },
+    ]);
+    expect(blockerRefsFromBody("depends on https://github.com/acme/api/issues/9")).toEqual([
+      { repo: "acme/api", number: 9 },
+    ]);
+  });
+
+  it("stays line-anchored — prose around a qualified ref creates no edge", () => {
+    expect(blockerRefsFromBody("this was blocked by acme/api#12 last week")).toEqual([]);
+    expect(blockerRefsFromBody("blocked by acme/api#12\nafter acme/api#12")).toEqual([
+      { repo: "acme/api", number: 12 },
+    ]);
+  });
+});
+
+describe("parentRefFromBody", () => {
+  it("resolves the factory's parent markers, qualified or not", () => {
+    expect(parentRefFromBody("Parent: #7")).toEqual({ repo: null, number: 7 });
+    expect(parentRefFromBody("epic #7")).toEqual({ repo: null, number: 7 });
+    expect(parentRefFromBody("Part of acme/hub#31")).toEqual({ repo: "acme/hub", number: 31 });
+    expect(parentRefFromBody("sub-issue of https://github.com/acme/hub/issues/31")).toEqual({
+      repo: "acme/hub",
+      number: 31,
+    });
+    expect(parentRefFromBody("no markers")).toBeNull();
+    expect(parentRefFromBody(null)).toBeNull();
   });
 });

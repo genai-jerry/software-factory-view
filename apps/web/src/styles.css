@@ -1036,3 +1036,43 @@ ol.run-events time {
   .focus-clear { min-height: var(--target); padding: 0 0.5rem; }
 }
 
+
+/* ---- Dependency tree (epic workspace Tree tab, plan 11 §1) ---- */
+.dep-tree { display: flex; flex-direction: column; gap: 0.75rem; }
+.dep-node {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+}
+.dep-node.waiting { border-left: 3px solid var(--amber); }
+.dep-node.halted { border-left: 3px solid var(--halt); background: var(--halt-bg); }
+.dep-node.done { opacity: 0.65; }
+.dep-node.dep-epic { border-color: var(--accent); }
+.dep-node-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.dep-wave { position: relative; padding-left: 1.1rem; }
+.dep-wave::before {
+  content: "";
+  position: absolute;
+  left: 0.3rem;
+  top: 1.4rem;
+  bottom: 0.2rem;
+  border-left: 2px solid var(--border);
+}
+.dep-wave-label { color: var(--text-dim); font-size: 0.8rem; margin: 0.2rem 0 0.4rem; }
+.dep-wave-nodes { display: flex; flex-direction: column; gap: 0.5rem; }
+.dep-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; font-size: 0.78rem; }
+.dep-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.dep-chip.open { border-color: var(--amber); color: var(--amber); }
+.dep-chip.done { border-color: var(--green); color: var(--green); }
+.dep-chip.unblocks { border-style: dashed; }
+.dep-halt { color: var(--halt-fg); background: var(--halt); border-radius: var(--radius); padding: 0.3rem 0.5rem; margin-top: 0.4rem; font-size: 0.82rem; }
+.dep-actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.dep-composer { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.dep-composer textarea { width: 100%; resize: vertical; }

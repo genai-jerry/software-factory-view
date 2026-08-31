@@ -81,6 +81,64 @@ describe("body-sourced dependencies", () => {
     await projectIssue(db, repo, ghIssue({ number: 3, body: "blocked by #3\ndepends on #99" }));
     expect(await db.select().from(taskDependencies)).toHaveLength(0);
   });
+
+  it("resolves owner/repo#N markers across the org's repos, never across orgs", async () => {
+    const { db } = await testDb();
+    const repo = await seedRepo(db);
+    const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)))[0]!;
+    const estate = (await db.select().from(estates).where(eq(estates.orgId, org.id)))[0]!;
+    const sibling = (
+      await db.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: "R_2", fullName: "acme/api" }).returning()
+    )[0]!;
+    const siblingRef: RepoRef = {
+      id: sibling.id, orgId: org.id, estateId: estate.id, fullName: "acme/api", defaultBranch: "main", stagingBranch: null,
+    };
+    await projectIssue(db, siblingRef, ghIssue({ number: 7, node_id: "I_s7" }));
+
+    // Same number exists in a foreign org's identically named repo — must not match.
+    const otherOrg = (await db.insert(orgs).values({ name: "other" }).returning())[0]!;
+    const otherEstate = (
+      await db.insert(estates).values({ orgId: otherOrg.id, name: "other", installationId: 2 }).returning()
+    )[0]!;
+    const foreign = (
+      await db
+        .insert(repos)
+        .values({ orgId: otherOrg.id, estateId: otherEstate.id, ghNodeId: "R_3", fullName: "acme/backend" })
+        .returning()
+    )[0]!;
+    await projectIssue(
+      db,
+      { id: foreign.id, orgId: otherOrg.id, estateId: otherEstate.id, fullName: "acme/backend", defaultBranch: "main", stagingBranch: null },
+      ghIssue({ number: 8, node_id: "I_f8" }),
+    );
+
+    await projectIssue(db, repo, ghIssue({ number: 4, body: "Blocked by acme/api#7\nBlocked by acme/backend#8" }));
+    const deps = await db.select().from(taskDependencies);
+    expect(deps).toHaveLength(1);
+    const blocker = (await db.select().from(issues).where(eq(issues.id, deps[0]!.blockerIssueId)))[0]!;
+    expect(blocker.number).toBe(7);
+    expect(blocker.repoId).toBe(sibling.id);
+  });
+
+  it("links a sibling-repo sub-issue to its epic via Part of owner/repo#N", async () => {
+    const { db } = await testDb();
+    const repo = await seedRepo(db);
+    const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)))[0]!;
+    const estate = (await db.select().from(estates).where(eq(estates.orgId, org.id)))[0]!;
+    await projectIssue(db, repo, ghIssue({ number: 31, title: "epic thing", labels: [{ name: "factory:planned" }] }));
+    const sibling = (
+      await db.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: "R_2", fullName: "acme/api" }).returning()
+    )[0]!;
+    const siblingRef: RepoRef = {
+      id: sibling.id, orgId: org.id, estateId: estate.id, fullName: "acme/api", defaultBranch: "main", stagingBranch: null,
+    };
+    await projectIssue(db, siblingRef, ghIssue({ number: 2, node_id: "I_s2", body: "Part of acme/app#31" }));
+
+    const epic = (await db.select().from(issues).where(eq(issues.number, 31)))[0]!;
+    const task = (await db.select().from(issues).where(eq(issues.number, 2)))[0]!;
+    expect(task.parentIssueId).toBe(epic.id);
+    expect(task.kind).toBe("task");
+  });
 });
 
 describe("repairDependencies (native relations)", () => {

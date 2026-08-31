@@ -232,6 +232,7 @@ function OrgSettingsCard({ orgId }: { orgId: string }) {
       <h2>{s.name}</h2>
       {!canEdit && <p className="muted">You have the {s.role} role here — settings are read-only for you.</p>}
       <OrchestratorSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
+      <BranchesSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
       <InsightSection orgId={orgId} settings={s} canEdit={canEdit} onSaved={() => void qc.invalidateQueries({ queryKey: ["org-settings", orgId] })} />
       <ProjectsSection orgId={orgId} canEdit={canEdit} />
       <SecretsSection orgId={orgId} settings={s} canEdit={canEdit} />
@@ -377,6 +378,74 @@ function OrchestratorSection({
         </button>
       </div>
       {save.isError && <div className="banner error">{(save.error as ApiError).message}</div>}
+    </div>
+  );
+}
+
+/** Org-wide branch defaults: the integration (staging) branch PRs merge to, and the default branch. */
+function BranchesSection({
+  orgId,
+  settings: s,
+  canEdit,
+  onSaved,
+}: {
+  orgId: string;
+  settings: OrgSettings;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const [defaultBranch, setDefaultBranch] = useState(s.branches.defaultBranch ?? "");
+  const [stagingBranch, setStagingBranch] = useState(s.branches.stagingBranch ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; defaultBranch: string | null; stagingBranch: string | null }>(
+        `/api/orgs/${orgId}/settings/branches`,
+        { defaultBranch: defaultBranch.trim() || null, stagingBranch: stagingBranch.trim() || null },
+      ),
+    onSuccess: onSaved,
+  });
+  const dirty =
+    (defaultBranch.trim() || null) !== s.branches.defaultBranch ||
+    (stagingBranch.trim() || null) !== s.branches.stagingBranch;
+  return (
+    <div style={{ marginBottom: "1.25rem" }}>
+      <h3>Branches</h3>
+      <p className="muted">
+        Every implementation PR merges to the <strong>staging</strong> (integration) branch, is proved there, and is
+        promoted to the <strong>default</strong> branch by the human-merged promotion PR at G3. If a repo has no staging
+        branch yet, the factory cuts it from the default branch the first time it is needed. A repo&apos;s own{" "}
+        <code>.github/factory-branches.json</code> always wins; these org-wide names fill in where that file is absent
+        and pre-fill the stub-files PR for newly connected repos. Blank = the factory defaults (<code>main</code> /{" "}
+        <code>staging</code>).
+      </p>
+      <div className="row">
+        <label className="muted" htmlFor="org-default-branch">
+          Default
+        </label>
+        <input
+          id="org-default-branch"
+          value={defaultBranch}
+          disabled={!canEdit}
+          onChange={(e) => setDefaultBranch(e.target.value)}
+          placeholder="main"
+          style={{ width: "10rem" }}
+        />
+        <label className="muted" htmlFor="org-staging-branch">
+          Staging
+        </label>
+        <input
+          id="org-staging-branch"
+          value={stagingBranch}
+          disabled={!canEdit}
+          onChange={(e) => setStagingBranch(e.target.value)}
+          placeholder="staging"
+          style={{ width: "10rem" }}
+        />
+        <button disabled={!canEdit || !dirty || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {save.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(save.error as ApiError).message}</div>}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { registerFlowRoutes } from "./routes/flow.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGateRoutes } from "./routes/gate.js";
+import { registerTreeRoutes } from "./routes/tree.js";
 import { registerWriteRoutes } from "./routes/write.js";
 import { registerQaRoutes } from "./routes/qa.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
@@ -43,6 +44,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSettingsRoutes(app, deps);
   registerProjectRoutes(app, deps);
   registerGateRoutes(app, deps);
+  registerTreeRoutes(app, deps);
   registerWriteRoutes(app, deps);
   registerQaRoutes(app, deps);
   registerOnboardingRoutes(app, deps);
