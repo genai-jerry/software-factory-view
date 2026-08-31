@@ -321,7 +321,10 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       const existingBranch = await client.getBranchHeadSha(owner, name, branch);
       if (!existingBranch) await client.createBranch(owner, name, branch, headSha);
 
-      const files = stubFiles(approvers, org.orchestrator);
+      const files = stubFiles(approvers, org.orchestrator, {
+        defaultBranch: org.defaultBranch ?? repo.defaultBranch,
+        stagingBranch: org.stagingBranch,
+      });
       for (const [path, content] of Object.entries(files)) {
         const current = await client.getFileAtRef(owner, name, path, branch);
         if (current?.content === content) continue;
@@ -998,6 +1001,7 @@ async function ensurePull(
 function stubFiles(
   approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] },
   consoleEngine: string,
+  branches: { defaultBranch: string; stagingBranch: string | null },
 ): Record<string, string> {
   const files: Record<string, string> = {
     ".github/workflows/factory-pipeline.yml": `name: Factory pipeline
@@ -1069,7 +1073,7 @@ ${CALLER_SECRET_PASS}
 
 on:
   push:
-    branches: [main]
+    branches: [${branches.defaultBranch}]
 
 permissions:
   contents: read
@@ -1082,6 +1086,17 @@ jobs:
     with:
       factory_ref: ${FACTORY_REF}
 `,
+    ".github/factory-branches.json": `${JSON.stringify(
+      {
+        _comment:
+          "Integration-branch policy (FACTORY.md §6a). Implementation PRs merge to `staging`; the factory cuts the branch from the default branch on first need when auto_create is on.",
+        staging: branches.stagingBranch ?? "staging",
+        required: true,
+        auto_create: true,
+      },
+      null,
+      2,
+    )}\n`,
     ".github/factory-models.json": `${JSON.stringify(
       {
         _comment:
@@ -1157,13 +1172,15 @@ body:
 function stubPrBody(actions: boolean): string {
   const files = actions
     ? `- \`.github/workflows/factory-pipeline.yml\` — caller stub wiring GitHub events to the factory's reusable pipeline (permissions block intact — do not remove it).
-- \`.github/workflows/factory-branch-guard.yml\` — files a factory:incident issue if a commit lands on main without a PR.
+- \`.github/workflows/factory-branch-guard.yml\` — files a factory:incident issue if a commit lands on the default branch without a PR.
+- \`.github/factory-branches.json\` — integration-branch policy: implementation PRs merge to staging, which the factory cuts from the default branch on first need.
 - \`.github/factory-orchestrator.json\` — engine \`github-actions\` (this org's Console setting).
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.`
-    : `- \`.github/factory-orchestrator.json\` — claims this repo for the Software Factory orchestrator (\`engine: langgraph\`). GitHub Actions is not used.
+    : `- \`.github/factory-branches.json\` — integration-branch policy: implementation PRs merge to staging, which the factory cuts from the default branch on first need.
+- \`.github/factory-orchestrator.json\` — claims this repo for the Software Factory orchestrator (\`engine: langgraph\`). GitHub Actions is not used.
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.

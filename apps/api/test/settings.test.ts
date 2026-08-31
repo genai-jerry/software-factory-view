@@ -490,3 +490,57 @@ describe("GET /api/ops/ingestion", () => {
     expect(added.map((a) => a.data.deliveryGuid)).toEqual(["d-stuck"]);
   });
 });
+
+describe("org branch defaults", () => {
+  it("starts unset and round-trips a save", async () => {
+    let res = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect(res.json().branches).toEqual({ defaultBranch: null, stagingBranch: null });
+
+    res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/branches`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { defaultBranch: "main", stagingBranch: "integration" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, defaultBranch: "main", stagingBranch: "integration" });
+
+    res = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect(res.json().branches).toEqual({ defaultBranch: "main", stagingBranch: "integration" });
+
+    // Clearing goes back to the factory defaults.
+    res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/branches`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { stagingBranch: null },
+    });
+    expect(res.json()).toMatchObject({ ok: true, defaultBranch: "main", stagingBranch: null });
+  });
+
+  it("rejects invalid names, same-name pairs, and non-admins", async () => {
+    let res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/branches`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { stagingBranch: "bad branch" },
+    });
+    expect(res.statusCode).toBe(400);
+
+    res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/branches`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { defaultBranch: "trunk", stagingBranch: "trunk" },
+    });
+    expect(res.statusCode).toBe(400);
+
+    res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/branches`,
+      headers: { cookie: memberCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { stagingBranch: "integration" },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});

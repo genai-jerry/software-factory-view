@@ -1,16 +1,18 @@
 import {
-  blockerNumbersFromBody,
+  blockerRefsFromBody,
   deriveFactoryState,
   deriveIssueKind,
   derivePrKind,
   isAgentComment,
   isApprovedComment,
   isFactoryState,
+  parentRefFromBody,
   parseConsoleMarkers,
   type GhComment,
   type GhIssue,
   type GhPull,
   type GhWorkflowRun,
+  type IssueRef,
 } from "@console/core";
 import {
   comments,
@@ -27,7 +29,7 @@ import {
   orgs,
   type Db,
 } from "@console/db";
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, lte, sql as dsql } from "drizzle-orm";
 
 /**
  * Projection functions. Every write is an idempotent upsert keyed by the
@@ -94,12 +96,35 @@ function labelNames(labels: GhIssue["labels"]): string[] {
   return labels.map((l) => (typeof l === "string" ? l : l.name)).filter(Boolean);
 }
 
-/** Heuristic parent link for task sub-issues; the reconciler repairs via the sub-issues API. */
-function parentNumberFromBody(body: string | null): number | null {
-  if (!body) return null;
-  const m =
-    body.match(/(?:^|\n)\s*(?:parent|epic)\s*:?\s*#(\d+)/i) ?? body.match(/sub-issue of\s+#(\d+)/i) ?? body.match(/part of\s+#(\d+)/i);
-  return m ? Number(m[1]) : null;
+/**
+ * Resolve an IssueRef against the org's projected repos: unqualified refs are
+ * this repo's, qualified ones (owner/name#N, FACTORY.md §7) look the sibling
+ * repo up by full name — org-scoped, so a marker can never reach across
+ * organisations. A ref whose repo or issue is not yet projected resolves to
+ * null and converges on a later delivery or reconcile.
+ */
+async function resolveIssueRef(db: Db, repo: RepoRef, ref: IssueRef): Promise<string | null> {
+  if (!ref.repo) {
+    const row = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.repoId, repo.id), eq(issues.number, ref.number)))
+      .limit(1);
+    return row[0]?.id ?? null;
+  }
+  const row = await db
+    .select({ id: issues.id })
+    .from(issues)
+    .innerJoin(repos, eq(repos.id, issues.repoId))
+    .where(
+      and(
+        eq(issues.orgId, repo.orgId),
+        eq(issues.number, ref.number),
+        dsql`lower(${repos.fullName}) = ${ref.repo.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  return row[0]?.id ?? null;
 }
 
 export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<{ issueId: string; stateChanged: boolean }> {
@@ -107,16 +132,10 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
 
   const labels = labelNames(gh.labels);
   const factoryState = deriveFactoryState(labels);
-  const parentNumber = parentNumberFromBody(gh.body);
-  let parentIssueId: string | null = null;
-  if (parentNumber) {
-    const parent = await db
-      .select({ id: issues.id })
-      .from(issues)
-      .where(and(eq(issues.repoId, repo.id), eq(issues.number, parentNumber)))
-      .limit(1);
-    parentIssueId = parent[0]?.id ?? null;
-  }
+  // Heuristic parent link for task sub-issues (cross-repo when qualified);
+  // the reconciler repairs via the sub-issues API.
+  const parentRef = parentRefFromBody(gh.body);
+  const parentIssueId = parentRef ? await resolveIssueRef(db, repo, parentRef) : null;
   const kind = deriveIssueKind({ labels, title: gh.title, hasParent: parentIssueId !== null });
   const ghUpdatedAt = new Date(gh.updated_at);
 
@@ -187,26 +206,23 @@ export async function projectIssue(db: Db, repo: RepoRef, gh: GhIssue): Promise<
 
 /**
  * Refresh this issue's `source='body'` dependency edges from its markers
- * (delete-then-insert, the gate-assignments discipline). Numbers resolve
- * same-repo; a marker naming an issue not yet projected is skipped and
- * converges on the next delivery or reconcile. `onConflictDoNothing` on the
- * (blocked, blocker) pair keeps github-sourced rows authoritative.
+ * (delete-then-insert, the gate-assignments discipline). Unqualified numbers
+ * resolve same-repo, `owner/repo#N` markers resolve org-wide; a marker naming
+ * an issue not yet projected is skipped and converges on the next delivery or
+ * reconcile. `onConflictDoNothing` on the (blocked, blocker) pair keeps
+ * github-sourced rows authoritative.
  */
 async function refreshBodyDependencies(db: Db, repo: RepoRef, issueId: string, body: string | null): Promise<void> {
-  const numbers = blockerNumbersFromBody(body);
+  const refs = blockerRefsFromBody(body);
   await db
     .delete(taskDependencies)
     .where(and(eq(taskDependencies.blockedIssueId, issueId), eq(taskDependencies.source, "body")));
-  if (numbers.length === 0) return;
-  const blockers = await db
-    .select({ id: issues.id })
-    .from(issues)
-    .where(and(eq(issues.repoId, repo.id), inArray(issues.number, numbers)));
-  for (const blocker of blockers) {
-    if (blocker.id === issueId) continue;
+  for (const ref of refs) {
+    const blockerId = await resolveIssueRef(db, repo, ref);
+    if (!blockerId || blockerId === issueId) continue;
     await db
       .insert(taskDependencies)
-      .values({ orgId: repo.orgId, blockedIssueId: issueId, blockerIssueId: blocker.id, source: "body" })
+      .values({ orgId: repo.orgId, blockedIssueId: issueId, blockerIssueId: blockerId, source: "body" })
       .onConflictDoNothing({ target: [taskDependencies.blockedIssueId, taskDependencies.blockerIssueId] });
   }
 }
