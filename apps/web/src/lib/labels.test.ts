@@ -5,6 +5,7 @@ import type { Me, SetupStatus } from "../types.js";
 describe("peopleLabel", () => {
   it("maps factory states to people language", () => {
     expect(peopleLabel("factory:spec-ready")).toBe("Approve spec");
+    expect(peopleLabel("factory:on-epic")).toBe("On epic branch");
     expect(peopleLabel("factory:blocked")).toBe("Agent halted");
     expect(peopleLabel("factory:deployed")).toBe("Shipped");
   });
@@ -23,6 +24,9 @@ describe("factoryShort", () => {
     // integration merge, which no human approves.
     expect(factoryShort("factory:in-staging")).toBe("G3");
     expect(factoryShort("factory:ready-to-ship")).toBe("ready-to-ship");
+    // on-epic is the release manager's epic assembly (FACTORY.md §6b) —
+    // deliberately no gate chip.
+    expect(factoryShort("factory:on-epic")).toBe("on-epic");
   });
 });
 

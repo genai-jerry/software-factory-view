@@ -13,6 +13,7 @@ export const PEOPLE_LABEL: Record<string, string> = {
   "factory:in-review": "In review",
   "factory:in-test": "In test",
   "factory:ready-to-ship": "Staging",
+  "factory:on-epic": "On epic branch",
   "factory:in-staging": "Merge to ship",
   "factory:deployed": "Shipped",
   "factory:blocked": "Agent halted",
