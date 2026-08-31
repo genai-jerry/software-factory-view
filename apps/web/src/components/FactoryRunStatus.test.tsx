@@ -36,6 +36,13 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
       author: "alice",
       htmlUrl: "https://github.com/acme/api/issues/42",
       labels: ["factory:in-progress"],
+      nextStep: {
+        who: "the factory",
+        how: "The Intake Analyst is drafting the spec and will open its PR. Nothing to do.",
+        startRole: null,
+        startLabel: null,
+        waitsOnPerson: false,
+      },
     },
     repo: { id: "repo-1", fullName: "acme/api", defaultBranch: "main" },
     pipeline: [],

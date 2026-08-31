@@ -2,6 +2,8 @@ export * from "./factory.js";
 export * from "./markers.js";
 export * from "./derive.js";
 export * from "./phases.js";
+export * from "./start-gate.js";
+export * from "./next-step.js";
 export * from "./crypto.js";
 export * from "./config.js";
 export * from "./github.js";

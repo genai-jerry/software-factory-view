@@ -1,9 +1,10 @@
-import { APPROVED_BODY, GATE_STATES } from "@console/core";
-import { auditLog, gateAssignments, issues, repos, taskDependencies } from "@console/db";
+import { APPROVED_BODY, GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
+import { auditLog, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import { postComment } from "../gh-write.js";
+import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { loadEpic, loadIssue } from "./read.js";
 
 /**
@@ -99,6 +100,15 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const gateInfo = epic.factoryState && epic.state === "open" ? GATE_STATES[epic.factoryState] : undefined;
     const epicGate = gateInfo && gateInfo.gate !== "implementation" ? gateInfo : undefined;
 
+    // The same three-way start-gate reading the Tasks list and the threads
+    // use — a node whose implementer is already running says so instead of
+    // offering the button that started it.
+    const gateApprovers = await loadGateApprovers(deps, repo.estateId);
+    const startFacts = await loadTaskStartFacts(
+      deps,
+      taskRows.filter((t) => t.issue.state === "open" && t.issue.factoryState === READY_STATE).map((t) => t.issue.id),
+    );
+
     return {
       epic: {
         id: epic.id,
@@ -113,6 +123,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       startGate: { approvers, amApprover },
       nodes: taskRows.map((t) => {
         const up = blockedBy.get(t.issue.id) ?? [];
+        const startStatus = startStatusOf(t.issue, startFacts.get(t.issue.id));
         return {
           id: t.issue.id,
           number: t.issue.number,
@@ -127,7 +138,9 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
           blocks: blocks.get(t.issue.id) ?? [],
           waiting: t.issue.state === "open" && up.some((d) => d.open),
           agentHalted: t.issue.factoryState === "factory:blocked",
-          approvable: t.issue.state === "open" && t.issue.factoryState === "factory:ready",
+          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers),
+          startStatus,
+          approvable: startStatusTakesApproval(startStatus),
         };
       }),
     };
@@ -138,6 +151,12 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
    * task as the acting user. Console-side approver check mirrors the router's
    * (`implementation` list; empty = any collaborator) — GitHub enforces for
    * real either way.
+   *
+   * The start is guarded twice over, because the router is not: a second
+   * `Approved` while a run is live starts a second implementer on the same
+   * task (the run marker is orthogonal to the state, FACTORY.md §3). The
+   * buttons are gone from every tab once a task is approved, and this refuses
+   * the post for a stale tab that still shows one.
    */
   app.post<{ Params: { id: string } }>("/api/issues/:id/approve", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
@@ -145,9 +164,19 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const found = await loadIssue(deps, ctx, req.params.id);
     if (!found) return reply.code(404).send({ error: "issue not found" });
     const { issue, repo } = found;
-    if (issue.state !== "open" || issue.factoryState !== "factory:ready") {
+    if (issue.state !== "open" || issue.factoryState !== READY_STATE) {
       return reply.code(409).send({
         error: "only an open task at factory:ready takes a start approval — epic gates go through the gate panel",
+      });
+    }
+    const startStatus = startStatusOf(issue, (await loadTaskStartFacts(deps, [issue.id])).get(issue.id));
+    if (!startStatusTakesApproval(startStatus)) {
+      return reply.code(409).send({
+        error:
+          startStatus === "running"
+            ? `an implementer is already running on #${issue.number} — approving again would start a second one`
+            : `#${issue.number} is already approved and waiting for the factory to start the implementer`,
+        startStatus,
       });
     }
     const approverRows = await db
@@ -169,6 +198,34 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       target: `${repo.fullName}#${issue.number}`,
       payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url },
     });
+    // Project the approval we just posted, rather than waiting for its webhook
+    // to come back around: the tabs refetch the moment this returns, and an
+    // approval the projection has not heard of yet would draw the button again
+    // for as long as the round trip takes. The worker's own projection upserts
+    // on the same node id, so this is the same row, written earlier.
+    if (comment.node_id && typeof comment.id === "number") {
+      const at = comment.created_at ? new Date(comment.created_at) : new Date();
+      try {
+        await db
+          .insert(comments)
+          .values({
+            orgId: issue.orgId,
+            issueId: issue.id,
+            ghNodeId: comment.node_id,
+            ghId: comment.id,
+            author: comment.user?.login ?? ctx.login,
+            body: APPROVED_BODY,
+            isAgent: false,
+            isApproval: true,
+            htmlUrl: comment.html_url,
+            ghCreatedAt: at,
+            ghUpdatedAt: comment.updated_at ? new Date(comment.updated_at) : at,
+          })
+          .onConflictDoNothing({ target: comments.ghNodeId });
+      } catch (err) {
+        req.log.warn({ err }, "could not record the approval locally — the webhook projection will");
+      }
+    }
     return { ok: true, commentUrl: comment.html_url };
   });
 }

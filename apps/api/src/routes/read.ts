@@ -1,4 +1,12 @@
-import { decryptSecret, factoryRunIsPending, GATE_STATES, githubActionsEnabled, PIPELINE_ORDER } from "@console/core";
+import {
+  decryptSecret,
+  factoryRunIsPending,
+  GATE_STATES,
+  githubActionsEnabled,
+  PIPELINE_ORDER,
+  READY_STATE,
+  startStatusTakesApproval,
+} from "@console/core";
 import {
   artifactCache,
   changeArtifacts,
@@ -24,6 +32,7 @@ import {
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
+import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
@@ -270,6 +279,19 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       amApprover: startApprovers.length === 0 || startApprovers.includes(ctx.login),
     };
 
+    // Where each ready task actually stands at the start gate: untouched,
+    // approved and waiting for the run, or with an implementer already on it.
+    // The state label alone cannot tell those apart (see core/start-gate.ts).
+    const startFacts = await loadTaskStartFacts(
+      deps,
+      taskRows.filter((t) => t.state === "open" && t.factoryState === READY_STATE).map((t) => t.id),
+    );
+
+    // "What now?" for the epic and for every task, with each gate's approver
+    // list filled in — the same answer the factory posts on the issue when a
+    // run ends, shown beside the state it belongs to.
+    const gateApprovers = await loadGateApprovers(deps, repo.estateId);
+
     const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
@@ -288,22 +310,28 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         author: epic.author,
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers),
       },
       repo: { id: repo.id, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       pipeline: PIPELINE_ORDER,
       gate: myGate,
       startGate,
-      tasks: taskRows.map((t) => ({
-        id: t.id,
-        number: t.number,
-        title: t.title,
-        state: t.factoryState,
-        open: t.state === "open",
-        htmlUrl: t.htmlUrl,
-        blockedBy: deps_.get(t.id)?.blockedBy ?? [],
-        blocks: deps_.get(t.id)?.blocks ?? [],
-        approvable: t.state === "open" && t.factoryState === "factory:ready",
-      })),
+      tasks: taskRows.map((t) => {
+        const startStatus = startStatusOf(t, startFacts.get(t.id));
+        return {
+          id: t.id,
+          number: t.number,
+          title: t.title,
+          state: t.factoryState,
+          open: t.state === "open",
+          htmlUrl: t.htmlUrl,
+          blockedBy: deps_.get(t.id)?.blockedBy ?? [],
+          blocks: deps_.get(t.id)?.blocks ?? [],
+          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers),
+          startStatus,
+          approvable: startStatusTakesApproval(startStatus),
+        };
+      }),
       rollup,
       blockedSubIssues: blockedSubs.map((t) => ({ id: t.id, number: t.number, title: t.title, htmlUrl: t.htmlUrl })),
       change: change ? { id: change.id, slug: change.slug, status: change.status } : null,

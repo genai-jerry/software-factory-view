@@ -5,7 +5,8 @@ import type { EpicTree, TreeDep, TreeNode } from "../types.js";
 import { GitHubLink } from "../components/GitHubLink.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { peopleLabel } from "../lib/labels.js";
-import { TaskApproveButton } from "../components/Approve.js";
+import { START_STATUS_LABEL, TaskStartGate } from "../components/Approve.js";
+import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
 
 /**
  * The epic's dependency tree (plan 11 §1): tasks laid out in dependency waves
@@ -128,7 +129,7 @@ function TreeNodeCard({ epicId, node, startGate }: { epicId: string; node: TreeN
         </span>
         {node.crossRepo && <RepoChip fullName={node.repo} />}
         <span className={`badge ${!node.open ? "merge" : node.agentHalted ? "blocked" : node.approvable ? "task-start" : "state"}`}>
-          {node.open ? peopleLabel(node.state) : "Done"}
+          {node.open ? (node.startStatus === "none" ? peopleLabel(node.state) : START_STATUS_LABEL[node.startStatus]) : "Done"}
         </span>
         <GitHubLink href={node.htmlUrl} />
       </div>
@@ -149,8 +150,16 @@ function TreeNodeCard({ epicId, node, startGate }: { epicId: string; node: TreeN
         </div>
       )}
       {node.agentHalted && <div className="dep-halt">Agent halted — it needs a human reply to continue. Comment below.</div>}
+      <NextStepLine step={node.nextStep} />
       <div className="dep-actions">
-        {node.approvable && <TaskApproveButton epicId={epicId} taskId={node.id} startGate={startGate} />}
+        <StartRoleButton issueId={node.id} step={node.nextStep} />
+        <TaskStartGate
+          epicId={epicId}
+          taskId={node.id}
+          number={node.number}
+          startGate={startGate}
+          status={node.startStatus}
+        />
         <button type="button" onClick={() => setComposerOpen((v) => !v)}>
           {composerOpen ? "Cancel" : "Comment"}
         </button>

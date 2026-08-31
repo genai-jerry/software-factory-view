@@ -2,22 +2,26 @@ import { randomUUID } from "node:crypto";
 import {
   factoryStartLabel,
   githubActionsEnabled,
+  isStartableRole,
+  IN_PROGRESS_LABEL,
   InstallationClient,
   mintForOrchestrator,
   postOrchestratorGitHubEvent,
   type GhIssue,
 } from "@console/core";
-import { estates, orgs } from "@console/db";
+import { auditLog, estates, orgs } from "@console/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { requireAuth, type AppDeps } from "../context.js";
+import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import {
+  dispatchFactoryRole,
   fetchOrchestratorRun,
   fetchOrchestratorRuns,
   fetchOrchestratorTranscript,
 } from "../orchestrator-dispatch.js";
-import { loadEpic } from "./read.js";
+import { loadGateApprovers, nextStepFor } from "../start-gate.js";
+import { loadEpic, loadIssue } from "./read.js";
 
 /**
  * Same-origin stand-in for the orchestrator's /runs JSON. GitHub comments
@@ -162,7 +166,106 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
       label: startLabel,
     };
   });
+
+  /**
+   * Start the role the issue's state is waiting for.
+   *
+   * `factory:in-review`, `factory:in-test` and `factory:ready-to-ship` route
+   * nothing: the pipeline is waiting for a person to start the next role, and
+   * the only control was Actions → Run workflow, one repository away from
+   * where the question is asked. The role is not the caller's to choose — it
+   * comes from the state (core/next-step.ts), so this cannot be used to run
+   * an arbitrary role on an arbitrary issue.
+   */
+  app.post<{ Params: { id: string }; Body: { role?: string } }>(
+    "/api/issues/:id/start-role",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const found = await loadIssue(deps, ctx, req.params.id);
+      if (!found) return reply.code(404).send({ error: "issue not found" });
+      const { issue, repo } = found;
+      if (issue.state !== "open") return reply.code(409).send({ error: "issue is closed" });
+
+      const step = nextStepFor(issue.factoryState, await loadGateApprovers(deps, repo.estateId));
+      const role = req.body?.role;
+      if (!isStartableRole(role) || step.startRole !== role) {
+        return reply.code(409).send({
+          error: step.startRole
+            ? `#${issue.number} is at ${issue.factoryState ?? "no factory state"} — the role to start there is ${step.startRole}`
+            : `#${issue.number} is at ${issue.factoryState ?? "no factory state"}, which starts no role: ${step.how}`,
+          nextStep: step,
+        });
+      }
+      if (issue.labels.includes(IN_PROGRESS_LABEL)) {
+        return reply.code(409).send({
+          error: `a factory run is already live on #${issue.number} — starting a second would put two agents on the same issue`,
+        });
+      }
+
+      const org = (await deps.dbh.db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
+      const estate = (await deps.dbh.db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
+      if (!estate) return reply.code(404).send({ error: "estate not found" });
+      const [owner, name] = repo.fullName.split("/") as [string, string];
+
+      let started: { engine: "github-actions" | "software-factory"; detail: string };
+      if (githubActionsEnabled(org?.orchestrator)) {
+        // As the acting user, like every other write the Console makes: the
+        // run shows up under their name in the Actions tab, and GitHub — not
+        // the Console — decides whether they may start it.
+        try {
+          await userClient(deps, ctx).dispatchWorkflow(owner, name, FACTORY_WORKFLOW_FILE, repo.defaultBranch, {
+            role,
+            issue_number: String(issue.number),
+          });
+        } catch (err) {
+          return reply.code(502).send({
+            error: `GitHub declined to start the ${role} on ${repo.fullName}#${issue.number}: ${(err as Error).message}. Running a workflow needs write access to the repository, and the caller stub (.github/workflows/factory-pipeline.yml) has to be on ${repo.defaultBranch}.`,
+          });
+        }
+        started = { engine: "github-actions", detail: `Actions run queued on ${repo.defaultBranch}` };
+      } else {
+        let githubToken: string | undefined;
+        let githubTokenExpiresAt: string | undefined;
+        try {
+          const auth = await deps.credentials.auth();
+          if (auth) {
+            const minted = await mintForOrchestrator(auth, estate.installationId);
+            githubToken = minted.token;
+            githubTokenExpiresAt = new Date(minted.expiresAt).toISOString();
+          }
+        } catch {
+          /* the orchestrator can still mint its own JWT if it has a real App key */
+        }
+        const secrets = await readRetainedAgentSecrets(deps, repo.orgId);
+        const result = await dispatchFactoryRole(deps.cfg, {
+          owner,
+          repo: name,
+          role,
+          issue: issue.number,
+          githubToken,
+          githubTokenExpiresAt,
+          installationId: estate.installationId,
+          ...secrets,
+        });
+        if (result.dispatchError) return reply.code(502).send({ error: result.dispatchError });
+        started = { engine: "software-factory", detail: result.dispatchId ? `run ${result.dispatchId}` : "queued" };
+      }
+
+      await deps.dbh.db.insert(auditLog).values({
+        orgId: issue.orgId,
+        actorUserId: ctx.userId,
+        action: "issue.start-role",
+        target: `${repo.fullName}#${issue.number}`,
+        payload: { role, state: issue.factoryState, engine: started.engine },
+      });
+      return { ok: true, role, ...started };
+    },
+  );
 }
+
+/** The caller stub onboarding writes into every consuming repo. */
+const FACTORY_WORKFLOW_FILE = "factory-pipeline.yml";
 
 function githubLabelNames(issue: Record<string, unknown>): string[] {
   const raw = issue.labels;

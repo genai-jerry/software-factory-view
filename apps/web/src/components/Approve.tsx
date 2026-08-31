@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api.js";
+import type { TaskStartStatus } from "../types.js";
 
 /**
  * One approval affordance, one word, one look — wherever the factory is
@@ -77,5 +78,70 @@ export function TaskApproveButton({
       )}
       {approve.isError && <span className="approve-error">{(approve.error as ApiError).message}</span>}
     </span>
+  );
+}
+
+/**
+ * What the start gate says when it is not asking for a press.
+ *
+ * `factory:ready` stays on the issue while the approval is routed and while
+ * the implementer runs, so the label on its own cannot answer "did my approve
+ * land?". The API separates those moments; this is the wording for each, and
+ * every tab uses it — a badge that read "Ready to build" over a live run is
+ * how the same task got approved twice.
+ */
+export const START_STATUS_LABEL: Record<TaskStartStatus, string> = {
+  none: "",
+  awaiting: "Ready to build",
+  approved: "Approved — starting",
+  running: "Implementer running",
+  stalled: "Approved — not started",
+};
+
+/** The two moments that still want a press — the API decides which, this reads it. */
+export function startStatusTakesApproval(status: TaskStartStatus): boolean {
+  return status === "awaiting" || status === "stalled";
+}
+
+function startStatusNote(status: TaskStartStatus, number: number): string {
+  if (status === "running") return `An implementer is working on #${number} now — nothing to approve.`;
+  if (status === "approved") return `Approved. The factory is starting the implementer on #${number}.`;
+  if (status === "stalled") return `Approved, but no implementer started — approve again to retry #${number}.`;
+  return `Starts the implementer on #${number}.`;
+}
+
+/**
+ * The whole start gate for one task: the button when an approval is the move,
+ * and what is happening instead when it is not. Tabs render this rather than
+ * the button directly, so none of them can offer an approval the factory has
+ * already been given.
+ */
+export function TaskStartGate({
+  epicId,
+  taskId,
+  number,
+  startGate,
+  status,
+}: {
+  epicId: string;
+  taskId: string;
+  number: number;
+  startGate: StartGate;
+  status: TaskStartStatus;
+}) {
+  if (status === "none") return null;
+  const note = startStatusNote(status, number);
+  if (status === "approved" || status === "running") {
+    return (
+      <span className="start-status muted" title={note}>
+        {START_STATUS_LABEL[status]} — {note}
+      </span>
+    );
+  }
+  return (
+    <>
+      <TaskApproveButton epicId={epicId} taskId={taskId} startGate={startGate} />
+      <span className="muted">{note}</span>
+    </>
   );
 }

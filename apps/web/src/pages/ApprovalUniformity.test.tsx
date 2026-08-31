@@ -29,7 +29,15 @@ const readyTask = {
   htmlUrl: "https://github.com/acme/app/issues/198",
   blockedBy: [],
   blocks: [],
+  startStatus: "awaiting" as const,
   approvable: true,
+  nextStep: {
+    who: "the implementation approvers — any collaborator",
+    how: "Approve to start the Implementer on this task.",
+    startRole: null,
+    startLabel: null,
+    waitsOnPerson: true,
+  },
 };
 
 const waitingTask = {
@@ -38,7 +46,9 @@ const waitingTask = {
   number: 199,
   title: "Single Appointment column",
   state: null,
+  startStatus: "none" as const,
   approvable: false,
+  nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false },
 };
 
 function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
@@ -53,6 +63,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
       author: "alice",
       htmlUrl: "https://github.com/acme/app/issues/250",
       labels: [],
+      nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false },
     },
     repo: { id: "repo-1", fullName: "acme/app", defaultBranch: "main" },
     pipeline: [],
@@ -100,7 +111,15 @@ const tree: EpicTree = {
       blocks: [],
       waiting: false,
       agentHalted: false,
+      startStatus: "awaiting",
       approvable: true,
+      nextStep: {
+    who: "the implementation approvers — any collaborator",
+    how: "Approve to start the Implementer on this task.",
+    startRole: null,
+    startLabel: null,
+    waitsOnPerson: true,
+  },
     },
   ],
 };
@@ -175,11 +194,138 @@ describe("the start gate reads the same in every tab", () => {
     expect(screen.getByText(/waiting on @bob to approve/)).toBeTruthy();
   });
 
+  it("the top-of-workspace prompt counts only tasks that still take an approval", () => {
+    renderIn(<TasksTab data={workspace()} />);
+    expect(screen.getByText(/1 task ready to build/)).toBeTruthy();
+  });
+
+  it("offers the button again when an approval went unrouted", async () => {
+    const stalled = { ...readyTask, startStatus: "stalled" as const, approvable: true };
+    renderIn(<TasksTab data={workspace({ tasks: [stalled, waitingTask] })} />);
+    expect(screen.getByText(/no implementer started/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(api.post).toHaveBeenCalledWith("/api/issues/task-198/approve");
+  });
+
   it("reports a refused approval beside the button that was pressed", async () => {
     const { ApiError } = await import("../api.js");
     renderIn(<TasksTab data={workspace()} />);
     vi.mocked(api.post).mockRejectedValueOnce(new ApiError(403, "starting implementers is assigned to: bob"));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(screen.getByText(/assigned to: bob/)).toBeTruthy());
+  });
+});
+
+/**
+ * The bug this suite grew for: `factory:ready` stays on the task while the
+ * approval is routed and while the implementer runs, so the Console kept
+ * offering Approve on a task that had already been approved — a second press
+ * posts a second `Approved`, and the router starts a second implementer.
+ */
+describe("an approved task stops asking to be approved", () => {
+  const approved = { ...readyTask, startStatus: "approved" as const, approvable: false };
+  const running = { ...readyTask, startStatus: "running" as const, approvable: false };
+
+  it("the Tasks tab says the factory has it, with no button", () => {
+    renderIn(<TasksTab data={workspace({ tasks: [approved, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    // Filed under what it is waiting for — the factory, not a person.
+    expect(screen.getByText("Building (1)")).toBeTruthy();
+    expect(screen.queryByText(/^Ready \(/)).toBeNull();
+    expect(screen.getAllByText(/Approved — starting/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/ready to build —/)).toBeNull();
+  });
+
+  it("the Tasks tab names a live implementer instead of the start gate", () => {
+    renderIn(<TasksTab data={workspace({ tasks: [running, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getAllByText(/Implementer running/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/working on #198 now/)).toBeTruthy();
+  });
+
+  it("the Tree tab drops the button on the same task", async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.endsWith("/tree")) {
+        return Promise.resolve({
+          ...tree,
+          nodes: [{ ...tree.nodes[0]!, startStatus: "running", approvable: false }],
+        } as never);
+      }
+      return Promise.resolve({} as never);
+    });
+    renderIn(<DependencyTreeTab epicId="epic-250" onOpenGate={() => {}} />);
+    expect((await screen.findAllByText(/Implementer running/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("a task thread badges the run instead of offering Approve", () => {
+    renderIn(<ThreadsTab data={workspace({ tasks: [running, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getByText("Implementer running")).toBeTruthy();
+  });
+});
+
+/**
+ * The complaint this came from: a task at `factory:in-review` showed a badge
+ * and a Comment button, and nothing said the pipeline was waiting for a human
+ * to start the Reviewer. A state is not an instruction.
+ */
+describe("every card says what is expected next", () => {
+  const reviewStep = {
+    who: "you, then the Reviewer",
+    how: "This state starts nothing on its own. Start the Reviewer: it reads the draft PR and moves the task to In test.",
+    startRole: "reviewer" as const,
+    startLabel: "Start the Reviewer",
+    waitsOnPerson: true,
+  };
+  const inReview = {
+    ...readyTask,
+    state: "factory:in-review",
+    startStatus: "none" as const,
+    approvable: false,
+    nextStep: reviewStep,
+  };
+
+  it("the Tasks tab names the next actor and offers the role they must start", async () => {
+    renderIn(<TasksTab data={workspace({ tasks: [inReview, waitingTask] })} />);
+    expect(screen.getByText(/Next: you, then the Reviewer/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Start the Reviewer" }));
+    expect(api.post).toHaveBeenCalledWith("/api/issues/task-198/start-role", { role: "reviewer" });
+  });
+
+  it("offers no start button where the factory is the one working", () => {
+    const intake = {
+      ...readyTask,
+      state: "factory:intake",
+      startStatus: "none" as const,
+      approvable: false,
+      nextStep: { who: "the factory", how: "The Intake Analyst is drafting the spec.", startRole: null, startLabel: null, waitsOnPerson: false },
+    };
+    renderIn(<TasksTab data={workspace({ tasks: [intake] })} />);
+    expect(screen.getByText(/Next: the factory/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Start/ })).toBeNull();
+  });
+
+  it("reports a refused start beside the button that was pressed", async () => {
+    const { ApiError } = await import("../api.js");
+    renderIn(<TasksTab data={workspace({ tasks: [inReview] })} />);
+    vi.mocked(api.post).mockRejectedValueOnce(new ApiError(409, "a factory run is already live on #198"));
+    await userEvent.click(screen.getByRole("button", { name: "Start the Reviewer" }));
+    await waitFor(() => expect(screen.getByText(/already live on #198/)).toBeTruthy());
+  });
+
+  it("the Tree tab says the same thing on the same task", async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.endsWith("/tree")) {
+        return Promise.resolve({
+          ...tree,
+          nodes: [{ ...tree.nodes[0]!, state: "factory:in-review", startStatus: "none", approvable: false, nextStep: reviewStep }],
+        } as never);
+      }
+      return Promise.resolve({} as never);
+    });
+    renderIn(<DependencyTreeTab epicId="epic-250" onOpenGate={() => {}} />);
+    expect(await screen.findByText(/Next: you, then the Reviewer/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start the Reviewer" })).toBeTruthy();
   });
 });

@@ -26,6 +26,8 @@ function node(number: number, blockedBy: Array<{ number: number; open: boolean; 
     blocks: [],
     waiting: blockedBy.some((b) => b.open),
     agentHalted: false,
+    startStatus: "none",
+    nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false },
     approvable: false,
   };
 }
