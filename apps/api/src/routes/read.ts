@@ -27,6 +27,7 @@ import { buildAttention } from "../attention.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
+import { countThreadEntries } from "../threads.js";
 
 /** Read surface. Every query is scoped to the caller's orgs at the data layer. */
 export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
@@ -226,17 +227,18 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       ? await db.select().from(changeArtifacts).where(eq(changeArtifacts.changeId, change.id))
       : [];
 
-    const threadRows = await db
+    const threadBase = await db
       .select({
         id: threads.id,
         topicKind: threads.topicKind,
         topicRef: threads.topicRef,
         title: threads.title,
         status: threads.status,
-        entryCount: dsql<number>`(select count(*) from ${threadEntries} where ${threadEntries.threadId} = ${threads.id})`,
       })
       .from(threads)
       .where(eq(threads.epicIssueId, epic.id));
+    const threadCounts = await countThreadEntries(db, threadBase.map((t) => t.id));
+    const threadRows = threadBase.map((t) => ({ ...t, entryCount: threadCounts.get(t.id) ?? 0 }));
 
     const gateInfo = epic.factoryState ? GATE_STATES[epic.factoryState] : undefined;
     let myGate: { gate: string; label: string; amApprover: boolean; approvers: string[] } | null = null;
