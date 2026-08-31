@@ -20,10 +20,18 @@ const execFileAsync = promisify(execFile);
 
 export interface OpenspecJob {
   repoId: string;
+  /**
+   * An operator asked for a re-run on a repo that already has `openspec/`.
+   * Skips the "nothing to do" shortcut and pushes the scaffold files this
+   * repo is MISSING (see the write loop) — never over one it already has.
+   */
+  force?: boolean;
 }
 
 /** Same branch as the stub-files step, so both land in one enablement PR. */
 const ENABLE_BRANCH = "factory-console/enable-factory";
+/** A forced re-run keeps its own branch: the enablement PR is long merged. */
+const SYNC_BRANCH = "factory-console/sync-openspec";
 
 /** Ports the job needs; InstallationClient satisfies this structurally. */
 export interface OpenspecRepoClient {
@@ -60,12 +68,16 @@ export async function runOpenspecInit(
 
   await recordOpenspecStep(db, repo, "running", { version });
   try {
-    // Idempotence: already initialised on the default branch means nothing to do.
+    // Idempotence: already initialised on the default branch means nothing to
+    // do — unless an operator explicitly re-ran the step, which is how a repo
+    // set up against an older CLI picks up scaffold files added since.
     const existing = await client.listDir(owner, name, "openspec");
-    if (existing.length > 0) {
+    const initialised = existing.length > 0;
+    if (initialised && !job.force) {
       await recordOpenspecStep(db, repo, "ok", { found: true });
       return { found: true, pushed: 0, skipped: 0 };
     }
+    const branch = initialised ? SYNC_BRANCH : ENABLE_BRANCH;
 
     const dir = await mkdtemp(join(tmpdir(), "openspec-init-"));
     let files: Map<string, string>;
@@ -86,33 +98,49 @@ export async function runOpenspecInit(
 
     const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
     if (!headSha) throw new Error(`cannot resolve head of ${repo.defaultBranch}`);
-    if (!(await client.getBranchHeadSha(owner, name, ENABLE_BRANCH))) {
-      await client.createBranch(owner, name, ENABLE_BRANCH, headSha);
+    if (!(await client.getBranchHeadSha(owner, name, branch))) {
+      await client.createBranch(owner, name, branch, headSha);
     }
 
     let pushed = 0;
     let skipped = 0;
     for (const [path, content] of [...files.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      const current = await client.getFileAtRef(owner, name, path, ENABLE_BRANCH);
+      const current = await client.getFileAtRef(owner, name, path, branch);
       if (current?.content === content) {
+        skipped++;
+        continue;
+      }
+      // A forced re-run is additive: it fills in scaffold files this repo does
+      // not have and never rewrites one it does. Re-running to "refresh" must
+      // not quietly revert a hand-edited openspec/config.yaml — the operator
+      // asked for the newer scaffold, not for their edits back.
+      if (initialised && current) {
         skipped++;
         continue;
       }
       await client.putFile(owner, name, path, {
         message: `factory: add ${path} (openspec@${version} init)`,
         content,
-        branch: ENABLE_BRANCH,
+        branch,
         sha: current?.sha,
       });
       pushed++;
     }
 
-    const pr = await ensurePull(client, owner, name, repo.defaultBranch, version);
+    // A forced re-run that found nothing missing has no commits to open a PR
+    // against — GitHub would 422 on "No commits between". Say so instead. The
+    // enablement path still always asks: pushing nothing there means the files
+    // were already on the branch, and its PR link has to survive the re-run.
+    const pr =
+      !initialised || pushed > 0
+        ? await ensurePull(client, owner, name, repo.defaultBranch, version, branch)
+        : null;
     await recordOpenspecStep(db, repo, "ok", {
-      found: false,
+      found: initialised && pushed === 0,
       pushed,
       skipped,
       version,
+      ...(initialised ? { inSync: pushed === 0 } : {}),
       ...(pr ? { prNumber: pr.number, prUrl: pr.html_url } : {}),
     });
     return { found: false, pushed, skipped };
@@ -152,17 +180,18 @@ async function ensurePull(
   name: string,
   base: string,
   version: string,
+  head: string = ENABLE_BRANCH,
 ): Promise<{ number: number; html_url: string } | null> {
   try {
     return await client.createPull(owner, name, {
-      title: "Initialise OpenSpec",
-      head: ENABLE_BRANCH,
+      title: head === ENABLE_BRANCH ? "Initialise OpenSpec" : "Sync the OpenSpec scaffold",
+      head,
       base,
       body: OPENSPEC_PR_BODY(version),
     });
   } catch (e) {
     if (e instanceof GitHubHttpError && e.status === 422) {
-      const open = (await client.listPulls(owner, name)).find((p) => p.state === "open" && p.head.ref === ENABLE_BRANCH);
+      const open = (await client.listPulls(owner, name)).find((p) => p.state === "open" && p.head.ref === head);
       return open ? { number: open.number, html_url: open.html_url } : null;
     }
     throw e;

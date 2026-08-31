@@ -797,7 +797,10 @@ function RepoOnboarding({
   }, [setup]);
 
   const run = useMutation({
-    mutationFn: (path: string) => api.post<Record<string, unknown>>(path),
+    mutationFn: (arg: string | { path: string; body?: unknown }) =>
+      typeof arg === "string"
+        ? api.post<Record<string, unknown>>(arg)
+        : api.post<Record<string, unknown>>(arg.path, arg.body),
     onSuccess: () => {
       setError(null);
       onChanged();
@@ -916,7 +919,16 @@ function RepoOnboarding({
           >
             <div className="check-row">
               <span style={{ flex: 1 }}>
-                Create the 14 <code>factory:*</code> labels (idempotent; fixes drift).
+                Create the <code>factory:*</code> label set (idempotent; fixes drift). Re-run after a factory upgrade
+                adds a state — the newest is <code>factory:on-epic</code>.
+                {typeof repo.steps["labels"]?.detail["created"] === "number" && (
+                  <span className="muted">
+                    {" "}
+                    · last run: {String(repo.steps["labels"]!.detail["found"] ?? 0)} current,{" "}
+                    {String(repo.steps["labels"]!.detail["created"])} created,{" "}
+                    {String(repo.steps["labels"]!.detail["fixed"] ?? 0)} corrected
+                  </span>
+                )}
               </span>
               <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/labels`)} disabled={run.isPending}>
                 Run
@@ -1014,10 +1026,27 @@ function RepoOnboarding({
                 branch; no terminal needed.
               </span>
               <button
-                onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/openspec`)}
+                onClick={() =>
+                  run.mutate({
+                    path: `/api/repos/${repo.repoId}/onboarding/openspec`,
+                    // Already installed: only an explicit re-run gets past the
+                    // "nothing to do" shortcut, and it only adds files this
+                    // repo is missing.
+                    body: repo.steps["openspec"]?.status === "ok" ? { force: true } : undefined,
+                  })
+                }
                 disabled={run.isPending || ["pending", "running"].includes(repo.steps["openspec"]?.status ?? "")}
+                title={
+                  repo.steps["openspec"]?.status === "ok"
+                    ? "Re-runs the scaffold and opens a PR with any file this repo is missing. Files you already have are never rewritten."
+                    : undefined
+                }
               >
-                {["pending", "running"].includes(repo.steps["openspec"]?.status ?? "") ? "Installing…" : "Install"}
+                {["pending", "running"].includes(repo.steps["openspec"]?.status ?? "")
+                  ? "Installing…"
+                  : repo.steps["openspec"]?.status === "ok"
+                    ? "Re-run"
+                    : "Install"}
               </button>
             </div>
             {repo.steps["openspec"]?.status === "failed" && typeof repo.steps["openspec"]?.detail["error"] === "string" && (
@@ -1055,20 +1084,40 @@ function RepoOnboarding({
                     settings. No GitHub Actions workflows.
                   </>
                 )}{" "}
-                Merging the PR is the human act that enables the factory.
+                Merging the PR is the human act that enables the factory.{" "}
+                {repo.steps["stubs"]?.status === "ok" && (
+                  <span className="muted">
+                    Re-run to pick up config the Console has added since setup (a new branch-policy key, say). It opens a
+                    PR with only what is missing — values this repo already sets are never overwritten.
+                  </span>
+                )}
               </span>
-              <button onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)} disabled={run.isPending}>
-                Open PR
+              <button
+                onClick={() => run.mutate(`/api/repos/${repo.repoId}/onboarding/stubs`)}
+                disabled={run.isPending}
+                title={
+                  repo.steps["stubs"]?.status === "ok"
+                    ? "Compares this repo's factory config against what the Console ships now and opens a PR for the difference."
+                    : undefined
+                }
+              >
+                {repo.steps["stubs"]?.status === "ok" ? "Sync config" : "Open PR"}
               </button>
             </div>
             {typeof repo.steps["stubs"]?.detail["prUrl"] === "string" && (
               <p className="muted">
                 →{" "}
                 <a href={repo.steps["stubs"]!.detail["prUrl"] as string} target="_blank" rel="noreferrer">
-                  enablement PR
+                  {Array.isArray(repo.steps["stubs"]!.detail["synced"]) ? "config sync PR" : "enablement PR"}
                 </a>{" "}
                 (merge it on GitHub)
+                {Array.isArray(repo.steps["stubs"]!.detail["synced"]) && (
+                  <> · adds {(repo.steps["stubs"]!.detail["synced"] as string[]).join(", ")}</>
+                )}
               </p>
+            )}
+            {repo.steps["stubs"]?.detail["inSync"] === true && (
+              <p className="muted">✓ every factory config file on the default branch is current — nothing to add</p>
             )}
           </SetupStep>
 

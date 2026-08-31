@@ -222,22 +222,27 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
    * pinned upstream CLI in a scratch directory and pushes the scaffold onto the
    * enablement branch, so it rides the same human-merged PR as the stubs.
    */
-  app.post<{ Params: { id: string } }>("/api/repos/:id/onboarding/openspec", async (req, reply) => {
+  app.post<{ Params: { id: string }; Body?: { force?: boolean } }>("/api/repos/:id/onboarding/openspec", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const target = await loadAdminRepo(deps, ctx, req.params.id, reply);
     if (!target) return;
     const { repo, client, owner, name } = target;
+    const force = req.body?.force === true;
     try {
-      // Idempotence: initialised on the default branch means nothing to queue.
+      // Idempotence: initialised on the default branch means nothing to queue
+      // — unless the operator explicitly asked for a re-run. `openspec init`
+      // is additive (it refreshes the scaffold and leaves changes/ alone), so
+      // a deliberate re-run is how a repo picks up a newer scaffold instead
+      // of being told "nothing to do" forever.
       const existing = await client.listDir(owner, name, "openspec");
-      if (existing.length > 0) {
+      if (existing.length > 0 && !force) {
         await recordStep(deps, repo, "openspec", "ok", { found: true });
         return { ok: true, found: true, message: "openspec/ already on the repo — nothing to do" };
       }
-      await recordStep(deps, repo, "openspec", "pending", { queuedAt: new Date().toISOString() });
-      await deps.openspecQueue.add("init", { repoId: repo.id }, { removeOnComplete: 100, removeOnFail: 100 });
-      return { ok: true, queued: true };
+      await recordStep(deps, repo, "openspec", "pending", { queuedAt: new Date().toISOString(), ...(force ? { forced: true } : {}) });
+      await deps.openspecQueue.add("init", { repoId: repo.id, ...(force ? { force: true } : {}) }, { removeOnComplete: 100, removeOnFail: 100 });
+      return { ok: true, queued: true, ...(force ? { forced: true } : {}) };
     } catch (err) {
       await recordStep(deps, repo, "openspec", "failed", { error: (err as Error).message });
       return reply.code(502).send({ error: (err as Error).message });
@@ -252,6 +257,10 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
     if (!target) return;
     const { repo, org, client, owner, name } = target;
     const actions = githubActionsEnabled(org.orchestrator);
+    // Whether the repo is already factory-enabled on its default branch. An
+    // enabled repo is not "nothing to do": re-running reconciles config drift
+    // (a policy key added since setup) additively — see reconcileStubFile.
+    let enabled = false;
 
     try {
       // Idempotence: re-running re-verifies rather than duplicating the PR —
@@ -265,10 +274,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
       if (actions) {
         const existingStub = await client.getFileAtRef(owner, name, ".github/workflows/factory-pipeline.yml");
         if (existingStub && stubIsCurrent(existingStub.content)) {
-          await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: true });
-          return { ok: true, found: true, message: "stub already on the repo — nothing to do" };
-        }
-        if (existingStub) {
+          enabled = true;
+        } else if (existingStub) {
           const patched = rewriteCallerStub(existingStub.content);
           if (patched === existingStub.content) {
             await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: true });
@@ -298,10 +305,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         }
       } else {
         const existingCfg = await client.getFileAtRef(owner, name, ".github/factory-orchestrator.json");
-        if (existingCfg && parseRepoOrchestratorEngine(existingCfg.content) === "langgraph") {
-          await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: false });
-          return { ok: true, found: true, message: "Software Factory orchestrator already claimed on this repo — nothing to do" };
-        }
+        enabled = !!existingCfg && parseRepoOrchestratorEngine(existingCfg.content) === "langgraph";
       }
 
       const approverRows = await db.select().from(gateAssignments).where(eq(gateAssignments.estateId, repo.estateId));
@@ -315,33 +319,65 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         release: approversFromEstate("release"),
       };
 
-      const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
-      if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
-      const branch = "factory-console/enable-factory";
-      const existingBranch = await client.getBranchHeadSha(owner, name, branch);
-      if (!existingBranch) await client.createBranch(owner, name, branch, headSha);
-
       const files = stubFiles(approvers, org.orchestrator, {
         defaultBranch: org.defaultBranch ?? repo.defaultBranch,
         stagingBranch: org.stagingBranch,
       });
+
+      // On an enabled repo only the drift travels: each file is reconciled
+      // against the DEFAULT branch and written only where the Console has
+      // something to add. Nothing the repo already set is overwritten, so
+      // this is safe to click at any time.
+      const writes: Array<[string, string]> = [];
       for (const [path, content] of Object.entries(files)) {
+        if (!enabled) {
+          writes.push([path, content]);
+          continue;
+        }
+        const onDefault = await client.getFileAtRef(owner, name, path);
+        const merged = reconcileStubFile(onDefault?.content ?? null, content);
+        if (merged !== null) writes.push([path, merged]);
+      }
+
+      if (enabled && writes.length === 0) {
+        await recordStep(deps, repo, "stubs", "ok", { found: true, githubActions: actions, inSync: true });
+        return {
+          ok: true,
+          found: true,
+          inSync: true,
+          message: "every factory config file on the default branch is current — nothing to add",
+        };
+      }
+
+      const headSha = await client.getBranchHeadSha(owner, name, repo.defaultBranch);
+      if (!headSha) return reply.code(409).send({ error: `cannot resolve head of ${repo.defaultBranch}` });
+      const branch = enabled ? "factory-console/sync-config" : "factory-console/enable-factory";
+      const existingBranch = await client.getBranchHeadSha(owner, name, branch);
+      if (!existingBranch) await client.createBranch(owner, name, branch, headSha);
+
+      for (const [path, content] of writes) {
         const current = await client.getFileAtRef(owner, name, path, branch);
         if (current?.content === content) continue;
         await client.putFile(owner, name, path, {
-          message: `factory: add ${path}`,
+          message: `factory: ${enabled ? "sync" : "add"} ${path}`,
           content,
           branch,
           sha: current?.sha,
         });
       }
 
+      const paths = writes.map(([path]) => path);
       const pr = await ensurePull(client, owner, name, branch, repo.defaultBranch, {
-        title: "Enable the software factory",
-        body: stubPrBody(actions),
+        title: enabled ? "Sync factory config" : "Enable the software factory",
+        body: enabled ? syncPrBody(paths) : stubPrBody(actions),
       });
-      await recordStep(deps, repo, "stubs", "ok", { prNumber: pr.number, prUrl: pr.html_url, githubActions: actions });
-      return { ok: true, prNumber: pr.number, prUrl: pr.html_url };
+      await recordStep(deps, repo, "stubs", "ok", {
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+        githubActions: actions,
+        ...(enabled ? { synced: paths } : {}),
+      });
+      return { ok: true, prNumber: pr.number, prUrl: pr.html_url, ...(enabled ? { synced: paths } : {}) };
     } catch (err) {
       await recordStep(deps, repo, "stubs", "failed", { error: (err as Error).message });
       return reply.code(502).send({ error: (err as Error).message });
@@ -998,7 +1034,7 @@ async function ensurePull(
 }
 
 /** The consuming repo's whole footprint (FACTORY.md §10), templated. */
-function stubFiles(
+export function stubFiles(
   approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] },
   consoleEngine: string,
   branches: { defaultBranch: string; stagingBranch: string | null },
@@ -1089,10 +1125,11 @@ jobs:
     ".github/factory-branches.json": `${JSON.stringify(
       {
         _comment:
-          "Integration-branch policy (FACTORY.md §6a). Implementation PRs merge to `staging`; the factory cuts the branch from the default branch on first need when auto_create is on.",
+          "Integration-branch policy (FACTORY.md §6a) and epic-branch policy (§6b). Implementation PRs merge to `staging`; the factory cuts the branch from the default branch on first need when auto_create is on. With `epics: true` each epic also gets its own factory/epic-<epic-issue> branch: its spec, design and task PRs merge there first, so epics are verified in isolation, and one integration PR carries a finished epic to `staging`.",
         staging: branches.stagingBranch ?? "staging",
         required: true,
         auto_create: true,
+        epics: true,
       },
       null,
       2,
@@ -1169,17 +1206,88 @@ body:
   return files;
 }
 
+/**
+ * Additive reconcile of one config file: what the Console would write now,
+ * folded onto what the repo already has, **without ever changing a value the
+ * repo already set**.
+ *
+ * Re-running the stub step on an enabled repo is how a new policy key reaches
+ * an estate that was set up before the key existed (`epics` in
+ * factory-branches.json, FACTORY.md §6b). That is only safe if it cannot
+ * clobber local edits: a hand-tuned model chain, a hand-picked approver list
+ * and a renamed integration branch must all survive. So:
+ *
+ * - file missing → write it whole;
+ * - both sides parse as JSON objects → recursively add only the keys the repo
+ *   does not have (arrays are values, never merged element-wise);
+ * - anything else (YAML stubs, an issue template, a non-object JSON) → leave
+ *   it alone. Repairing a workflow stub is `rewriteCallerStub`'s job, not
+ *   this one's.
+ *
+ * Returns the content to write, or null when there is nothing to add.
+ */
+export function reconcileStubFile(existing: string | null, wanted: string): string | null {
+  if (existing === null) return wanted;
+  if (existing === wanted) return null;
+
+  const parse = (text: string): Record<string, unknown> | null => {
+    try {
+      const v: unknown = JSON.parse(text);
+      return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  const have = parse(existing);
+  const want = parse(wanted);
+  if (!have || !want) return null;
+
+  let added = false;
+  const merge = (into: Record<string, unknown>, from: Record<string, unknown>): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...into };
+    for (const [k, v] of Object.entries(from)) {
+      if (!(k in out)) {
+        out[k] = v;
+        added = true;
+        continue;
+      }
+      const a = out[k];
+      const isPlain = (x: unknown): x is Record<string, unknown> =>
+        x !== null && typeof x === "object" && !Array.isArray(x);
+      if (isPlain(a) && isPlain(v)) out[k] = merge(a, v);
+    }
+    return out;
+  };
+  const merged = merge(have, want);
+  return added ? `${JSON.stringify(merged, null, 2)}\n` : null;
+}
+
+/** The re-run PR: what the Console added to an already-enabled repo, and what it did not touch. */
+function syncPrBody(paths: string[]): string {
+  return `The factory config on this repo predates part of what the Console now ships. This PR adds the missing pieces and nothing else.
+
+${paths.map((p) => `- \`${p}\``).join("\n")}
+
+**Additive only.** Values this repo already sets are left exactly as they are — a renamed integration branch, a hand-tuned model chain, a hand-picked approver list all survive. Only keys that were absent were added, so the diff is the whole change.
+
+Merging it applies the new settings; nothing takes effect before that.
+
+---
+_Generated by [Claude Code](https://claude.ai/code)_
+`;
+}
+
 function stubPrBody(actions: boolean): string {
   const files = actions
     ? `- \`.github/workflows/factory-pipeline.yml\` — caller stub wiring GitHub events to the factory's reusable pipeline (permissions block intact — do not remove it).
 - \`.github/workflows/factory-branch-guard.yml\` — files a factory:incident issue if a commit lands on the default branch without a PR.
-- \`.github/factory-branches.json\` — integration-branch policy: implementation PRs merge to staging, which the factory cuts from the default branch on first need.
+- \`.github/factory-branches.json\` — branch policy: implementation PRs merge to staging (cut from the default branch on first need), and \`epics: true\` gives every epic its own factory/epic-<n> branch that carries its spec, design and task PRs.
 - \`.github/factory-orchestrator.json\` — engine \`github-actions\` (this org's Console setting).
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.`
-    : `- \`.github/factory-branches.json\` — integration-branch policy: implementation PRs merge to staging, which the factory cuts from the default branch on first need.
+    : `- \`.github/factory-branches.json\` — branch policy: implementation PRs merge to staging (cut from the default branch on first need), and \`epics: true\` gives every epic its own factory/epic-<n> branch that carries its spec, design and task PRs.
 - \`.github/factory-orchestrator.json\` — claims this repo for the Software Factory orchestrator (\`engine: langgraph\`). GitHub Actions is not used.
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
