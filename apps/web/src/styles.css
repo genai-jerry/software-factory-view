@@ -1079,5 +1079,8 @@ ol.run-events time {
    receipt, same error text wherever an approval is taken. */
 .approve-action { display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .approve-error { color: var(--red); font-size: 0.8rem; }
+/* What the start gate says when there is nothing to press: approved and
+   waiting for the run, or a run already live. */
+.start-status { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
 .dep-composer { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .dep-composer textarea { width: 100%; resize: vertical; }

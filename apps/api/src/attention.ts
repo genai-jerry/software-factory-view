@@ -1,7 +1,8 @@
-import { GATE_STATES } from "@console/core";
+import { GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
+import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
 
 /**
  * The attention queue — a query, not a table (spec 02 §3), re-ranked so an
@@ -78,6 +79,15 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
   // it halted in, and the agent's stuck question.
   const blockedIds = openFactoryIssues.filter((r) => r.issue.factoryState === "factory:blocked").map((r) => r.issue.id);
   const blockedMeta = await loadBlockedMeta(deps, blockedIds);
+
+  // A task at factory:ready has not necessarily kept its start gate open: the
+  // state label stays put while the approval is routed and while the
+  // implementer runs (core/start-gate.ts). The queue asks for an action, so it
+  // lists only the tasks that still take one.
+  const startFacts = await loadTaskStartFacts(
+    deps,
+    openFactoryIssues.filter((r) => r.issue.factoryState === READY_STATE).map((r) => r.issue.id),
+  );
 
   // Fast-track issues have no gate — their one human step is merging the PR
   // the fast lane opened. Look those PRs up in one batch so the queue can
@@ -175,7 +185,8 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
     };
     if (issue.kind === "epic" && (state === "factory:spec-ready" || state === "factory:design-ready")) {
       entries.push({ kind: "gate", rank: 2, whyYou: `${gateInfo.label} awaits approval — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });
-    } else if (issue.kind === "task" && state === "factory:ready") {
+    } else if (issue.kind === "task" && state === READY_STATE) {
+      if (!startStatusTakesApproval(startStatusOf(issue, startFacts.get(issue.id)))) continue;
       entries.push({ kind: "task-start", rank: 3, whyYou: `task awaits an implementation start — ${whyBase}`, ...base, link: `/epics/${epicId}?tab=tasks` });
     } else if (issue.kind === "epic" && state === "factory:in-staging") {
       entries.push({ kind: "merge", rank: 2, whyYou: `release train is green on staging and awaits promotion — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });

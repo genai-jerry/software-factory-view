@@ -1,0 +1,61 @@
+import { READY_STATE, taskStartStatus, type TaskStartStatus } from "@console/core";
+import { comments, issueStateHistory } from "@console/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import type { AppDeps } from "./context.js";
+
+/**
+ * The two projected facts that tell an untouched start gate from an approved
+ * one, batched for a whole epic's tasks: the newest `Approved` comment on each
+ * task, and when each task last entered `factory:ready`.
+ *
+ * Both are already projected — the comment by `projectComment` (which flags
+ * approvals) and the transition by `projectLabelEvent`. Nothing new is stored;
+ * the Console was simply not reading them when it decided to draw the button.
+ */
+export interface TaskStartFacts {
+  approvedAt: Date | null;
+  readySince: Date | null;
+}
+
+export async function loadTaskStartFacts(deps: AppDeps, issueIds: string[]): Promise<Map<string, TaskStartFacts>> {
+  const { db } = deps.dbh;
+  const facts = new Map<string, TaskStartFacts>();
+  if (issueIds.length === 0) return facts;
+
+  const approvals = await db
+    .select({ issueId: comments.issueId, at: comments.ghCreatedAt })
+    .from(comments)
+    .where(and(inArray(comments.issueId, issueIds), eq(comments.isApproval, true)))
+    .orderBy(desc(comments.ghCreatedAt));
+  const readyEvents = await db
+    .select({ issueId: issueStateHistory.issueId, at: issueStateHistory.occurredAt })
+    .from(issueStateHistory)
+    .where(and(inArray(issueStateHistory.issueId, issueIds), eq(issueStateHistory.toState, READY_STATE)))
+    .orderBy(desc(issueStateHistory.occurredAt));
+
+  for (const id of issueIds) facts.set(id, { approvedAt: null, readySince: null });
+  // Newest first, so the first row per issue wins.
+  for (const row of approvals) {
+    const f = facts.get(row.issueId)!;
+    if (!f.approvedAt) f.approvedAt = row.at;
+  }
+  for (const row of readyEvents) {
+    const f = facts.get(row.issueId)!;
+    if (!f.readySince) f.readySince = row.at;
+  }
+  return facts;
+}
+
+/** The status of one task, given its row and the batch above. */
+export function startStatusOf(
+  issue: { state: string; factoryState: string | null; labels: string[] },
+  facts: TaskStartFacts | undefined,
+): TaskStartStatus {
+  return taskStartStatus({
+    open: issue.state === "open",
+    state: issue.factoryState,
+    labels: issue.labels,
+    approvedAt: facts?.approvedAt ?? null,
+    readySince: facts?.readySince ?? null,
+  });
+}

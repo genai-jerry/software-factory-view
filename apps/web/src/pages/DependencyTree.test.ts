@@ -26,6 +26,7 @@ function node(number: number, blockedBy: Array<{ number: number; open: boolean; 
     blocks: [],
     waiting: blockedBy.some((b) => b.open),
     agentHalted: false,
+    startStatus: "none",
     approvable: false,
   };
 }

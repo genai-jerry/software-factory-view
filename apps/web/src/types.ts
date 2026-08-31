@@ -297,7 +297,9 @@ export interface EpicWorkspace {
     htmlUrl: string;
     blockedBy: DepNode[];
     blocks: DepNode[];
-    /** Open and at `factory:ready`: the one Approve button applies to it. */
+    /** Where this task stands at the start gate — see `startStatusLabel`. */
+    startStatus: TaskStartStatus;
+    /** The start gate is open AND still takes an approval: draw the button. */
     approvable: boolean;
   }>;
   rollup: TaskRollup;
@@ -424,6 +426,13 @@ export interface TreeDep {
   inTree: boolean;
 }
 
+/**
+ * The start gate has three moments and one of them wants a button — the API
+ * derives this from the run marker and the approval comment, because the
+ * `factory:ready` label alone covers all three (see core/start-gate.ts).
+ */
+export type TaskStartStatus = "none" | "awaiting" | "approved" | "running" | "stalled";
+
 export interface TreeNode {
   id: string;
   number: number;
@@ -438,6 +447,7 @@ export interface TreeNode {
   blocks: TreeDep[];
   waiting: boolean;
   agentHalted: boolean;
+  startStatus: TaskStartStatus;
   approvable: boolean;
 }
 

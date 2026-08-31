@@ -8,6 +8,7 @@ import type {
   EpicWorkspace,
   GatePanelData,
   Me,
+  TaskStartStatus,
   ThreadDetail,
   TimelineEvent,
 } from "../types.js";
@@ -19,7 +20,7 @@ import { GitHubLink } from "../components/GitHubLink.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { Sheet } from "../components/Sheet.js";
 import { ActionBar } from "../components/ActionBar.js";
-import { APPROVE_LABEL, TaskApproveButton } from "../components/Approve.js";
+import { APPROVE_LABEL, START_STATUS_LABEL, startStatusTakesApproval, TaskStartGate } from "../components/Approve.js";
 import { HaltBar } from "../components/HaltBar.js";
 import { peopleLabel, factoryShort } from "../lib/labels.js";
 
@@ -278,6 +279,7 @@ function StageRail({
 }
 
 function OverviewTab({ data }: { data: EpicWorkspace }) {
+  const awaitingApproval = data.tasks.filter((t) => t.approvable).length;
   return (
     <div>
       <div className="card">
@@ -292,7 +294,19 @@ function OverviewTab({ data }: { data: EpicWorkspace }) {
           <h3>Task rollup</h3>
           <div className="row">
             <span className="badge">{data.rollup.done} done</span>
-            <span className="badge task-start">{data.rollup.ready} ready</span>
+            {/* The rollup counts the state; the amber only belongs on the
+                tasks still waiting on a person, not on the ones an
+                implementer already has. */}
+            <span
+              className={`badge ${awaitingApproval > 0 ? "task-start" : ""}`}
+              title={
+                awaitingApproval > 0
+                  ? `${awaitingApproval} waiting on an implementation start`
+                  : "all approved — the factory has them"
+              }
+            >
+              {data.rollup.ready} ready
+            </span>
             <span className="badge">{data.rollup.inReview} in review</span>
             <span className="badge">{data.rollup.inTest} in test</span>
             {data.rollup.blocked > 0 && <span className="badge blocked">{data.rollup.blocked} blocked</span>}
@@ -604,16 +618,23 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
  * first, and a ready task with no button there reads as "nothing to do".
  */
 export function TasksTab({ data }: { data: EpicWorkspace }) {
-  const cols: Array<{ title: string; match: (s: string | null, open: boolean) => boolean }> = [
-    { title: "Waiting", match: (s, open) => open && (s === null || s === "factory:design-approved") },
-    { title: "Ready", match: (s, open) => open && s === "factory:ready" },
-    { title: "In review", match: (s, open) => open && s === "factory:in-review" },
-    { title: "In test", match: (s, open) => open && s === "factory:in-test" },
-    { title: "Ship/Done", match: (s, open) => !open || s === "factory:ready-to-ship" || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed" },
-    { title: "Blocked", match: (s, open) => open && s === "factory:blocked" },
+  // `factory:ready` is two columns, not one: a task nobody has approved is
+  // waiting on a person, and one that has been approved is waiting on the
+  // factory. Filed under one heading, the second kind reads as work still
+  // owed — which is how the same task got approved twice.
+  type Task = EpicWorkspace["tasks"][number];
+  const cols: Array<{ title: string; match: (t: Task) => boolean }> = [
+    { title: "Waiting", match: (t) => t.open && (t.state === null || t.state === "factory:design-approved") },
+    { title: "Ready", match: (t) => t.open && t.state === "factory:ready" && t.approvable },
+    { title: "Building", match: (t) => t.open && t.state === "factory:ready" && !t.approvable },
+    { title: "In review", match: (t) => t.open && t.state === "factory:in-review" },
+    { title: "In test", match: (t) => t.open && t.state === "factory:in-test" },
+    { title: "Ship/Done", match: (t) => !t.open || t.state === "factory:ready-to-ship" || t.state === "factory:on-epic" || t.state === "factory:in-staging" || t.state === "factory:deployed" },
+    { title: "Blocked", match: (t) => t.open && t.state === "factory:blocked" },
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;
   const approvable = data.tasks.filter((t) => t.approvable);
+  const started = data.tasks.filter((t) => t.startStatus === "approved" || t.startStatus === "running");
   return (
     <div className="tasks-list">
       {approvable.length > 0 && (
@@ -624,8 +645,14 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
             : `waiting on ${data.startGate.approvers.map((a) => `@${a}`).join(", ")} to approve.`}
         </div>
       )}
+      {approvable.length === 0 && started.length > 0 && (
+        <div className="banner info">
+          {started.length} approved task{started.length === 1 ? "" : "s"} in the factory&apos;s hands —{" "}
+          {started.map((t) => `#${t.number}`).join(", ")}. Nothing to approve.
+        </div>
+      )}
       {cols.map((c) => {
-        const items = data.tasks.filter((t) => c.match(t.state, t.open));
+        const items = data.tasks.filter((t) => c.match(t));
         if (items.length === 0) return null;
         return (
           <div key={c.title}>
@@ -640,7 +667,7 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
                   <span
                     className={`badge ${!t.open ? "merge" : t.state === "factory:blocked" ? "blocked" : t.approvable ? "task-start" : "state"}`}
                   >
-                    {t.open ? peopleLabel(t.state) : "Done"}
+                    {t.open ? (t.startStatus === "none" ? peopleLabel(t.state) : START_STATUS_LABEL[t.startStatus]) : "Done"}
                   </span>
                   {t.blockedBy.filter((d) => d.open).length > 0 && (
                     <span title={t.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>
@@ -654,10 +681,15 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
                   )}
                   <GitHubLink href={t.htmlUrl} />
                 </div>
-                {t.approvable && (
+                {t.startStatus !== "none" && (
                   <div className="dep-actions">
-                    <TaskApproveButton epicId={data.epic.id} taskId={t.id} startGate={data.startGate} />
-                    <span className="muted">Starts the implementer on #{t.number}.</span>
+                    <TaskStartGate
+                      epicId={data.epic.id}
+                      taskId={t.id}
+                      number={t.number}
+                      startGate={data.startGate}
+                      status={t.startStatus}
+                    />
                   </div>
                 )}
               </div>
@@ -679,11 +711,11 @@ export function ThreadsTab({ data }: { data: EpicWorkspace }) {
    * the Tasks list — the agent's "an implementer can start" note is exactly
    * where a reader asks what to do next, and Resolve is not that answer.
    */
-  const approvableFor = (topicRef: string) => {
+  const startGateTaskFor = (topicRef: string) => {
     const m = /^task\/(\d+)$/.exec(topicRef);
     if (!m) return null;
     const task = data.tasks.find((t) => t.number === Number(m[1]));
-    return task?.approvable ? task : null;
+    return task && task.startStatus !== "none" ? task : null;
   };
   return (
     <div>
@@ -693,7 +725,7 @@ export function ThreadsTab({ data }: { data: EpicWorkspace }) {
           threadId={t.id}
           summary={t}
           epicId={data.epic.id}
-          approvableTask={approvableFor(t.topicRef)}
+          startGateTask={startGateTaskFor(t.topicRef)}
           startGate={data.startGate}
           expanded={openThread === t.id}
           onToggle={() => setOpenThread(openThread === t.id ? null : t.id)}
@@ -712,7 +744,7 @@ function ThreadCard({
   threadId,
   summary,
   epicId,
-  approvableTask,
+  startGateTask,
   startGate,
   expanded,
   onToggle,
@@ -720,7 +752,7 @@ function ThreadCard({
   threadId: string;
   summary: { title: string; status: string; entryCount: number; topicRef: string };
   epicId: string;
-  approvableTask: { id: string; number: number } | null;
+  startGateTask: { id: string; number: number; startStatus: TaskStartStatus } | null;
   startGate: EpicWorkspace["startGate"];
   expanded: boolean;
   onToggle: () => void;
@@ -752,13 +784,23 @@ function ThreadCard({
         <h3 style={{ margin: 0 }}>
           {summary.status === "resolved" ? "✓ " : ""}
           {summary.title} <span className="muted">({summary.entryCount})</span>{" "}
-          {approvableTask && <span className="badge task-start">Ready to build</span>}
+          {startGateTask && (
+            <span className={`badge ${startGateTask.startStatus === "running" ? "state" : "task-start"}`}>
+              {START_STATUS_LABEL[startGateTask.startStatus]}
+            </span>
+          )}
         </h3>
         <span className="row" onClick={(e) => e.stopPropagation()}>
           {/* Collapsed, the button rides the header; expanded, it sits in the
               composer row beside Resolve. One Approve on screen either way. */}
-          {!expanded && approvableTask && (
-            <TaskApproveButton epicId={epicId} taskId={approvableTask.id} startGate={startGate} />
+          {!expanded && startGateTask && startStatusTakesApproval(startGateTask.startStatus) && (
+            <TaskStartGate
+              epicId={epicId}
+              taskId={startGateTask.id}
+              number={startGateTask.number}
+              startGate={startGate}
+              status={startGateTask.startStatus}
+            />
           )}
           <span className="muted" style={{ cursor: "pointer" }} onClick={onToggle}>
             {expanded ? "▾" : "▸"}
@@ -792,7 +834,15 @@ function ThreadCard({
                 private note (never posted)
               </label>
               <span style={{ flex: 1 }} />
-              {approvableTask && <TaskApproveButton epicId={epicId} taskId={approvableTask.id} startGate={startGate} />}
+              {startGateTask && (
+                <TaskStartGate
+                  epicId={epicId}
+                  taskId={startGateTask.id}
+                  number={startGateTask.number}
+                  startGate={startGate}
+                  status={startGateTask.startStatus}
+                />
+              )}
               <button
                 onClick={() => setStatus.mutate(summary.status === "open" ? "resolved" : "open")}
                 title="Closes this conversation in the Console — it does not approve anything"

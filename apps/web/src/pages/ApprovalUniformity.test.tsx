@@ -29,6 +29,7 @@ const readyTask = {
   htmlUrl: "https://github.com/acme/app/issues/198",
   blockedBy: [],
   blocks: [],
+  startStatus: "awaiting" as const,
   approvable: true,
 };
 
@@ -38,6 +39,7 @@ const waitingTask = {
   number: 199,
   title: "Single Appointment column",
   state: null,
+  startStatus: "none" as const,
   approvable: false,
 };
 
@@ -100,6 +102,7 @@ const tree: EpicTree = {
       blocks: [],
       waiting: false,
       agentHalted: false,
+      startStatus: "awaiting",
       approvable: true,
     },
   ],
@@ -175,11 +178,73 @@ describe("the start gate reads the same in every tab", () => {
     expect(screen.getByText(/waiting on @bob to approve/)).toBeTruthy();
   });
 
+  it("the top-of-workspace prompt counts only tasks that still take an approval", () => {
+    renderIn(<TasksTab data={workspace()} />);
+    expect(screen.getByText(/1 task ready to build/)).toBeTruthy();
+  });
+
+  it("offers the button again when an approval went unrouted", async () => {
+    const stalled = { ...readyTask, startStatus: "stalled" as const, approvable: true };
+    renderIn(<TasksTab data={workspace({ tasks: [stalled, waitingTask] })} />);
+    expect(screen.getByText(/no implementer started/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(api.post).toHaveBeenCalledWith("/api/issues/task-198/approve");
+  });
+
   it("reports a refused approval beside the button that was pressed", async () => {
     const { ApiError } = await import("../api.js");
     renderIn(<TasksTab data={workspace()} />);
     vi.mocked(api.post).mockRejectedValueOnce(new ApiError(403, "starting implementers is assigned to: bob"));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(screen.getByText(/assigned to: bob/)).toBeTruthy());
+  });
+});
+
+/**
+ * The bug this suite grew for: `factory:ready` stays on the task while the
+ * approval is routed and while the implementer runs, so the Console kept
+ * offering Approve on a task that had already been approved — a second press
+ * posts a second `Approved`, and the router starts a second implementer.
+ */
+describe("an approved task stops asking to be approved", () => {
+  const approved = { ...readyTask, startStatus: "approved" as const, approvable: false };
+  const running = { ...readyTask, startStatus: "running" as const, approvable: false };
+
+  it("the Tasks tab says the factory has it, with no button", () => {
+    renderIn(<TasksTab data={workspace({ tasks: [approved, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    // Filed under what it is waiting for — the factory, not a person.
+    expect(screen.getByText("Building (1)")).toBeTruthy();
+    expect(screen.queryByText(/^Ready \(/)).toBeNull();
+    expect(screen.getAllByText(/Approved — starting/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/ready to build —/)).toBeNull();
+  });
+
+  it("the Tasks tab names a live implementer instead of the start gate", () => {
+    renderIn(<TasksTab data={workspace({ tasks: [running, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getAllByText(/Implementer running/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/working on #198 now/)).toBeTruthy();
+  });
+
+  it("the Tree tab drops the button on the same task", async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.endsWith("/tree")) {
+        return Promise.resolve({
+          ...tree,
+          nodes: [{ ...tree.nodes[0]!, startStatus: "running", approvable: false }],
+        } as never);
+      }
+      return Promise.resolve({} as never);
+    });
+    renderIn(<DependencyTreeTab epicId="epic-250" onOpenGate={() => {}} />);
+    expect((await screen.findAllByText(/Implementer running/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("a task thread badges the run instead of offering Approve", () => {
+    renderIn(<ThreadsTab data={workspace({ tasks: [running, waitingTask] })} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getByText("Implementer running")).toBeTruthy();
   });
 });

@@ -36,9 +36,12 @@ export const FACTORY_LABELS = [
  */
 export const RELEASE_KIND_LABEL = "factory:release";
 
+/** The run marker: a factory agent is working on this issue right now. */
+export const IN_PROGRESS_LABEL = "factory:in-progress";
+
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
-  { name: "factory:in-progress", color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
+  { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
 ] as const;
 
 export type FactoryState = (typeof FACTORY_LABELS)[number]["name"];
