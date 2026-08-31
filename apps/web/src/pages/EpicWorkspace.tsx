@@ -19,6 +19,7 @@ import { GitHubLink } from "../components/GitHubLink.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { Sheet } from "../components/Sheet.js";
 import { ActionBar } from "../components/ActionBar.js";
+import { APPROVE_LABEL, TaskApproveButton } from "../components/Approve.js";
 import { HaltBar } from "../components/HaltBar.js";
 import { peopleLabel, factoryShort } from "../lib/labels.js";
 
@@ -55,6 +56,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   const data = ws.data;
 
   const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:in-staging");
+  const readyTasks = data.tasks.filter((t) => t.approvable);
   const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
   const tabItems: Array<{ id: Tab; label: string }> = (
     ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tree", "tasks", "threads", "decisions"] as Tab[]
@@ -134,6 +136,23 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
             href="?tab=gate"
           >
             Open the gate panel →
+          </a>
+        </div>
+      )}
+      {/* The task start gate, said once at the top the way the epic gate is:
+          whichever tab you land on, the same Approve is one click away. */}
+      {readyTasks.length > 0 && data.startGate.amApprover && tab !== "tasks" && (
+        <div className="banner info">
+          {readyTasks.length} task{readyTasks.length === 1 ? "" : "s"} waiting on your approval to start:{" "}
+          {readyTasks.map((t) => `#${t.number}`).join(", ")}.{" "}
+          <a
+            onClick={(e) => {
+              e.preventDefault();
+              setTab("tasks");
+            }}
+            href="?tab=tasks"
+          >
+            Approve in Tasks →
           </a>
         </div>
       )}
@@ -533,9 +552,9 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               className="approve"
               disabled={approve.isPending || (needsAck && !ack)}
               onClick={() => approve.mutate()}
-              title='Posts the literal comment "Approved" on the epic as you'
+              title={`Posts the literal comment "Approved" on the epic as @${me.login}`}
             >
-              {approve.isPending ? "Posting…" : `Approve as @${me.login}`}
+              {approve.isPending ? "Approving…" : APPROVE_LABEL}
             </button>
             <button onClick={() => setShowRequest(!showRequest)}>Request changes</button>
           </ActionBar>
@@ -579,7 +598,12 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
   );
 }
 
-function TasksTab({ data }: { data: EpicWorkspace }) {
+/**
+ * The task list. A task at `factory:ready` carries the same Approve button it
+ * carries in the Tree and on its thread — the list is where most people look
+ * first, and a ready task with no button there reads as "nothing to do".
+ */
+export function TasksTab({ data }: { data: EpicWorkspace }) {
   const cols: Array<{ title: string; match: (s: string | null, open: boolean) => boolean }> = [
     { title: "Waiting", match: (s, open) => open && (s === null || s === "factory:design-approved") },
     { title: "Ready", match: (s, open) => open && s === "factory:ready" },
@@ -589,8 +613,17 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
     { title: "Blocked", match: (s, open) => open && s === "factory:blocked" },
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;
+  const approvable = data.tasks.filter((t) => t.approvable);
   return (
     <div className="tasks-list">
+      {approvable.length > 0 && (
+        <div className="banner info">
+          {approvable.length} task{approvable.length === 1 ? "" : "s"} ready to build —{" "}
+          {data.startGate.amApprover
+            ? "Approve to start the implementer."
+            : `waiting on ${data.startGate.approvers.map((a) => `@${a}`).join(", ")} to approve.`}
+        </div>
+      )}
       {cols.map((c) => {
         const items = data.tasks.filter((t) => c.match(t.state, t.open));
         if (items.length === 0) return null;
@@ -603,7 +636,12 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
               <div className={`board-card${t.state === "factory:blocked" ? " blocked" : ""}`} key={t.id}>
                 #{t.number} {t.title.replace(/^task\([^)]*\):?\s*/i, "")}
                 <div className="meta">
-                  {t.state === "factory:blocked" && <span className="badge blocked">Agent halted</span>}
+                  {/* Same badge vocabulary as the Tree and the thread cards. */}
+                  <span
+                    className={`badge ${!t.open ? "merge" : t.state === "factory:blocked" ? "blocked" : t.approvable ? "task-start" : "state"}`}
+                  >
+                    {t.open ? peopleLabel(t.state) : "Done"}
+                  </span>
                   {t.blockedBy.filter((d) => d.open).length > 0 && (
                     <span title={t.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>
                       after {t.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
@@ -616,6 +654,12 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
                   )}
                   <GitHubLink href={t.htmlUrl} />
                 </div>
+                {t.approvable && (
+                  <div className="dep-actions">
+                    <TaskApproveButton epicId={data.epic.id} taskId={t.id} startGate={data.startGate} />
+                    <span className="muted">Starts the implementer on #{t.number}.</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -625,14 +669,35 @@ function TasksTab({ data }: { data: EpicWorkspace }) {
   );
 }
 
-function ThreadsTab({ data }: { data: EpicWorkspace }) {
+export function ThreadsTab({ data }: { data: EpicWorkspace }) {
   const [openThread, setOpenThread] = useState<string | null>(null);
   const nonEmpty = data.threads.filter((t) => Number(t.entryCount) > 0 || t.topicKind === "free");
   const empty = data.threads.filter((t) => Number(t.entryCount) === 0 && t.topicKind !== "free");
+  /**
+   * A task thread's topicRef is `task/<number>`. When that task is waiting at
+   * the start gate the thread gets the same Approve button as the Tree and
+   * the Tasks list — the agent's "an implementer can start" note is exactly
+   * where a reader asks what to do next, and Resolve is not that answer.
+   */
+  const approvableFor = (topicRef: string) => {
+    const m = /^task\/(\d+)$/.exec(topicRef);
+    if (!m) return null;
+    const task = data.tasks.find((t) => t.number === Number(m[1]));
+    return task?.approvable ? task : null;
+  };
   return (
     <div>
       {nonEmpty.map((t) => (
-        <ThreadCard key={t.id} threadId={t.id} summary={t} expanded={openThread === t.id} onToggle={() => setOpenThread(openThread === t.id ? null : t.id)} />
+        <ThreadCard
+          key={t.id}
+          threadId={t.id}
+          summary={t}
+          epicId={data.epic.id}
+          approvableTask={approvableFor(t.topicRef)}
+          startGate={data.startGate}
+          expanded={openThread === t.id}
+          onToggle={() => setOpenThread(openThread === t.id ? null : t.id)}
+        />
       ))}
       {empty.length > 0 && (
         <p className="muted">
@@ -646,11 +711,17 @@ function ThreadsTab({ data }: { data: EpicWorkspace }) {
 function ThreadCard({
   threadId,
   summary,
+  epicId,
+  approvableTask,
+  startGate,
   expanded,
   onToggle,
 }: {
   threadId: string;
   summary: { title: string; status: string; entryCount: number; topicRef: string };
+  epicId: string;
+  approvableTask: { id: string; number: number } | null;
+  startGate: EpicWorkspace["startGate"];
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -680,9 +751,19 @@ function ThreadCard({
       <div className="spread" style={{ cursor: "pointer" }} onClick={onToggle}>
         <h3 style={{ margin: 0 }}>
           {summary.status === "resolved" ? "✓ " : ""}
-          {summary.title} <span className="muted">({summary.entryCount})</span>
+          {summary.title} <span className="muted">({summary.entryCount})</span>{" "}
+          {approvableTask && <span className="badge task-start">Ready to build</span>}
         </h3>
-        <span className="muted">{expanded ? "▾" : "▸"}</span>
+        <span className="row" onClick={(e) => e.stopPropagation()}>
+          {/* Collapsed, the button rides the header; expanded, it sits in the
+              composer row beside Resolve. One Approve on screen either way. */}
+          {!expanded && approvableTask && (
+            <TaskApproveButton epicId={epicId} taskId={approvableTask.id} startGate={startGate} />
+          )}
+          <span className="muted" style={{ cursor: "pointer" }} onClick={onToggle}>
+            {expanded ? "▾" : "▸"}
+          </span>
+        </span>
       </div>
       {expanded && thread.data && (
         <div style={{ marginTop: "0.5rem" }}>
@@ -711,8 +792,12 @@ function ThreadCard({
                 private note (never posted)
               </label>
               <span style={{ flex: 1 }} />
-              <button onClick={() => setStatus.mutate(summary.status === "open" ? "resolved" : "open")}>
-                {summary.status === "open" ? "Resolve" : "Reopen"}
+              {approvableTask && <TaskApproveButton epicId={epicId} taskId={approvableTask.id} startGate={startGate} />}
+              <button
+                onClick={() => setStatus.mutate(summary.status === "open" ? "resolved" : "open")}
+                title="Closes this conversation in the Console — it does not approve anything"
+              >
+                {summary.status === "open" ? "Resolve thread" : "Reopen thread"}
               </button>
             </div>
           </div>

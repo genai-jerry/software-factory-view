@@ -53,7 +53,7 @@ beforeEach(() => {
 describe("the approve button reports its own failures", () => {
   it("shows GitHub's refusal beside the button", async () => {
     renderGate();
-    const button = await screen.findByRole("button", { name: /Approve as @alice/ });
+    const button = await screen.findByRole("button", { name: "Approve" });
     vi.mocked(api.post).mockRejectedValueOnce(
       new ApiError(403, "GitHub declined to comment on acme/app#7: Resource not accessible by integration"),
     );
@@ -67,7 +67,7 @@ describe("the approve button reports its own failures", () => {
 
   it("offers the acknowledgement when the guard reports questions the panel did not list", async () => {
     renderGate();
-    const button = await screen.findByRole("button", { name: /Approve as @alice/ });
+    const button = await screen.findByRole("button", { name: "Approve" });
     expect(screen.queryByRole("checkbox")).toBeNull();
 
     vi.mocked(api.post).mockRejectedValueOnce(
@@ -80,8 +80,8 @@ describe("the approve button reports its own failures", () => {
     const ack = await screen.findByRole("checkbox");
     expect(screen.getByText(/1 open question/)).toBeTruthy();
     // Blocked until acknowledged, then live again.
-    await waitFor(() => expect(screen.getByRole("button", { name: /Approve as @alice/ })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
     await userEvent.click(ack);
-    expect(screen.getByRole("button", { name: /Approve as @alice/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 });

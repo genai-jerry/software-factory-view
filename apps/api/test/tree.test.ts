@@ -124,6 +124,24 @@ describe("GET /api/epics/:id/tree", () => {
   });
 });
 
+/**
+ * The Tree is not the only tab that shows a ready task — the Tasks list and
+ * the task's thread show it too, and each renders the same Approve button.
+ * They read it off the workspace payload, so it has to carry the same two
+ * facts the tree does: which tasks are approvable, and whether I may approve.
+ */
+describe("GET /api/epics/:id carries the same start gate as the tree", () => {
+  it("flags approvable tasks and names the start-gate approvers", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/epics/${id.epic}`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.startGate).toMatchObject({ amApprover: true, approvers: [] });
+    const byNumber = Object.fromEntries((body.tasks as Array<{ number: number }>).map((t) => [t.number, t]));
+    expect(byNumber[2]).toMatchObject({ approvable: true });
+    expect(byNumber[3]).toMatchObject({ approvable: false });
+  });
+});
+
 describe("POST /api/issues/:id/approve", () => {
   const post = (issueId: string) =>
     app.inject({
@@ -145,5 +163,10 @@ describe("POST /api/issues/:id/approve", () => {
     const res = await post(id.ready);
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toContain("sam");
+
+    // …and the workspace payload says so up front, so the button in every tab
+    // is disabled with the same reason rather than failing on the click.
+    const ws = await app.inject({ method: "GET", url: `/api/epics/${id.epic}`, headers: { cookie } });
+    expect(ws.json().startGate).toMatchObject({ amApprover: false, approvers: ["sam"] });
   });
 });

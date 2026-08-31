@@ -40,6 +40,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     repo: { id: "repo-1", fullName: "acme/api", defaultBranch: "main" },
     pipeline: [],
     gate: null,
+    startGate: { approvers: [], amApprover: true },
     tasks: [],
     rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0, waiting: 0 },
     blockedSubIssues: [],

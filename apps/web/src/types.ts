@@ -286,6 +286,8 @@ export interface EpicWorkspace {
   repo: { id: string; fullName: string; defaultBranch: string };
   pipeline: string[];
   gate: { gate: string; label: string; amApprover: boolean; approvers: string[] } | null;
+  /** The task start gate — who may Approve a `factory:ready` task into build. */
+  startGate: { approvers: string[]; amApprover: boolean };
   tasks: Array<{
     id: string;
     number: number;
@@ -295,6 +297,8 @@ export interface EpicWorkspace {
     htmlUrl: string;
     blockedBy: DepNode[];
     blocks: DepNode[];
+    /** Open and at `factory:ready`: the one Approve button applies to it. */
+    approvable: boolean;
   }>;
   rollup: TaskRollup;
   blockedSubIssues: Array<{ id: string; number: number; title: string; htmlUrl: string }>;
