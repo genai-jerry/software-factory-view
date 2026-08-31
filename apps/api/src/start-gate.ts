@@ -1,5 +1,12 @@
-import { READY_STATE, taskStartStatus, type TaskStartStatus } from "@console/core";
-import { comments, issueStateHistory } from "@console/db";
+import {
+  GATE_FOR_APPROVERS,
+  nextStep,
+  READY_STATE,
+  taskStartStatus,
+  type NextStep,
+  type TaskStartStatus,
+} from "@console/core";
+import { comments, gateAssignments, issueStateHistory } from "@console/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { AppDeps } from "./context.js";
 
@@ -58,4 +65,33 @@ export function startStatusOf(
     approvedAt: facts?.approvedAt ?? null,
     readySince: facts?.readySince ?? null,
   });
+}
+
+
+/**
+ * "What now?" for one issue, with the gate's approver list filled in.
+ *
+ * Every card that shows a factory state shows this beside it: a state is not
+ * an instruction, and three of them (`in-review`, `in-test`,
+ * `ready-to-ship`) start nothing on their own — the factory is waiting on a
+ * person, and nothing on the card used to say so.
+ */
+export function nextStepFor(
+  state: string | null,
+  approversByGate: Map<string, string[]>,
+): NextStep {
+  const gate = state ? GATE_FOR_APPROVERS[state] : undefined;
+  return nextStep(state, gate ? (approversByGate.get(gate) ?? []) : []);
+}
+
+/** Every gate's approver list for one estate, in one query. */
+export async function loadGateApprovers(deps: AppDeps, estateId: string): Promise<Map<string, string[]>> {
+  const rows = await deps.dbh.db.select().from(gateAssignments).where(eq(gateAssignments.estateId, estateId));
+  const byGate = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = byGate.get(row.gate) ?? [];
+    if (!list.includes(row.login)) list.push(row.login);
+    byGate.set(row.gate, list);
+  }
+  return byGate;
 }

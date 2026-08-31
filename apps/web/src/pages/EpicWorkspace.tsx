@@ -22,6 +22,7 @@ import { Sheet } from "../components/Sheet.js";
 import { ActionBar } from "../components/ActionBar.js";
 import { APPROVE_LABEL, START_STATUS_LABEL, startStatusTakesApproval, TaskStartGate } from "../components/Approve.js";
 import { HaltBar } from "../components/HaltBar.js";
+import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
 import { peopleLabel, factoryShort } from "../lib/labels.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tree" | "tasks" | "threads" | "decisions";
@@ -96,6 +97,13 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
       <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
 
       <FactoryRunStatus data={data} />
+
+      {/* The epic's own "what now?", in the same words the factory posts on
+          the issue. The tabs below answer it for the tasks. */}
+      <div className="row" style={{ alignItems: "center", gap: "0.6rem" }}>
+        <NextStepLine step={data.epic.nextStep} />
+        <StartRoleButton issueId={data.epic.id} step={data.epic.nextStep} />
+      </div>
 
       {showHalt && (
         <HaltBar
@@ -651,7 +659,11 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
           {started.map((t) => `#${t.number}`).join(", ")}. Nothing to approve.
         </div>
       )}
-      {cols.map((c) => {
+      {/* A task in a state no column names (an epic-only state on a task,
+          drift, a label applied by hand) used to vanish from the list
+          entirely. Anything left over lands in the last group instead —
+          losing a task off the board is worse than an odd heading. */}
+      {[...cols, { title: "Elsewhere", match: (t: Task) => !cols.some((c) => c.match(t)) }].map((c) => {
         const items = data.tasks.filter((t) => c.match(t));
         if (items.length === 0) return null;
         return (
@@ -681,8 +693,10 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
                   )}
                   <GitHubLink href={t.htmlUrl} />
                 </div>
-                {t.startStatus !== "none" && (
+                <NextStepLine step={t.nextStep} />
+                {(t.startStatus !== "none" || t.nextStep.startRole) && (
                   <div className="dep-actions">
+                    <StartRoleButton issueId={t.id} step={t.nextStep} />
                     <TaskStartGate
                       epicId={data.epic.id}
                       taskId={t.id}

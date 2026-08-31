@@ -4,7 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import { postComment } from "../gh-write.js";
-import { loadTaskStartFacts, startStatusOf } from "../start-gate.js";
+import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { loadEpic, loadIssue } from "./read.js";
 
 /**
@@ -103,6 +103,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     // The same three-way start-gate reading the Tasks list and the threads
     // use — a node whose implementer is already running says so instead of
     // offering the button that started it.
+    const gateApprovers = await loadGateApprovers(deps, repo.estateId);
     const startFacts = await loadTaskStartFacts(
       deps,
       taskRows.filter((t) => t.issue.state === "open" && t.issue.factoryState === READY_STATE).map((t) => t.issue.id),
@@ -137,6 +138,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
           blocks: blocks.get(t.issue.id) ?? [],
           waiting: t.issue.state === "open" && up.some((d) => d.open),
           agentHalted: t.issue.factoryState === "factory:blocked",
+          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };

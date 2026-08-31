@@ -717,6 +717,24 @@ export class UserClient extends RepoReader {
     return [...byLogin.values()].map(({ account, repos }) => ({ account, repos: [...repos.values()] }));
   }
 
+  /**
+   * "Run workflow" on the factory's caller stub, as the acting user.
+   *
+   * The roles the pipeline never event-wires (reviewer, qa, release, ops, and
+   * the architect when its chain did not fire) start this way, and asking a
+   * person to go and find the Actions tab is exactly the instruction the
+   * Console exists to replace. 204 with no body on success.
+   */
+  async dispatchWorkflow(
+    owner: string,
+    repo: string,
+    workflowFile: string,
+    ref: string,
+    inputs: Record<string, string>,
+  ): Promise<void> {
+    await this.req("POST", `/repos/${owner}/${repo}/actions/workflows/${workflowFile}/dispatches`, { ref, inputs });
+  }
+
   async createComment(owner: string, repo: string, issueNumber: number, body: string): Promise<GhComment> {
     return (await this.req("POST", `/repos/${owner}/${repo}/issues/${issueNumber}/comments`, { body })) as GhComment;
   }

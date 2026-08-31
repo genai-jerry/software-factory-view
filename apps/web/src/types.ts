@@ -282,6 +282,7 @@ export interface EpicWorkspace {
     author: string | null;
     htmlUrl: string;
     labels: string[];
+    nextStep: NextStep;
   };
   repo: { id: string; fullName: string; defaultBranch: string };
   pipeline: string[];
@@ -298,6 +299,7 @@ export interface EpicWorkspace {
     blockedBy: DepNode[];
     blocks: DepNode[];
     /** Where this task stands at the start gate — see `startStatusLabel`. */
+    nextStep: NextStep;
     startStatus: TaskStartStatus;
     /** The start gate is open AND still takes an approval: draw the button. */
     approvable: boolean;
@@ -433,6 +435,21 @@ export interface TreeDep {
  */
 export type TaskStartStatus = "none" | "awaiting" | "approved" | "running" | "stalled";
 
+/**
+ * What is expected of the next actor — the same answer the factory posts on
+ * the issue when a run ends, shown beside the state it belongs to. A state is
+ * not an instruction: "In review" means "start the Reviewer", and until this
+ * was on screen nothing said so.
+ */
+export interface NextStep {
+  who: string;
+  how: string;
+  /** The role a person has to start here, when that is the move. */
+  startRole: "architect" | "reviewer" | "qa" | "release" | "ops" | null;
+  startLabel: string | null;
+  waitsOnPerson: boolean;
+}
+
 export interface TreeNode {
   id: string;
   number: number;
@@ -447,6 +464,7 @@ export interface TreeNode {
   blocks: TreeDep[];
   waiting: boolean;
   agentHalted: boolean;
+  nextStep: NextStep;
   startStatus: TaskStartStatus;
   approvable: boolean;
 }

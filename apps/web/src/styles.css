@@ -1082,5 +1082,9 @@ ol.run-events time {
 /* What the start gate says when there is nothing to press: approved and
    waiting for the run, or a run already live. */
 .start-status { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
+/* "What now?" — said on every card that shows a factory state, and marked
+   when the wait is on a person rather than on the factory. */
+.next-step { font-size: 0.82rem; color: var(--text-dim); margin-top: 0.35rem; }
+.next-step.waits { color: var(--text); border-left: 3px solid var(--amber); padding-left: 0.5rem; }
 .dep-composer { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .dep-composer textarea { width: 100%; resize: vertical; }

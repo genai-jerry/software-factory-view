@@ -6,6 +6,7 @@ import { GitHubLink } from "../components/GitHubLink.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { peopleLabel } from "../lib/labels.js";
 import { START_STATUS_LABEL, TaskStartGate } from "../components/Approve.js";
+import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
 
 /**
  * The epic's dependency tree (plan 11 §1): tasks laid out in dependency waves
@@ -149,7 +150,9 @@ function TreeNodeCard({ epicId, node, startGate }: { epicId: string; node: TreeN
         </div>
       )}
       {node.agentHalted && <div className="dep-halt">Agent halted — it needs a human reply to continue. Comment below.</div>}
+      <NextStepLine step={node.nextStep} />
       <div className="dep-actions">
+        <StartRoleButton issueId={node.id} step={node.nextStep} />
         <TaskStartGate
           epicId={epicId}
           taskId={node.id}

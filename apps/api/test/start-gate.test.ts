@@ -263,3 +263,96 @@ describe("POST /api/issues/:id/approve refuses a second start", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+
+/**
+ * The state a task sits in has to say what is expected of the next actor —
+ * and where that is "a person starts the next role", the Console has to be
+ * able to start it. `factory:in-review` routes nothing in either engine: it
+ * was the pipeline waiting on a human with nothing on screen that said so.
+ */
+describe("the next step the Console shows and can act on", () => {
+  const setState = (state: string, labels: string[] = [state]) =>
+    deps.dbh.db.update(issues).set({ factoryState: state, labels }).where(eq(issues.id, id.task!));
+
+  it("tells a ready task's reader to approve, and names no role to start", async () => {
+    const task = await workspaceTask();
+    expect(task).toMatchObject({
+      nextStep: { startRole: null, waitsOnPerson: true },
+    });
+    expect((task as { nextStep: { how: string } }).nextStep.how).toContain("Approve");
+  });
+
+  it("says in-review starts nothing on its own, and offers the Reviewer", async () => {
+    await setState("factory:in-review");
+    const task = await workspaceTask();
+    expect(task).toMatchObject({
+      startStatus: "none",
+      approvable: false,
+      nextStep: { startRole: "reviewer", startLabel: "Start the Reviewer", waitsOnPerson: true },
+    });
+    expect(await treeNode()).toMatchObject({ nextStep: { startRole: "reviewer" } });
+    await setState("factory:ready");
+  });
+
+  it("refuses to start a role the state does not call for", async () => {
+    await setState("factory:in-review");
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.task}/start-role`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { role: "release" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain("reviewer");
+    await setState("factory:ready");
+  });
+
+  it("refuses any role on a state that starts none", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.task}/start-role`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { role: "reviewer" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain("starts no role");
+  });
+
+  it("refuses to start a second agent while a run is live", async () => {
+    await setState("factory:in-review", ["factory:in-review", "factory:in-progress"]);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.task}/start-role`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { role: "reviewer" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain("already live");
+    await setState("factory:ready");
+  });
+
+  it("starts the role through GitHub Actions when that is the org's engine", async () => {
+    await setState("factory:in-review");
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(String(url));
+        return new Response(null, { status: 204 });
+      }),
+    );
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/issues/${id.task}/start-role`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { role: "reviewer" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, role: "reviewer", engine: "github-actions" });
+    expect(calls).toEqual([
+      `${API_URL}/repos/acme/app/actions/workflows/factory-pipeline.yml/dispatches`,
+    ]);
+    await setState("factory:ready");
+  });
+});

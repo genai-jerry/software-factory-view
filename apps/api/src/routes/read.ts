@@ -32,7 +32,7 @@ import {
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
-import { loadTaskStartFacts, startStatusOf } from "../start-gate.js";
+import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
@@ -287,6 +287,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       taskRows.filter((t) => t.state === "open" && t.factoryState === READY_STATE).map((t) => t.id),
     );
 
+    // "What now?" for the epic and for every task, with each gate's approver
+    // list filled in — the same answer the factory posts on the issue when a
+    // run ends, shown beside the state it belongs to.
+    const gateApprovers = await loadGateApprovers(deps, repo.estateId);
+
     const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
@@ -305,6 +310,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         author: epic.author,
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers),
       },
       repo: { id: repo.id, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       pipeline: PIPELINE_ORDER,
@@ -321,6 +327,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           htmlUrl: t.htmlUrl,
           blockedBy: deps_.get(t.id)?.blockedBy ?? [],
           blocks: deps_.get(t.id)?.blocks ?? [],
+          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };
