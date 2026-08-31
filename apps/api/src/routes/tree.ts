@@ -1,4 +1,4 @@
-import { APPROVED_BODY, GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
+import { APPROVED_BODY, GATE_STATES, IN_PROGRESS_LABEL, IN_REVIEW_STATE, READY_STATE, REVIEW_DONE_BODY, startStatusTakesApproval } from "@console/core";
 import { auditLog, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -226,6 +226,40 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
         req.log.warn({ err }, "could not record the approval locally — the webhook projection will");
       }
     }
+    return { ok: true, commentUrl: comment.html_url };
+  });
+
+  /**
+   * Skip the Reviewer: post the literal `Review Done` on a `factory:in-review`
+   * task as the acting user, same discipline as the start gate above — the
+   * router does the relabel untouched. There is no changes-requested
+   * equivalent here; a human who found problems reviews the draft PR
+   * directly on GitHub instead of pressing this.
+   */
+  app.post<{ Params: { id: string } }>("/api/issues/:id/mark-reviewed", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadIssue(deps, ctx, req.params.id);
+    if (!found) return reply.code(404).send({ error: "issue not found" });
+    const { issue, repo } = found;
+    if (issue.state !== "open" || issue.factoryState !== IN_REVIEW_STATE) {
+      return reply.code(409).send({ error: "only an open task at factory:in-review can be marked reviewed" });
+    }
+    if (issue.labels.includes(IN_PROGRESS_LABEL)) {
+      return reply.code(409).send({
+        error: `a factory run is already live on #${issue.number} — the Reviewer may be running this verdict right now`,
+      });
+    }
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    const comment = await postComment(deps, ctx, reply, owner, name, issue.number, REVIEW_DONE_BODY);
+    if (!comment) return;
+    await db.insert(auditLog).values({
+      orgId: issue.orgId,
+      actorUserId: ctx.userId,
+      action: "task.mark-reviewed",
+      target: `${repo.fullName}#${issue.number}`,
+      payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url },
+    });
     return { ok: true, commentUrl: comment.html_url };
   });
 }
