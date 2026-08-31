@@ -36,6 +36,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
       author: "alice",
       htmlUrl: "https://github.com/acme/api/issues/42",
       labels: ["factory:in-progress"],
+      status: null,
       nextStep: {
         who: "the factory",
         how: "The Intake Analyst is drafting the spec and will open its PR. Nothing to do.",
@@ -49,7 +50,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     gate: null,
     startGate: { approvers: [], amApprover: true },
     tasks: [],
-    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, done: 0, blocked: 0, waiting: 0 },
+    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0 },
     blockedSubIssues: [],
     change: null,
     artifacts: [],

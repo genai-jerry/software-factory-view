@@ -1,14 +1,30 @@
 import type { Me, SetupStatus } from "../types.js";
 
-/** People-language labels for factory states (design D4). Factory names stay as secondary chips. */
+/**
+ * People-language labels for factory states (design D4). Factory names stay as
+ * secondary chips.
+ *
+ * Say what is happening, not which gate last closed. The three `*-approved`
+ * states are receipts in the factory's vocabulary but stages in a reader's:
+ * an epic holds `design-approved` for its entire build, and while it read
+ * "Design approved" the epic's own header said the design gate had just
+ * passed with four tasks visibly building underneath it. Where a stage has
+ * progress to report, the API sends it as `epic.status` (`epicStatus` in
+ * `@console/core`, derived there because the browser bundle does not carry
+ * core — the same reason `nextStep` is computed server-side). These are what
+ * that falls back to.
+ */
 
 export const PEOPLE_LABEL: Record<string, string> = {
   "factory:intake": "Filed",
   "factory:spec-ready": "Approve spec",
-  "factory:spec-approved": "Spec approved",
-  "factory:planned": "Planning",
+  "factory:spec-approved": "Planning",
+  "factory:planned": "Designing",
   "factory:design-ready": "Approve design",
-  "factory:design-approved": "Design approved",
+  "factory:design-approved": "Released to build",
+  "factory:release-planning": "Planning release",
+  "factory:release-ready": "Approve release",
+  "factory:release-approved": "Release approved",
   "factory:ready": "Ready to build",
   "factory:in-review": "In review",
   "factory:in-test": "In test",

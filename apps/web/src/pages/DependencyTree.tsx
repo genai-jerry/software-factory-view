@@ -38,7 +38,9 @@ export function DependencyTreeTab({ epicId, onOpenGate }: { epicId: string; onOp
           <strong>
             Epic #{data.epic.number} · {data.epic.title}
           </strong>
-          <span className="badge state">{peopleLabel(data.epic.state)}</span>
+          <span className="badge state" title={data.epic.state ?? undefined}>
+            {data.epic.status ?? peopleLabel(data.epic.state)}
+          </span>
           <GitHubLink href={data.epic.htmlUrl} />
         </div>
         {data.epic.gate && (

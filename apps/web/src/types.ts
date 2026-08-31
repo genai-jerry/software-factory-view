@@ -265,6 +265,8 @@ export interface TaskRollup {
   ready: number;
   inReview: number;
   inTest: number;
+  /** Green and merged onto the epic/integration branch, not yet closed. */
+  shipping: number;
   done: number;
   blocked: number;
   /** Open tasks that have at least one open blocker. */
@@ -282,6 +284,8 @@ export interface EpicWorkspace {
     author: string | null;
     htmlUrl: string;
     labels: string[];
+    /** Derived progress where the label cannot carry it; null means use the label. */
+    status: string | null;
     nextStep: NextStep;
   };
   repo: { id: string; fullName: string; defaultBranch: string };
@@ -479,6 +483,10 @@ export interface EpicTree {
     htmlUrl: string;
     repo: string;
     gate: { gate: string; label: string } | null;
+    rollup: TaskRollup;
+    /** Derived progress where the label cannot carry it; null means use the label. */
+    status: string | null;
+    nextStep: NextStep;
   };
   startGate: { approvers: string[]; amApprover: boolean };
   nodes: TreeNode[];
