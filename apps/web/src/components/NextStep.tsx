@@ -23,6 +23,11 @@ export function NextStepLine({ step }: { step: NextStep }) {
   );
 }
 
+/** Posted as-is; the router treats it as the human equivalent of a clean Reviewer verdict. */
+const MARK_REVIEWED_TITLE =
+  'Posts the literal comment "Review Done" as you — skips the Reviewer and moves this task straight to In test. ' +
+  "No changes-requested equivalent: review the draft PR on GitHub instead if it needs work.";
+
 export function StartRoleButton({
   issueId,
   step,
@@ -42,14 +47,34 @@ export function StartRoleButton({
       onStarted?.();
     },
   });
+  const markReviewed = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; commentUrl: string }>(`/api/issues/${issueId}/mark-reviewed`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["epic"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["attention"] });
+      onStarted?.();
+    },
+  });
   if (!step.startRole) return null;
   return (
     <span className="approve-action">
       <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()} title={step.how}>
         {start.isPending ? "Starting…" : (step.startLabel ?? `Start the ${step.startRole}`)}
       </button>
+      {step.startRole === "reviewer" && (
+        <button type="button" disabled={markReviewed.isPending} onClick={() => markReviewed.mutate()} title={MARK_REVIEWED_TITLE}>
+          {markReviewed.isPending ? "Marking…" : "Mark Reviewed"}
+        </button>
+      )}
       {start.isSuccess && <span className="muted">Started — {start.data.detail}</span>}
       {start.isError && <span className="approve-error">{(start.error as ApiError).message}</span>}
+      {markReviewed.isSuccess && (
+        <a href={markReviewed.data.commentUrl} target="_blank" rel="noreferrer" className="muted">
+          Marked reviewed ✓
+        </a>
+      )}
+      {markReviewed.isError && <span className="approve-error">{(markReviewed.error as ApiError).message}</span>}
     </span>
   );
 }

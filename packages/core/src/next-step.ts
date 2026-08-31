@@ -130,7 +130,7 @@ const TABLE: Record<string, Entry> = {
   },
   "factory:in-review": {
     who: "you, then the Reviewer",
-    how: "This state starts nothing on its own. Start the Reviewer: it reads the draft PR and moves the task to In test, or back to Ready with changes requested. Don't merge the draft PR yourself.",
+    how: "This state starts nothing on its own. Start the Reviewer: it reads the draft PR and moves the task to In test, or back to Ready with changes requested. Reviewed it yourself? Mark Reviewed skips straight to In test — there's no changes-requested equivalent there, so review the draft PR on GitHub if it needs work. Don't merge the draft PR yourself either way.",
     startRole: "reviewer",
     startLabel: "Start the Reviewer",
     waitsOnPerson: true,

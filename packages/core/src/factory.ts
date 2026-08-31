@@ -103,6 +103,12 @@ export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
 /** Exact comment body the factory router accepts for G1/G2/implementation starts. */
 export const APPROVED_BODY = "Approved";
 
+/** Exact comment body the factory router accepts to skip the Reviewer at `factory:in-review`. */
+export const REVIEW_DONE_BODY = "Review Done";
+
+/** The one state `REVIEW_DONE_BODY` has any effect on. */
+export const IN_REVIEW_STATE = "factory:in-review";
+
 export interface ApproverFile {
   spec: string[];
   design: string[];
