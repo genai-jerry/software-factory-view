@@ -215,8 +215,23 @@ async function agentSecretsForOrg(
   const rows = await db.select().from(orchestratorSecrets).where(eq(orchestratorSecrets.orgId, orgId));
   const out: { anthropicApiKey?: string; claudeCodeOauthToken?: string } = {};
   for (const row of rows) {
-    if (row.name === "ANTHROPIC_API_KEY") out.anthropicApiKey = decryptSecret(row.encryptedValue, cfg.CONSOLE_MASTER_KEY);
-    if (row.name === "CLAUDE_CODE_OAUTH_TOKEN") out.claudeCodeOauthToken = decryptSecret(row.encryptedValue, cfg.CONSOLE_MASTER_KEY);
+    if (row.name !== "ANTHROPIC_API_KEY" && row.name !== "CLAUDE_CODE_OAUTH_TOKEN") continue;
+    let value: string;
+    try {
+      value = decryptSecret(row.encryptedValue, cfg.CONSOLE_MASTER_KEY);
+    } catch (err) {
+      // A token sealed under a previous CONSOLE_MASTER_KEY must not strand the
+      // delivery: the dispatch treats these secrets as optional and the
+      // orchestrator falls back to its own credentials. Forward without it and
+      // leave the re-entry to Settings, which flags the unreadable token.
+      console.warn(
+        `retained secret ${row.name} for org ${orgId} cannot be decrypted (${(err as Error).message}) — ` +
+          "CONSOLE_MASTER_KEY has changed since it was saved; re-enter the token in Settings",
+      );
+      continue;
+    }
+    if (row.name === "ANTHROPIC_API_KEY") out.anthropicApiKey = value;
+    else out.claudeCodeOauthToken = value;
   }
   return out;
 }

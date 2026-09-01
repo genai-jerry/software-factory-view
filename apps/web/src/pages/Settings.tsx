@@ -642,6 +642,12 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
           {retained.updatedBy ? ` by ${retained.updatedBy}` : ""}.
         </p>
       )}
+      {retained && !retained.readable && (
+        <div className="banner error">
+          The stored {name} can no longer be decrypted — CONSOLE_MASTER_KEY has changed since it was saved. The factory
+          runs without it (the orchestrator falls back to its own credentials) until the token is re-entered below.
+        </div>
+      )}
       <div className="row">
         <select value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
           {s.allowedSecrets.map((n) => (

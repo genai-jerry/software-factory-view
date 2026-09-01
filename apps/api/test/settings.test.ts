@@ -403,8 +403,9 @@ describe("org orchestrator", () => {
     expect(decryptSecret(ant!.encryptedValue, MASTER_KEY)).toBe("sk-ant-from-console");
 
     const meta = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
-    const retained = (meta.json() as { retainedSecrets: Array<{ name: string }> }).retainedSecrets;
+    const retained = (meta.json() as { retainedSecrets: Array<{ name: string; readable: boolean }> }).retainedSecrets;
     expect(retained.map((r) => r.name)).toContain("ANTHROPIC_API_KEY");
+    expect(retained.find((r) => r.name === "ANTHROPIC_API_KEY")?.readable).toBe(true);
     expect(JSON.stringify(meta.json())).not.toContain("sk-ant-from-console");
 
     await app.inject({
@@ -413,6 +414,26 @@ describe("org orchestrator", () => {
       headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
       payload: { engine: "github-actions" },
     });
+  });
+
+  it("flags a retained secret sealed under a previous master key instead of failing", async () => {
+    // Simulate a CONSOLE_MASTER_KEY rotation: the stored row no longer opens
+    // under the current key. Settings must report it (readable: false) rather
+    // than 500, and the unreadable key no longer counts as configured.
+    const staleKey = randomBytes(32).toString("base64");
+    await deps.dbh.db
+      .update(orchestratorSecrets)
+      .set({ encryptedValue: encryptSecret("sk-ant-old", staleKey) })
+      .where(eq(orchestratorSecrets.name, "ANTHROPIC_API_KEY"));
+
+    const res = await app.inject({ method: "GET", url: `/api/orgs/${id.org}/settings`, headers: { cookie: ownerCookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      retainedSecrets: Array<{ name: string; readable: boolean }>;
+      insight: { globalKeyConfigured: boolean };
+    };
+    expect(body.retainedSecrets.find((r) => r.name === "ANTHROPIC_API_KEY")?.readable).toBe(false);
+    expect(body.insight.globalKeyConfigured).toBe(false);
   });
 });
 

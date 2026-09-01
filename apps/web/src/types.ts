@@ -548,7 +548,7 @@ export interface OrgSettings {
     stagingBranch: string | null;
   };
   allowedSecrets: string[];
-  retainedSecrets: Array<{ name: string; updatedAt: string; updatedBy: string | null }>;
+  retainedSecrets: Array<{ name: string; updatedAt: string; updatedBy: string | null; readable: boolean }>;
 }
 
 export interface ProjectsData {

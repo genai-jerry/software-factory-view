@@ -33,7 +33,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
     if (!found) return;
     const engine = normalizeConsoleOrchestrator(found.org.orchestrator);
     const retainedSecrets = await listRetainedSecretMeta(deps, found.org.id);
-    const hasRetainedAnthropic = retainedSecrets.some((r) => r.name === "ANTHROPIC_API_KEY");
+    const hasRetainedAnthropic = retainedSecrets.some((r) => r.name === "ANTHROPIC_API_KEY" && r.readable);
     return {
       id: found.org.id,
       name: found.org.name,
