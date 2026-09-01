@@ -1,7 +1,7 @@
 import type { BoardCard } from "../types.js";
 import { RepoChip } from "./RepoChip.js";
 import { FAST_TRACK_COLUMN, HELD_COLUMN, partitionCards } from "../lib/board.js";
-import { PHASE_LABELS, peopleLabel } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, PHASE_LABELS, peopleLabel } from "../lib/labels.js";
 
 const STATE_SHORT: Record<string, string> = {
   "factory:intake": "intake",
@@ -15,6 +15,7 @@ const STATE_SHORT: Record<string, string> = {
   "factory:in-test": "in-test",
   "factory:ready-to-ship": "ready-to-ship",
   "factory:on-epic": "on-epic",
+  "factory:epic-ready": "epic-ready",
   "factory:in-staging": "in-staging",
   "factory:deployed": "deployed",
   [FAST_TRACK_COLUMN]: "fast track",
@@ -26,7 +27,7 @@ const LIST_PHASES: Array<{ id: string; label: string; match: (state: string | nu
   { id: "spec", label: PHASE_LABELS.specifying, match: (s) => s === "factory:intake" || s === "factory:spec-ready" },
   { id: "plan", label: PHASE_LABELS.planning, match: (s) => s === "factory:spec-approved" || s === "factory:planned" || s === "factory:design-ready" },
   { id: "build", label: PHASE_LABELS.building, match: (s) => s === "factory:design-approved" || s === "factory:ready" || s === "factory:in-review" || s === "factory:in-test" },
-  { id: "ship", label: PHASE_LABELS.shipping, match: (s) => s === "factory:ready-to-ship" || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed" },
+  { id: "ship", label: PHASE_LABELS.shipping, match: (s) => s === "factory:ready-to-ship" || s === "factory:on-epic" || s === "factory:epic-ready" || s === "factory:in-staging" || s === "factory:deployed" },
   { id: "fast", label: "Fast track", match: (s) => s === FAST_TRACK_COLUMN || s === "factory:fast-track" },
 ];
 
@@ -94,6 +95,13 @@ function BoardCardView({ card: c, onPeek }: { card: BoardCard; onPeek: (id: stri
           </span>
         )}
         {c.tasks.waiting > 0 && <span>{c.tasks.waiting} waiting</span>}
+        {/* The marker changes what the state means — this epic advances
+            between gates on its own — so the card says so. */}
+        {c.expedited && (
+          <span className="badge expedite" title={EXPEDITE_TITLE}>
+            {EXPEDITE_BADGE}
+          </span>
+        )}
         {c.blocked && <span className="badge blocked">Agent halted</span>}
       </div>
     </div>

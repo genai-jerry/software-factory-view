@@ -6,7 +6,7 @@ import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { useFocus } from "../lib/filter.js";
-import { PHASE_LABELS } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, PHASE_LABELS } from "../lib/labels.js";
 import type { BoardCard, FlowData, FlowEpic, FlowMilestone } from "../types.js";
 
 /**
@@ -128,6 +128,12 @@ function EpicNode({ epic: e, onPeek }: { epic: FlowEpic; onPeek: (id: string) =>
         </a>
         <span className="badge">{PHASE_LABELS[e.phase]}</span>
         {e.state === "factory:fast-track" && <span className="badge state">fast track</span>}
+        {/* Why this epic moves without anyone being asked. */}
+        {e.expedited && (
+          <span className="badge expedite" title={EXPEDITE_TITLE}>
+            {EXPEDITE_BADGE}
+          </span>
+        )}
         <RepoChip fullName={e.repo} />
         <span className="muted">
           {e.daysInState}d in state

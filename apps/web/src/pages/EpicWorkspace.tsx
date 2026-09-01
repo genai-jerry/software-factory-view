@@ -23,7 +23,7 @@ import { ActionBar } from "../components/ActionBar.js";
 import { APPROVE_LABEL, START_STATUS_LABEL, startStatusTakesApproval, TaskStartGate } from "../components/Approve.js";
 import { HaltBar } from "../components/HaltBar.js";
 import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
-import { peopleLabel, factoryShort } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel, factoryShort } from "../lib/labels.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tree" | "tasks" | "threads" | "decisions";
 
@@ -57,7 +57,15 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   if (!ws.data) return <p className="muted">Loading workspace…</p>;
   const data = ws.data;
 
-  const gateOpen = data.gate !== null && (data.epic.state === "factory:spec-ready" || data.epic.state === "factory:design-ready" || data.epic.state === "factory:in-staging");
+  // The states whose gate the Console can actually panel: G1, G2, GS and G3.
+  // (`factory:ready` also carries a gate, but that one is the task start gate
+  // and lives on the task rows.)
+  const gateOpen =
+    data.gate !== null &&
+    (data.epic.state === "factory:spec-ready" ||
+      data.epic.state === "factory:design-ready" ||
+      data.epic.state === "factory:epic-ready" ||
+      data.epic.state === "factory:in-staging");
   const readyTasks = data.tasks.filter((t) => t.approvable);
   const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
   const tabItems: Array<{ id: Tab; label: string }> = (
@@ -79,10 +87,19 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           Epic #{data.epic.number} · {data.epic.title}{" "}
           <GitHubLink href={data.epic.htmlUrl} />
         </h1>
-        <span className="badge state" title={data.epic.state ?? undefined}>
-          {data.epic.status ?? peopleLabel(data.epic.state)}
+        <span className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+          {data.expedite.on && (
+            <span className="badge expedite" title={EXPEDITE_TITLE}>
+              {EXPEDITE_BADGE}
+            </span>
+          )}
+          <span className="badge state" title={data.epic.state ?? undefined}>
+            {data.epic.status ?? peopleLabel(data.epic.state)}
+          </span>
         </span>
       </div>
+
+      <ExpediteToggle epicId={data.epic.id} expedite={data.expedite} />
 
       {/* The epic branch (FACTORY.md §6b) is named factory/epic-<epic issue
           number>. The Console cannot read the estate's branch policy, so it
@@ -199,6 +216,122 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
       {historyOpen && (
         <Sheet title="History" onClose={() => setHistoryOpen(false)}>
           <TimelineRail epicId={data.epic.id} />
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What expedite waives and what it keeps — the confirm step's whole content.
+ *
+ * Spelled out rather than summarised, because the switch is easy to flip and
+ * its effect is invisible afterwards: from here on the factory approves and
+ * starts things nobody was asked about. The right-hand list is why it is safe
+ * to offer at all — nothing reaches staging, let alone production, without a
+ * person saying so.
+ */
+const EXPEDITE_WAIVES = [
+  "G1 — the spec gate: the factory approves it and starts the Planner",
+  "G2 — the design gate: the factory approves it and releases the tasks",
+  "Implementation starts: every task's Approve, on every task",
+  "Review, QA and assembly starts: the factory runs each as the previous one lands",
+];
+
+const EXPEDITE_KEEPS = [
+  "GS — the release to staging, at Epic ready: still your Approve",
+  "G3 — the promotion to production: still a human merge on GitHub",
+  "Anything an agent halts on: a blocked task still waits for your answer",
+];
+
+/**
+ * The expedite toggle.
+ *
+ * Applying is a decision, so it takes a confirm that says exactly what it
+ * waives; removing is not, so it does not. Either way the write is a label on
+ * the epic, posted under the acting user's own GitHub identity — the factory
+ * checks who applied it and reverts an application it does not accept, which
+ * is only possible because the Console never applies it as the App.
+ */
+export function ExpediteToggle({ epicId, expedite }: { epicId: string; expedite: EpicWorkspace["expedite"] }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const flip = useMutation({
+    mutationFn: (on: boolean) => api.post<{ ok: boolean; on: boolean }>(`/api/epics/${epicId}/expedite`, { on }),
+    onSuccess: () => {
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: ["epic", epicId] });
+      void qc.invalidateQueries({ queryKey: ["tree", epicId] });
+      void qc.invalidateQueries({ queryKey: ["timeline", epicId] });
+      void qc.invalidateQueries({ queryKey: ["my-work"] });
+    },
+  });
+
+  // The Console posted an application that is no longer on the issue: the
+  // factory takes the marker back off when whoever applied it is not on its
+  // list, and leaves its reason on the epic. Say so — silently reverting to an
+  // off toggle reads as the button having done nothing.
+  const reverted = !expedite.on && expedite.lastFlip?.on === true;
+
+  return (
+    <div className="expedite-toggle">
+      <div className="row" style={{ alignItems: "center", gap: "0.6rem" }}>
+        {expedite.on ? (
+          <button type="button" disabled={!expedite.available || flip.isPending} onClick={() => flip.mutate(false)}>
+            {flip.isPending ? "Turning off…" : "Turn expedite off"}
+          </button>
+        ) : (
+          <button type="button" disabled={!expedite.available || flip.isPending} onClick={() => setConfirming(true)}>
+            Expedite…
+          </button>
+        )}
+        {expedite.reason && <span className="muted">{expedite.reason}</span>}
+        {expedite.on && expedite.lastFlip?.on && (
+          <span className="muted">
+            on since {new Date(expedite.lastFlip.at).toLocaleDateString()}
+            {expedite.lastFlip.actor && ` — @${expedite.lastFlip.actor}`}
+          </span>
+        )}
+      </div>
+      {reverted && (
+        <div className="banner stale">
+          Expedite was applied {expedite.lastFlip?.actor ? `by @${expedite.lastFlip.actor} ` : ""}on{" "}
+          {new Date(expedite.lastFlip!.at).toLocaleString()}, but the marker is not on the issue now. The factory removes
+          it when whoever applied it is not on its list — its comment on the epic says which.
+        </div>
+      )}
+      {flip.isError && <div className="banner error">{(flip.error as ApiError).message}</div>}
+      {confirming && (
+        <Sheet title="Turn expedite on?" onClose={() => setConfirming(false)}>
+          <p>
+            The factory will run this epic without asking anyone to start each stage. Applied as you — GitHub records who
+            asked for it.
+          </p>
+          <div className="card">
+            <h3>It waives</h3>
+            <ul>
+              {EXPEDITE_WAIVES.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="card">
+            <h3>It keeps</h3>
+            <ul>
+              {EXPEDITE_KEEPS.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+          {expedite.dormant && <div className="banner stale">{expedite.reason}</div>}
+          <ActionBar>
+            <button className="primary" disabled={flip.isPending} onClick={() => flip.mutate(true)}>
+              {flip.isPending ? "Applying…" : "Turn expedite on"}
+            </button>
+            <button type="button" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </ActionBar>
         </Sheet>
       )}
     </div>
@@ -387,6 +520,15 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
   );
 }
 
+/** What each gate is called in the panel's own heading. */
+const GATE_TITLE: Record<string, string> = {
+  spec: "spec gate",
+  design: "design gate",
+  implementation: "implementation start",
+  staging: "release to staging",
+  release: "promotion to production",
+};
+
 export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
   const qc = useQueryClient();
   const gate = useQuery({
@@ -476,13 +618,23 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
       <div className="card">
         <div className="spread">
           <h3 style={{ margin: 0 }}>
-            {g.label} — {g.gate} gate
+            {g.label} — {GATE_TITLE[g.gate] ?? `${g.gate} gate`}
           </h3>
           <span className="muted">
             approvers:{" "}
             {g.approvers.length === 0 ? "any collaborator (empty list)" : g.approvers.map((a) => `@${a}`).join(", ")}
+            {/* GS is newer than most approver files: where an estate has no
+                `staging` list, the factory reads `release` instead, and the
+                panel has to say whose list it is showing. */}
+            {g.approversFrom && ` (no ${g.gate} list here — the ${g.approversFrom} approvers stand in)`}
           </span>
         </div>
+        {g.gate === "staging" && (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Approving releases this epic to the integration branch — <strong>staging, not production</strong>. G3 still
+            holds afterwards, and nothing ships until a human merges the promotion PR there.
+          </p>
+        )}
         {g.changedSinceLastView && (
           <div className="banner stale">
             This spec changed since you last looked (you saw <code>{g.lastViewedSha?.slice(0, 7)}</code>, it is now{" "}
@@ -506,6 +658,68 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               <GitHubLink href={pr.htmlUrl} />
             </p>
           ))}
+        </div>
+      )}
+
+      {/* GS decides on an assembly, not on a document: what the factory built,
+          what it said about it, and whether every task actually landed. */}
+      {g.assembly && (
+        <div className="card">
+          <div className="spread">
+            <h3 style={{ margin: 0 }}>What was assembled</h3>
+            <span className={`badge ${g.assembly.allGreen ? "merge" : "task-start"}`}>
+              {g.assembly.allGreen ? "all tasks landed" : "not every task has landed"}
+            </span>
+          </div>
+          <table className="assembly-table">
+            <thead>
+              <tr>
+                <th scope="col">Task</th>
+                <th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {g.assembly.tasks.map((t) => (
+                <tr key={t.number}>
+                  <td>
+                    #{t.number} {t.title.replace(/^task\([^)]*\):?\s*/i, "")} <GitHubLink href={t.htmlUrl} />
+                  </td>
+                  <td>{t.open ? peopleLabel(t.state) : "Done"}</td>
+                </tr>
+              ))}
+              {g.assembly.tasks.length === 0 && (
+                <tr>
+                  <td colSpan={2} className="muted">
+                    No task sub-issues projected for this epic.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {g.assembly.prs.length > 0 && (
+            <p className="muted">
+              Open against this epic:{" "}
+              {g.assembly.prs.map((pr) => (
+                <span key={pr.id}>
+                  #{pr.number} {pr.title} (CI: {pr.ciStatus ?? "unknown"}) <GitHubLink href={pr.htmlUrl} />{" "}
+                </span>
+              ))}
+            </p>
+          )}
+          {g.assembly.report ? (
+            <>
+              <h4>
+                Latest factory report{g.assembly.report.author && <span className="muted"> — @{g.assembly.report.author}</span>}{" "}
+                <span className="muted">{new Date(g.assembly.report.at).toLocaleString()}</span>
+                {g.assembly.report.htmlUrl && <GitHubLink href={g.assembly.report.htmlUrl} />}
+              </h4>
+              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: g.assembly.report.html }} />
+            </>
+          ) : (
+            <p className="muted">
+              No agent report on this epic yet — the assembly and suite results are on the epic branch's checks.
+            </p>
+          )}
         </div>
       )}
 
@@ -594,8 +808,18 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
             </div>
           )}
           <p className="muted" style={{ marginTop: "0.5rem" }}>
-            Approve posts the literal comment <code>Approved</code> under your GitHub identity; the factory router merges the
-            document PR and advances the pipeline exactly as if you had typed it on GitHub.
+            {g.gate === "staging" ? (
+              <>
+                Approve posts the literal comment <code>Approved</code> under your GitHub identity; the factory router
+                merges the epic onto the integration branch and verifies it there, exactly as if you had typed it on
+                GitHub. This is the release to staging — production is still gate G3.
+              </>
+            ) : (
+              <>
+                Approve posts the literal comment <code>Approved</code> under your GitHub identity; the factory router
+                merges the document PR and advances the pipeline exactly as if you had typed it on GitHub.
+              </>
+            )}
           </p>
           {showRequest && (
             <div style={{ marginTop: "0.5rem" }}>
@@ -633,8 +857,11 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
   type Task = EpicWorkspace["tasks"][number];
   const cols: Array<{ title: string; match: (t: Task) => boolean }> = [
     { title: "Waiting", match: (t) => t.open && (t.state === null || t.state === "factory:design-approved") },
-    { title: "Ready", match: (t) => t.open && t.state === "factory:ready" && t.approvable },
-    { title: "Building", match: (t) => t.open && t.state === "factory:ready" && !t.approvable },
+    // An expedited task belongs under Ready, not Building: it is released and
+    // nothing is running on it yet — the difference from the column next door
+    // is only that the factory, not a person, presses the start.
+    { title: "Ready", match: (t) => t.open && t.state === "factory:ready" && (t.approvable || t.startStatus === "auto") },
+    { title: "Building", match: (t) => t.open && t.state === "factory:ready" && !t.approvable && t.startStatus !== "auto" },
     { title: "In review", match: (t) => t.open && t.state === "factory:in-review" },
     { title: "In test", match: (t) => t.open && t.state === "factory:in-test" },
     { title: "Ship/Done", match: (t) => !t.open || t.state === "factory:ready-to-ship" || t.state === "factory:on-epic" || t.state === "factory:in-staging" || t.state === "factory:deployed" },
@@ -645,6 +872,17 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
   const started = data.tasks.filter((t) => t.startStatus === "approved" || t.startStatus === "running");
   return (
     <div className="tasks-list">
+      {/* Expedited: say once, at the top, why no row is asking for anything.
+          Without this the list reads as a board nobody is working. */}
+      {data.expedite.on && (
+        <div className="banner info">
+          <span className="badge expedite" title={EXPEDITE_TITLE}>
+            {EXPEDITE_BADGE}
+          </span>{" "}
+          The factory starts each task&apos;s implementer, reviewer, QA and assembly itself. Nothing here needs your
+          approval — the next decision is gate GS, when the epic is assembled.
+        </div>
+      )}
       {approvable.length > 0 && (
         <div className="banner info">
           {approvable.length} task{approvable.length === 1 ? "" : "s"} ready to build —{" "}
@@ -677,7 +915,17 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
                 <div className="meta">
                   {/* Same badge vocabulary as the Tree and the thread cards. */}
                   <span
-                    className={`badge ${!t.open ? "merge" : t.state === "factory:blocked" ? "blocked" : t.approvable ? "task-start" : "state"}`}
+                    className={`badge ${
+                      !t.open
+                        ? "merge"
+                        : t.state === "factory:blocked"
+                          ? "blocked"
+                          : t.approvable
+                            ? "task-start"
+                            : t.startStatus === "auto"
+                              ? "expedite"
+                              : "state"
+                    }`}
                   >
                     {t.open ? (t.startStatus === "none" ? peopleLabel(t.state) : START_STATUS_LABEL[t.startStatus]) : "Done"}
                   </span>

@@ -1,4 +1,4 @@
-import { GATE_STATES, phaseOfState, RELEASE_KIND_LABEL } from "@console/core";
+import { deriveExpedited, GATE_STATES, phaseOfState, RELEASE_KIND_LABEL, resolveGateApprovers } from "@console/core";
 import { estates, gateAssignments, issues, issueStateHistory, pullRequests, repos, taskDependencies } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -147,7 +147,13 @@ export function registerFlowRoutes(app: FastifyInstance, deps: AppDeps): void {
           daysInState: daysInState(e.issue.id, e.issue.ghCreatedAt ?? e.issue.ghUpdatedAt),
           rollup,
           blockedCount: rollup.blocked + (e.issue.factoryState === "factory:blocked" ? 1 : 0),
-          gate: gateInfo ? { ...gateInfo, approvers: approversOf.get(`${estate.id}:${gateInfo.gate}`) ?? [] } : null,
+          // Approvers down the fallback chain (GS borrows `release` where an
+          // estate's approver file has no `staging` key), so Flow names the
+          // same people the gate panel and the queue do.
+          gate: gateInfo
+            ? { ...gateInfo, approvers: resolveGateApprovers(gateInfo.gate, (g) => approversOf.get(`${estate.id}:${g}`) ?? []).approvers }
+            : null,
+          expedited: deriveExpedited(e.issue.labels),
           prs: prsOf.get(`${e.issue.repoId}:${e.issue.number}`) ?? [],
           tasks: tasks
             .map((t) => ({

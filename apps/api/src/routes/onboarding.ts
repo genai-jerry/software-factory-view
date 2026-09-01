@@ -316,6 +316,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         spec: approversFromEstate("spec"),
         design: approversFromEstate("design"),
         implementation: approversFromEstate("implementation"),
+        staging: approversFromEstate("staging"),
         release: approversFromEstate("release"),
       };
 
@@ -724,7 +725,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         try {
           const parsed = parseApproverFile(JSON.parse(approversFile.content));
           const collaborators = new Set((await client.listCollaborators(owner, name)).map((c) => c.login));
-          const all = [...new Set([...parsed.spec, ...parsed.design, ...parsed.implementation, ...parsed.release])];
+          const all = [...new Set([...parsed.spec, ...parsed.design, ...parsed.implementation, ...parsed.staging, ...parsed.release])];
           const strangers = all.filter((l) => !collaborators.has(l));
           push(
             "approvers",
@@ -1035,7 +1036,7 @@ async function ensurePull(
 
 /** The consuming repo's whole footprint (FACTORY.md §10), templated. */
 export function stubFiles(
-  approvers: { spec: string[]; design: string[]; implementation: string[]; release: string[] },
+  approvers: { spec: string[]; design: string[]; implementation: string[]; staging: string[]; release: string[] },
   consoleEngine: string,
   branches: { defaultBranch: string; stagingBranch: string | null },
 ): Record<string, string> {
@@ -1155,7 +1156,7 @@ jobs:
     ".github/factory-approvers.json": `${JSON.stringify(
       {
         _comment:
-          "Gate -> GitHub usernames. spec = G1; design = G2; implementation = who may start ready tasks; release = G3. Empty list = any collaborator.",
+          "Gate -> GitHub usernames. spec = G1; design = G2; implementation = who may start ready tasks; staging = GS (release to the integration branch); release = G3. Empty list = any collaborator; an empty staging list falls back to release.",
         ...approvers,
       },
       null,

@@ -18,6 +18,16 @@ for (const vp of VIEWPORTS) {
   test.describe(`${vp.name} ${vp.width}px`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
+    test("expedited workspace and the GS panel do not pan", async ({ page }) => {
+      await page.goto("/e2e.html?screen=expedite");
+      await expect(page.getByText("auto — Implementer next")).toBeVisible();
+      await noPagePan(page);
+
+      await page.goto("/e2e.html?screen=gate-staging");
+      await expect(page.getByRole("heading", { name: /GS — release to staging/ })).toBeVisible();
+      await noPagePan(page);
+    });
+
     test("signed-in shell does not pan", async ({ page }) => {
       await page.goto("/e2e.html?screen=shell");
       await expect(page.getByRole("link", { name: "Factory Console" })).toBeVisible();
@@ -67,6 +77,67 @@ test.describe("phone jobs 360px", () => {
     await expect(page.getByRole("heading", { name: "Spec" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Approve/ })).toHaveCount(0);
     await noPagePan(page);
+  });
+
+  test("expedited epic: badge, auto chips, no approvals to give", async ({ page }) => {
+    await page.goto("/e2e.html?screen=expedite");
+    await expect(page.getByTitle(/factory:expedite/).first()).toBeVisible();
+    // The task board says what runs by itself, and asks for nothing.
+    await expect(page.getByText("auto — Implementer next")).toBeVisible();
+    await expect(page.getByText("auto — QA next")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Start QA" })).toHaveCount(0);
+    // The manual start is reachable, just not the first thing offered.
+    await page.getByText("Start it by hand").first().click();
+    await expect(page.getByRole("button", { name: "Start QA" }).or(page.getByRole("button", { name: "Approve" })).first()).toBeVisible();
+    await noPagePan(page);
+  });
+
+  test("the confirm step lists what expedite waives and what it keeps", async ({ page }) => {
+    await page.goto("/e2e.html?screen=expedite-confirm");
+    await page.getByRole("button", { name: "Expedite…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Turn expedite on?" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText(/G1 — the spec gate/)).toBeVisible();
+    await expect(dialog.getByText(/G2 — the design gate/)).toBeVisible();
+    await expect(dialog.getByText(/Implementation starts/)).toBeVisible();
+    await expect(dialog.getByText(/GS — the release to staging/)).toBeVisible();
+    await expect(dialog.getByText(/G3 — the promotion to production/)).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Turn expedite on" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await noPagePan(page);
+  });
+
+  test("GS panels the assembly and approves to staging, not production", async ({ page }) => {
+    await page.goto("/e2e.html?screen=gate-staging");
+    await expect(page.getByRole("heading", { name: /GS — release to staging/ })).toBeVisible();
+    await expect(page.getByText(/staging, not production/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What was assembled" })).toBeVisible();
+    await expect(page.getByText("all tasks landed")).toBeVisible();
+    await expect(page.getByText(/Assembly green/)).toBeVisible();
+    // The `staging` list is unset on this estate — the panel says whose list it is showing.
+    await expect(page.getByText(/the release approvers stand in/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve" })).toBeVisible();
+    await noPagePan(page);
+  });
+
+  test("G3 is unchanged: merge buttons, no comment approval", async ({ page }) => {
+    await page.goto("/e2e.html?screen=gate-g3");
+    await expect(page.getByRole("heading", { name: /G3 — promotion to production/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /the merge button is the gate/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Merge as @tester" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "What was assembled" })).toHaveCount(0);
+    await noPagePan(page);
+  });
+
+  test("axe on the expedited workspace and the GS panel", async ({ page }) => {
+    for (const screen of ["expedite", "gate-staging"]) {
+      await page.goto(`/e2e.html?screen=${screen}`);
+      const results = await new AxeBuilder({ page }).analyze();
+      expect(results.violations, `${screen}: ${results.violations.map((v) => `${v.id}: ${v.help}`).join("\n")}`).toEqual([]);
+    }
   });
 
   test("sign-in station is full-width", async ({ page }) => {

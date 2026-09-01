@@ -3,7 +3,13 @@ import { auditLog, comments, decisions, issues, repos, threadEntries, threads } 
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
-import { postComment } from "../gh-write.js";
+import {
+  EXPEDITE_LABEL,
+  EXPEDITE_OFF_ACTION,
+  EXPEDITE_ON_ACTION,
+  expediteAvailability,
+} from "../expedite.js";
+import { postComment, writeLabel } from "../gh-write.js";
 import { loadEpic } from "./read.js";
 
 /**
@@ -123,6 +129,56 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url },
     });
     return { ok: true, commentUrl: comment.html_url };
+  });
+
+  /**
+   * The expedite toggle: apply or remove `factory:expedite` on an epic.
+   *
+   * A label write, not a comment — but the same discipline as every other
+   * authoritative act here: it goes out on the acting user's OAuth token, so
+   * GitHub records the human who asked for it and the factory can check them
+   * against its own list (it reverts an application it does not accept, and
+   * says why on the epic). The Console never applies this as the App.
+   *
+   * The state is the label; nothing is stored locally. The audit row is what
+   * lets the workspace say who flipped it and when — including the case where
+   * the factory has since taken the marker back off.
+   */
+  app.post<{ Params: { id: string }; Body: { on?: boolean } }>("/api/epics/:id/expedite", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadEpic(deps, ctx, req.params.id);
+    if (!found) return reply.code(404).send({ error: "epic not found" });
+    const { epic, repo } = found;
+    const on = req.body?.on !== false;
+
+    const availability = expediteAvailability(epic);
+    if (!availability.available) return reply.code(409).send({ error: availability.reason ?? "expedite is not available here" });
+    // Turning on what is already on would post a no-op label write; turning off
+    // what is already off is the same. Answer with the state rather than
+    // pretending something happened.
+    if (availability.on === on) return { ok: true, on, changed: false };
+
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    if (!(await writeLabel(deps, ctx, reply, owner, name, epic.number, EXPEDITE_LABEL, on ? "add" : "remove"))) return;
+
+    await db.insert(auditLog).values({
+      orgId: epic.orgId,
+      actorUserId: ctx.userId,
+      action: on ? EXPEDITE_ON_ACTION : EXPEDITE_OFF_ACTION,
+      target: `${repo.fullName}#${epic.number}`,
+      payload: { actor: ctx.login, label: EXPEDITE_LABEL, dormant: availability.dormant },
+    });
+    // The labels column is refreshed by the webhook projection like any other
+    // GitHub fact; write it here too so the workspace refetch that follows this
+    // response does not draw the toggle back in its old position for the length
+    // of the round trip. Same row, written earlier.
+    await db
+      .update(issues)
+      .set({ labels: on ? [...new Set([...epic.labels, EXPEDITE_LABEL])] : epic.labels.filter((l) => l !== EXPEDITE_LABEL) })
+      .where(eq(issues.id, epic.id));
+
+    return { ok: true, on, changed: true };
   });
 
   /** Create a decision: structured comment on the epic + index row. */

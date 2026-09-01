@@ -96,6 +96,9 @@ export const START_STATUS_LABEL: Record<TaskStartStatus, string> = {
   approved: "Approved — starting",
   running: "Implementer running",
   stalled: "Approved — not started",
+  // Expedite: the epic's marker removed this gate, so there is no approval to
+  // report — only which role the factory is about to run.
+  auto: "auto — Implementer next",
 };
 
 /** The two moments that still want a press — the API decides which, this reads it. */
@@ -107,6 +110,7 @@ function startStatusNote(status: TaskStartStatus, number: number): string {
   if (status === "running") return `An implementer is working on #${number} now — nothing to approve.`;
   if (status === "approved") return `Approved. The factory is starting the implementer on #${number}.`;
   if (status === "stalled") return `Approved, but no implementer started — approve again to retry #${number}.`;
+  if (status === "auto") return `Expedite is on: the factory starts the implementer on #${number} itself.`;
   return `Starts the implementer on #${number}.`;
 }
 
@@ -135,6 +139,23 @@ export function TaskStartGate({
     return (
       <span className="start-status muted" title={note}>
         {START_STATUS_LABEL[status]} — {note}
+      </span>
+    );
+  }
+  // Expedited: the cue, with the approval kept reachable behind a disclosure —
+  // any human may still take a stage over, and an automatic start that did not
+  // fire has to be startable by hand or the task strands.
+  if (status === "auto") {
+    return (
+      <span className="start-status muted">
+        <span className="badge expedite" title={note}>
+          {START_STATUS_LABEL[status]}
+        </span>
+        <details className="manual-start">
+          <summary>Start it by hand</summary>
+          <TaskApproveButton epicId={epicId} taskId={taskId} startGate={startGate} />
+          <span className="muted">Only if the automatic start did not fire — this posts `Approved` on #{number} as you.</span>
+        </details>
       </span>
     );
   }

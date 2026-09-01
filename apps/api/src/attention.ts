@@ -1,7 +1,8 @@
-import { GATE_STATES, READY_STATE, startStatusTakesApproval } from "@console/core";
+import { EPIC_READY_STATE, GATE_STATES, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
+import { loadExpeditedEpics } from "./expedite.js";
 import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
 
 /**
@@ -17,6 +18,12 @@ import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
  *      demoted so ownership always sorts above it
  * Within a rank: age descending. Blocked ages count from the blocked label's
  * own history event, not ghUpdatedAt (which any comment resets).
+ *
+ * An epic carrying `factory:expedite` surfaces only for the decisions expedite
+ * keeps: gate GS at `factory:epic-ready`, gate G3 at `factory:in-staging`, and
+ * `factory:blocked` at any stage. Its G1/G2 approvals and its tasks' start
+ * approvals are the factory's own now, and a queue that goes on asking for
+ * them is asking for work nobody owes — the one thing this queue must never do.
  */
 
 export interface AttentionEntryDto {
@@ -31,6 +38,8 @@ export interface AttentionEntryDto {
   ageDays: number;
   /** For blocked entries: the agent's actual stuck question, when it left one. */
   question: string | null;
+  /** The epic carries `factory:expedite` — rows say so, since it changes what runs itself. */
+  expedited: boolean;
   link: string;
 }
 
@@ -89,6 +98,12 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
     openFactoryIssues.filter((r) => r.issue.factoryState === READY_STATE).map((r) => r.issue.id),
   );
 
+  // The expedite marker sits on the epic; a task is expedited because its epic
+  // is (the factory never copies the label down), so resolve every row's epic
+  // in one query rather than reading the row's own labels — which never carry
+  // it for a task, and would silently leave the whole suppression rule off.
+  const expeditedEpics = await loadExpeditedEpics(deps, openFactoryIssues.map((r) => r.issue.parentIssueId ?? r.issue.id));
+
   // Fast-track issues have no gate — their one human step is merging the PR
   // the fast lane opened. Look those PRs up in one batch so the queue can
   // announce them; without this the fast lane finished in silence.
@@ -119,6 +134,7 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
     const state = issue.factoryState!;
     const ageDays = Math.floor((now - issue.ghUpdatedAt.getTime()) / DAY_MS);
     const epicId = issue.parentIssueId ?? issue.id;
+    const expedited = expeditedEpics.has(epicId);
 
     if (state === "factory:blocked") {
       const meta = blockedMeta.get(issue.id);
@@ -143,6 +159,7 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
         state,
         ageDays: blockedAgeDays,
         question: meta?.question ?? null,
+        expedited,
         link: `/epics/${epicId}`,
       });
       continue;
@@ -162,6 +179,7 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
           state,
           ageDays,
           question: null,
+          expedited,
           link: `/epics/${epicId}`,
         });
       }
@@ -170,10 +188,13 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
 
     const gateInfo = GATE_STATES[state];
     if (!gateInfo) continue;
-    const listEmpty = gateListEmpty(row.estateId, gateInfo.gate);
-    if (!amOnGate(row.estateId, row.repoId, gateInfo.gate) && !listEmpty) continue;
+    // Which list actually owns this gate here: GS reads `staging`, falling back
+    // to `release` on an estate whose approver file predates it (GATE_FALLBACK).
+    const owning = resolveGateApprovers(gateInfo.gate, (g) => [...(gateApprovers.get(`${row.estateId}:${g}`) ?? [])]);
+    const listEmpty = owning.approvers.length === 0;
+    if (!amOnGate(row.estateId, row.repoId, owning.gate) && !listEmpty) continue;
 
-    const whyBase = listEmpty ? "approver list is empty — any collaborator may act" : `you are on the ${gateInfo.gate} approver list`;
+    const whyBase = listEmpty ? "approver list is empty — any collaborator may act" : `you are on the ${owning.gate} approver list`;
     const base = {
       epicId: issue.kind === "epic" ? issue.id : epicId,
       issueId: issue.id,
@@ -182,11 +203,29 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       state,
       ageDays,
       question: null,
+      expedited,
     };
     if (issue.kind === "epic" && (state === "factory:spec-ready" || state === "factory:design-ready")) {
+      // Expedite approves G1 and G2 itself. Listing them anyway would ask a
+      // person for an approval the factory is not waiting for — and pressing it
+      // is harmless but teaches the queue's rows to be ignored.
+      if (expedited) continue;
       entries.push({ kind: "gate", rank: 2, whyYou: `${gateInfo.label} awaits approval — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });
+    } else if (issue.kind === "epic" && state === EPIC_READY_STATE) {
+      // Gate GS, universal: every epic passes through it, expedited or not.
+      // This is the item that replaces the old "all tasks are on the epic
+      // branch — start the Release Manager" reading of the assembly stage.
+      entries.push({
+        kind: "gate",
+        rank: 2,
+        whyYou: `${gateInfo.label} — release to staging is waiting on you; ${whyBase}`,
+        ...base,
+        link: `/epics/${issue.id}?tab=gate`,
+      });
     } else if (issue.kind === "task" && state === READY_STATE) {
-      if (!startStatusTakesApproval(startStatusOf(issue, startFacts.get(issue.id)))) continue;
+      // `startStatusOf` answers `auto` for an expedited task, which takes no
+      // approval — the per-task suppression rule falls straight out of it.
+      if (!startStatusTakesApproval(startStatusOf(issue, startFacts.get(issue.id), expedited))) continue;
       entries.push({ kind: "task-start", rank: 3, whyYou: `task awaits an implementation start — ${whyBase}`, ...base, link: `/epics/${epicId}?tab=tasks` });
     } else if (issue.kind === "epic" && state === "factory:in-staging") {
       entries.push({ kind: "merge", rank: 2, whyYou: `release train is green on staging and awaits promotion — ${whyBase}`, ...base, link: `/epics/${issue.id}?tab=gate` });

@@ -37,6 +37,18 @@ export interface NextStepContext {
   startStatus?: TaskStartStatus;
   /** For an epic at `factory:design-approved`: how far its tasks have got. */
   tasks?: NextStepProgress;
+  /**
+   * The epic carries `factory:expedite` (a task inherits its epic's marker).
+   * Every state whose move is a human *start* answers differently while it is
+   * on — see `EXPEDITED` below.
+   */
+  expedited?: boolean;
+  /**
+   * A factory run is live on this issue right now (`factory:in-progress`).
+   * Only read under `expedited`: "auto — Reviewer next" over a Reviewer that is
+   * already running invites the second start the run marker exists to prevent.
+   */
+  running?: boolean;
 }
 
 /** The slice of the task rollup that changes what an epic's next step is. */
@@ -54,6 +66,15 @@ export function isStartableRole(value: unknown): value is StartableRole {
   return typeof value === "string" && (STARTABLE_ROLES as readonly string[]).includes(value);
 }
 
+/** How each role is named at the head of a sentence. */
+const ROLE_LABEL: Record<StartableRole, string> = {
+  architect: "The Architect",
+  reviewer: "The Reviewer",
+  qa: "QA",
+  release: "The Release Manager",
+  ops: "Ops",
+};
+
 export interface NextStep {
   /** Who moves it from here. `{approvers}` already filled in. */
   who: string;
@@ -65,6 +86,12 @@ export interface NextStep {
   startLabel: string | null;
   /** True when the wait is on a person rather than on the factory. */
   waitsOnPerson: boolean;
+  /**
+   * The factory takes this hop itself (expedite). `startRole` may still be
+   * set: any human may take a stage over, so the Console demotes the start
+   * button behind an explicit affordance rather than removing it.
+   */
+  automatic: boolean;
 }
 
 interface Entry {
@@ -73,6 +100,7 @@ interface Entry {
   startRole?: StartableRole;
   startLabel?: string;
   waitsOnPerson?: boolean;
+  automatic?: boolean;
 }
 
 const TABLE: Record<string, Entry> = {
@@ -151,7 +179,12 @@ const TABLE: Record<string, Entry> = {
   },
   "factory:on-epic": {
     who: "the rest of the epic",
-    how: "Merged onto the epic branch and green there. It waits until every task is, then the Release Manager carries the whole epic to staging.",
+    how: "Merged onto the epic branch and green there. It waits until every task is, then the Release Manager assembles the epic and puts it at gate GS.",
+  },
+  "factory:epic-ready": {
+    who: "gate GS — {approvers}",
+    how: "The epic is assembled and green on its own branch. Read the assembly report, then Approve — that releases it to the integration branch, not to production; G3 still holds before anything ships.",
+    waitsOnPerson: true,
   },
   "factory:in-staging": {
     who: "gate G3 — {approvers}",
@@ -186,11 +219,72 @@ const TABLE: Record<string, Entry> = {
 };
 
 /**
+ * What the same states mean while the epic carries `factory:expedite`.
+ *
+ * Expedite does not skip work, it removes the human *starts*: the factory
+ * approves G1 and G2 itself and runs each task's implementer, reviewer, QA and
+ * assembly as the previous one lands. So every line here answers "the factory"
+ * where the base table answers "you" — while still naming the role, because a
+ * human may take any stage over; `automatic` is what lets the Console demote
+ * the start button rather than remove it.
+ *
+ * Deliberately absent — and this is the point of the mode, not an omission:
+ * `factory:epic-ready` (GS) and `factory:in-staging` (G3) are the two
+ * decisions expedite keeps, so they answer exactly as they do without it. So
+ * does `factory:blocked`: an agent's question is not a start.
+ */
+const EXPEDITED: Record<string, Entry> = {
+  "factory:spec-ready": {
+    who: "the factory — expedited",
+    how: "Expedite is on: the factory approves G1 itself and starts the Planner. Read the spec if you want to — nothing is waiting on you.",
+    automatic: true,
+  },
+  "factory:design-ready": {
+    who: "the factory — expedited",
+    how: "Expedite is on: the factory approves G2 itself and releases the unblocked tasks. Nothing is waiting on you.",
+    automatic: true,
+  },
+  "factory:in-review": {
+    who: "the factory — expedited",
+    how: "Expedite is on: the Reviewer runs on this task by itself. Start it by hand only if the automatic run did not fire.",
+    startRole: "reviewer",
+    startLabel: "Start the Reviewer",
+    automatic: true,
+  },
+  "factory:in-test": {
+    who: "the factory — expedited",
+    how: "Expedite is on: QA runs on this task by itself. Start it by hand only if the automatic run did not fire.",
+    startRole: "qa",
+    startLabel: "Start QA",
+    automatic: true,
+  },
+  "factory:ready-to-ship": {
+    who: "the factory — expedited",
+    how: "Expedite is on: the Release Manager merges this task onto the epic branch by itself. Start it by hand only if the automatic run did not fire.",
+    startRole: "release",
+    startLabel: "Start the Release Manager",
+    automatic: true,
+  },
+  "factory:on-epic": {
+    who: "the factory — expedited",
+    how: "Merged onto the epic branch and green there. Expedite carries the epic to gate GS as soon as every task is here.",
+    automatic: true,
+  },
+};
+
+/** The one entry `factory:ready` has while expedite is on — there is no start gate. */
+const EXPEDITED_READY: Entry = {
+  who: "the factory — expedited",
+  how: "Expedite is on: the factory starts the Implementer on this task itself. Nothing to approve.",
+  automatic: true,
+};
+
+/**
  * What `factory:ready` means right now. `awaiting` (and an absent status, for
  * a caller that has not read the start gate) keeps the table's own entry:
  * there, asking for the approval is right.
  */
-function readyEntry(status: TaskStartStatus | undefined): Entry | undefined {
+function readyEntry(status: TaskStartStatus | undefined, expedited: boolean | undefined): Entry | undefined {
   switch (status) {
     case "running":
       return {
@@ -203,22 +297,32 @@ function readyEntry(status: TaskStartStatus | undefined): Entry | undefined {
         how: "Approved. The factory is starting the implementer.",
       };
     case "stalled":
-      return {
-        who: "the implementation approvers — {approvers}",
-        how: "Approved, but no implementer started — approve again to retry.",
-        waitsOnPerson: true,
-      };
+      // Under expedite the factory retries the start itself, and a second
+      // `Approved` landing beside its retry starts a second implementer — so
+      // the expedited answer wins over the retry ask.
+      if (!expedited) {
+        return {
+          who: "the implementation approvers — {approvers}",
+          how: "Approved, but no implementer started — approve again to retry.",
+          waitsOnPerson: true,
+        };
+      }
+      break;
     default:
-      return undefined;
+      break;
   }
+  // `auto` is the status the start gate reports for an expedited task, but a
+  // caller that only knows the marker gets the same answer.
+  return status === "auto" || expedited ? EXPEDITED_READY : undefined;
 }
 
 /**
  * What `factory:design-approved` means once the Dispatcher has fanned the
  * epic out. Before that (no tasks yet) the table's entry is still true.
  */
-function buildingEntry(tasks: NextStepProgress | undefined): Entry | undefined {
+function buildingEntry(tasks: NextStepProgress | undefined, expedited: boolean | undefined): Entry | undefined {
   if (!tasks || tasks.total === 0) return undefined;
+  // A halted task is a question, not a start: expedite has no answer for it.
   if (tasks.blocked > 0) {
     return {
       who: "you — an agent halted",
@@ -227,6 +331,15 @@ function buildingEntry(tasks: NextStepProgress | undefined): Entry | undefined {
     };
   }
   if (tasks.done === tasks.total) {
+    if (expedited) {
+      return {
+        who: "the factory — expedited",
+        how: `All ${tasks.total} tasks are done; the Release Manager assembles the epic and puts it at gate GS by itself. Start it by hand only if the automatic run did not fire.`,
+        startRole: "release",
+        startLabel: "Start the Release Manager",
+        automatic: true,
+      };
+    }
     return {
       who: "you, then the Release Manager",
       how: `All ${tasks.total} tasks are done. Start the Release Manager to carry the epic onward — this state starts nothing on its own.`,
@@ -258,10 +371,27 @@ const OFF_RAIL: Entry = {
  */
 export function nextStep(state: string | null, approvers: string[] = [], ctx: NextStepContext = {}): NextStep {
   const live =
-    state === READY_STATE ? readyEntry(ctx.startStatus)
-    : state === DESIGN_APPROVED_STATE ? buildingEntry(ctx.tasks)
+    state === READY_STATE ? readyEntry(ctx.startStatus, ctx.expedited)
+    : state === DESIGN_APPROVED_STATE ? buildingEntry(ctx.tasks, ctx.expedited)
     : undefined;
-  const entry = live ?? (state ? TABLE[state] : undefined) ?? (state ? undefined : OFF_RAIL);
+  // The expedited table only covers the states whose move expedite takes over;
+  // everywhere else (the two gates it keeps, blocked, the fast lane) it falls
+  // through to the base table, which is why a non-expedited caller reads
+  // exactly as it did before.
+  const expedited = ctx.expedited && state ? EXPEDITED[state] : undefined;
+  // The automatic hop is happening right now: say so instead of naming the
+  // role as "next", which reads as an invitation to start the run that is
+  // already going (the router does not check the marker — a second start is a
+  // second agent on the same issue).
+  const runningNow: Entry | undefined =
+    expedited?.startRole && ctx.running
+      ? {
+          who: "the factory — expedited",
+          how: `${ROLE_LABEL[expedited.startRole]} is running on this now. Nothing to start.`,
+          automatic: true,
+        }
+      : undefined;
+  const entry = live ?? runningNow ?? expedited ?? (state ? TABLE[state] : undefined) ?? (state ? undefined : OFF_RAIL);
   const e = entry ?? { who: `whoever owns ${state}`, how: "No instruction on file for this state.", waitsOnPerson: true };
   const who = approvers.length > 0 ? approvers.map((a) => `@${a}`).join(", ") : "any collaborator";
   const fill = (text: string) => text.replace("{approvers}", who);
@@ -271,14 +401,20 @@ export function nextStep(state: string | null, approvers: string[] = [], ctx: Ne
     startRole: e.startRole ?? null,
     startLabel: e.startLabel ?? null,
     waitsOnPerson: e.waitsOnPerson ?? false,
+    automatic: e.automatic ?? false,
   };
 }
 
-/** The gate whose approver list a state's `{approvers}` refers to. */
+/**
+ * The gate whose approver list a state's `{approvers}` refers to. `staging` is
+ * GS's own key; where an estate has not got one, `gateApproverChain` sends the
+ * caller on to `release` (packages/core/src/factory.ts).
+ */
 export const GATE_FOR_APPROVERS: Record<string, string> = {
   "factory:release-ready": "release_scope",
   "factory:spec-ready": "spec",
   "factory:design-ready": "design",
   "factory:ready": "implementation",
+  "factory:epic-ready": "staging",
   "factory:in-staging": "release",
 };

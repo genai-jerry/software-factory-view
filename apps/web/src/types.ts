@@ -124,6 +124,8 @@ export interface AttentionEntry {
   ageDays: number;
   /** For blocked entries: the agent's actual stuck question, when it left one. */
   question: string | null;
+  /** The row's epic carries `factory:expedite` — what it still surfaces for is narrower. */
+  expedited: boolean;
   link: string;
 }
 
@@ -198,6 +200,8 @@ export interface FlowEpic {
   rollup: TaskRollup;
   blockedCount: number;
   gate: { gate: string; label: string; approvers: string[] } | null;
+  /** The epic carries `factory:expedite`. */
+  expedited: boolean;
   /** Open PRs tied to this epic by the factory's branch naming — for a fast-track epic, the PR awaiting merge. */
   prs: EpicPr[];
   tasks: Array<{
@@ -257,6 +261,8 @@ export interface BoardCard {
   open: boolean;
   daysInState: number;
   blocked: boolean;
+  /** The epic carries `factory:expedite`. */
+  expedited: boolean;
   tasks: TaskRollup;
 }
 
@@ -291,6 +297,18 @@ export interface EpicWorkspace {
   repo: { id: string; fullName: string; defaultBranch: string };
   pipeline: string[];
   gate: { gate: string; label: string; amApprover: boolean; approvers: string[] } | null;
+  /**
+   * The expedite marker and its toggle: on/off from the label, whether it may
+   * be flipped here and why not, and the Console's record of the last flip —
+   * `lastFlip.on` while `on` is false is the factory having reverted it.
+   */
+  expedite: {
+    on: boolean;
+    available: boolean;
+    dormant: boolean;
+    reason: string | null;
+    lastFlip: { on: boolean; actor: string | null; at: string } | null;
+  };
   /** The task start gate — who may Approve a `factory:ready` task into build. */
   startGate: { approvers: string[]; amApprover: boolean };
   tasks: Array<{
@@ -362,7 +380,16 @@ export interface GatePanelData {
   state: string | null;
   amApprover: boolean;
   approvers: string[];
+  /** The gate whose list is standing in, when this gate's own is unset (GS → release). */
+  approversFrom: string | null;
   commentApprovable: boolean;
+  /** Gate GS only: what the factory assembled, which is what GS decides on. */
+  assembly: {
+    tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
+    allGreen: boolean;
+    report: { author: string | null; at: string; html: string; htmlUrl: string | null } | null;
+    prs: PrSummary[];
+  } | null;
   documentPrs: PrSummary[];
   releasePrs: PrSummary[];
   artifacts: Array<{ path: string; kind: string; sha: string | null; mergedSha: string | null; html: string | null }>;
@@ -437,7 +464,7 @@ export interface TreeDep {
  * derives this from the run marker and the approval comment, because the
  * `factory:ready` label alone covers all three (see core/start-gate.ts).
  */
-export type TaskStartStatus = "none" | "awaiting" | "approved" | "running" | "stalled";
+export type TaskStartStatus = "none" | "awaiting" | "approved" | "running" | "stalled" | "auto";
 
 /**
  * What is expected of the next actor — the same answer the factory posts on
@@ -452,6 +479,12 @@ export interface NextStep {
   startRole: "architect" | "reviewer" | "qa" | "release" | "ops" | null;
   startLabel: string | null;
   waitsOnPerson: boolean;
+  /**
+   * The factory takes this hop itself (expedite). `startRole` may still be
+   * set — a human may take any stage over — so the Console shows the automatic
+   * cue and keeps the manual start behind an explicit affordance.
+   */
+  automatic: boolean;
 }
 
 export interface TreeNode {
@@ -487,6 +520,8 @@ export interface EpicTree {
     /** Derived progress where the label cannot carry it; null means use the label. */
     status: string | null;
     nextStep: NextStep;
+    /** The epic carries `factory:expedite`; every node below inherits it. */
+    expedited: boolean;
   };
   startGate: { approvers: string[]; amApprover: boolean };
   nodes: TreeNode[];

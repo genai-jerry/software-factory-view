@@ -37,6 +37,7 @@ const readyTask = {
     startRole: null,
     startLabel: null,
     waitsOnPerson: true,
+    automatic: false,
   },
 };
 
@@ -48,7 +49,7 @@ const waitingTask = {
   state: null,
   startStatus: "none" as const,
   approvable: false,
-  nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false },
+  nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false, automatic: false },
 };
 
 function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
@@ -64,11 +65,12 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
       htmlUrl: "https://github.com/acme/app/issues/250",
       labels: [],
       status: "Building 0/2",
-      nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false },
+      nextStep: { who: "the factory", how: "Nothing to do.", startRole: null, startLabel: null, waitsOnPerson: false, automatic: false },
     },
     repo: { id: "repo-1", fullName: "acme/app", defaultBranch: "main" },
     pipeline: [],
     gate: null,
+    expedite: { on: false, available: true, dormant: false, reason: null, lastFlip: null },
     startGate: { approvers: [], amApprover: true },
     tasks: [readyTask, waitingTask],
     rollup: { total: 2, ready: 1, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 1 },
@@ -96,8 +98,9 @@ const tree: EpicTree = {
     repo: "acme/app",
     rollup: { total: 2, ready: 1, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 1 },
     status: "Building 0/2",
-    nextStep: { who: "its tasks", how: "Building — 0 of 2 tasks done.", startRole: null, startLabel: null, waitsOnPerson: false },
+    nextStep: { who: "its tasks", how: "Building — 0 of 2 tasks done.", startRole: null, startLabel: null, waitsOnPerson: false, automatic: false },
     gate: null,
+    expedited: false,
   },
   startGate: { approvers: [], amApprover: true },
   nodes: [
@@ -123,6 +126,7 @@ const tree: EpicTree = {
     startRole: null,
     startLabel: null,
     waitsOnPerson: true,
+    automatic: false,
   },
     },
   ],
@@ -281,6 +285,7 @@ describe("every card says what is expected next", () => {
     startRole: "reviewer" as const,
     startLabel: "Start the Reviewer",
     waitsOnPerson: true,
+    automatic: false,
   };
   const inReview = {
     ...readyTask,
@@ -303,7 +308,7 @@ describe("every card says what is expected next", () => {
       state: "factory:intake",
       startStatus: "none" as const,
       approvable: false,
-      nextStep: { who: "the factory", how: "The Intake Analyst is drafting the spec.", startRole: null, startLabel: null, waitsOnPerson: false },
+      nextStep: { who: "the factory", how: "The Intake Analyst is drafting the spec.", startRole: null, startLabel: null, waitsOnPerson: false, automatic: false },
     };
     renderIn(<TasksTab data={workspace({ tasks: [intake] })} />);
     expect(screen.getByText(/Next: the factory/)).toBeTruthy();

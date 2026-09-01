@@ -258,6 +258,7 @@ const GATE_THREAD_FOR_STATE: Record<string, string> = {
   "factory:design-approved": "gate/design",
   "factory:ready-to-ship": "gate/release",
   "factory:on-epic": "gate/release",
+  "factory:epic-ready": "gate/staging",
   "factory:in-staging": "gate/release",
   "factory:deployed": "gate/release",
 };
@@ -437,6 +438,10 @@ const DEFAULT_EPIC_THREADS: Array<{ topicKind: string; topicRef: string; title: 
   { topicKind: "artifact", topicRef: "artifact/tasks", title: "Tasks (plan)" },
   { topicKind: "gate", topicRef: "gate/spec", title: "Gate G1 — spec" },
   { topicKind: "gate", topicRef: "gate/design", title: "Gate G2 — design" },
+  // GS holds at factory:epic-ready — the release to the integration branch.
+  // Its own thread, not G3's: the two gates decide different things, and the
+  // open-questions guard reads them apart.
+  { topicKind: "gate", topicRef: "gate/staging", title: "Gate GS — staging release" },
   { topicKind: "gate", topicRef: "gate/release", title: "Gate G3 — release" },
   { topicKind: "inbox", topicRef: "inbox", title: "Inbox" },
 ];

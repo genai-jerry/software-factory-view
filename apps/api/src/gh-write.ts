@@ -60,3 +60,54 @@ export async function postComment(
     return null;
   }
 }
+
+/**
+ * Add or remove one label as the acting user, with the same refusal handling
+ * as `postComment` — a label write carries authority (the factory reads
+ * `factory:expedite` as an instruction and checks who applied it), so it goes
+ * out on the user's own token, never the App's.
+ *
+ * Returns `false` once the reply has been sent, so callers read:
+ *
+ *     if (!(await writeLabel(...))) return;
+ */
+export async function writeLabel(
+  deps: AppDeps,
+  ctx: RequestCtx,
+  reply: FastifyReply,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  label: string,
+  action: "add" | "remove",
+): Promise<boolean> {
+  const target = `${owner}/${repo}#${issueNumber}`;
+  let gh;
+  try {
+    gh = userClient(deps, ctx);
+  } catch (err) {
+    void reply.code(401).send({ error: `${(err as Error).message}` });
+    return false;
+  }
+  try {
+    if (action === "add") await gh.addLabels(owner, repo, issueNumber, [label]);
+    else await gh.removeLabel(owner, repo, issueNumber, label);
+    return true;
+  } catch (err) {
+    if (err instanceof GitHubHttpError) {
+      const detail = githubMessage(err);
+      if (err.status === 401) {
+        void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign out and back in` });
+      } else if (err.status === 403 || err.status === 404) {
+        void reply.code(403).send({
+          error: `GitHub declined to ${action} \`${label}\` on ${target}: ${detail}. Labelling needs write access to the repository, and the label has to exist — run the Labels step in Onboarding if it does not.`,
+        });
+      } else {
+        void reply.code(502).send({ error: `GitHub declined to ${action} \`${label}\` on ${target}: ${detail}` });
+      }
+      return false;
+    }
+    void reply.code(502).send({ error: `could not reach GitHub to ${action} \`${label}\` on ${target}: ${(err as Error).message}` });
+    return false;
+  }
+}

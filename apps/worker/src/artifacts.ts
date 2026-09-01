@@ -152,7 +152,10 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
     return; // malformed file — the validation suite reports it; the mirror keeps its last good state
   }
   await db.delete(gateAssignments).where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.repoId, repo.id)));
-  for (const gate of ["spec", "design", "implementation", "release"] as const) {
+  // `staging` (gate GS) is newer than most approver files; an absent key parses
+  // to an empty list here and the readers fall back to `release` (core:
+  // GATE_FALLBACK) rather than showing the staging gate to nobody.
+  for (const gate of ["spec", "design", "implementation", "staging", "release"] as const) {
     for (const login of parsed[gate]) {
       await db
         .insert(gateAssignments)
