@@ -167,9 +167,14 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
 
 /**
  * The Profiler's fixed working branch (commands/profiler.md in the factory
- * repo): its correction PR is always `factory/profile` → the default branch.
- * That constant is what lets webhook events be attributed to the profile
- * onboarding step without the Console ever reading the run's log.
+ * repo): its correction PR always has head `factory/profile`. That constant
+ * is what lets webhook events be attributed to the profile onboarding step
+ * without the Console ever reading the run's log.
+ *
+ * Matched on `head.ref` only, deliberately: the PR's BASE moved to the
+ * integration branch when the factory stopped sending documents straight to
+ * the default branch (FACTORY.md §6), and it is the default branch only for a
+ * repo with no integration branch. The head is the stable half.
  */
 const PROFILE_BRANCH = "factory/profile";
 
