@@ -2,6 +2,11 @@
  * Constants describing the factory's label state machine. These mirror
  * claude-software-factory (FACTORY.md §3, scripts/setup-labels.sh) and must
  * stay in sync with it — the Console renders factory state, never invents it.
+ *
+ * The colours are not decoration: onboarding creates and repairs labels from
+ * this table, and `setup-labels.sh` does the same from its own. A value that
+ * differs between the two does not settle — each run rewrites what the other
+ * wrote, and the label flickers. Copy from `setup-labels.sh`; never pick one.
  */
 
 export const FACTORY_LABELS = [
@@ -19,8 +24,8 @@ export const FACTORY_LABELS = [
   { name: "factory:in-review", color: "C98A1B", description: "Draft PR under agent review" },
   { name: "factory:in-test", color: "D4A017", description: "QA verifying WHEN/THEN scenarios" },
   { name: "factory:ready-to-ship", color: "6AA84F", description: "Green + approved; awaiting the merge onto the epic branch (or staging when the epic has none)" },
-  { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; awaiting the epic's integration merge" },
-  { name: "factory:epic-ready", color: "46A06B", description: "Epic fully assembled and green on its own branch; awaiting gate GS, the release to staging" },
+  { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; waiting for the rest of the epic" },
+  { name: "factory:epic-ready", color: "41A08A", description: "Epic fully assembled and green; awaiting gate GS (release to staging)" },
   { name: "factory:in-staging", color: "3D9970", description: "Merged to staging and verified there; awaiting gate G3 promotion to the default branch" },
   { name: "factory:deployed", color: "0B8043", description: "In production; soak in progress" },
   { name: "factory:fast-track", color: "8C8C8C", description: "Small fix bypassing OpenSpec ceremony" },
@@ -79,7 +84,7 @@ export const DESIGN_APPROVED_STATE = "factory:design-approved";
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
   { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
-  { name: EXPEDITE_LABEL, color: "D93F0B", description: "Run this epic without the per-stage human starts (marker, not a state); staging and production gates still hold" },
+  { name: EXPEDITE_LABEL, color: "D93F87", description: "Auto-advance every stage after the spec, up to the staging gate (kind, not a state)" },
 ] as const;
 
 export type FactoryState = (typeof FACTORY_LABELS)[number]["name"];
