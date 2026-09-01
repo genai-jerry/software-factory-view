@@ -238,6 +238,7 @@ const gsPanel: GatePanelData = {
   changedSinceLastView: false,
   lastViewedSha: null,
   openQuestions: [],
+  openQuestionAreas: [],
 };
 
 describe("the GS gate panel", () => {

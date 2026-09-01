@@ -31,6 +31,7 @@ const panel: GatePanelData = {
   changedSinceLastView: false,
   lastViewedSha: null,
   openQuestions: [],
+  openQuestionAreas: [],
 };
 
 function renderGate() {
@@ -85,5 +86,25 @@ describe("the approve button reports its own failures", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
     await userEvent.click(ack);
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+});
+
+describe("open questions on the design name which part of it is unresolved", () => {
+  it("lists the design's own by-area breakdown alongside the thread count", async () => {
+    vi.mocked(api.get).mockReset().mockResolvedValue({
+      ...panel,
+      openQuestions: [{ id: "t1", title: "Gate G2 — design", topicRef: "gate/design", entryCount: 3 }],
+      openQuestionAreas: [
+        { area: "coaching-hub", item: "Manager's team view", questionNumbers: ["6", "8"] },
+        { area: "coaching-hub", item: "Mixed history stays separated", questionNumbers: ["6"] },
+      ],
+    } as never);
+
+    renderGate();
+    await screen.findByRole("button", { name: "Approve" });
+
+    expect(screen.getByText("Gate G2 — design (3 entries)")).toBeTruthy();
+    expect(screen.getByText("coaching-hub — Manager's team view (Q6, Q8)")).toBeTruthy();
+    expect(screen.getByText("coaching-hub — Mixed history stays separated (Q6)")).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import {
+  artifactCache,
   changeArtifacts,
   changes,
   estates,
@@ -194,5 +195,73 @@ describe("a GitHub refusal reaches the caller", () => {
     const res = await approve({ acknowledgeOpenQuestions: true });
     expect(res.statusCode).toBe(401);
     expect(res.json().error).toContain("sign in again");
+  });
+});
+
+describe("the gate panel names which part of the design has open questions", () => {
+  it("parses the design doc's own Open questions by area table", async () => {
+    const d = deps.dbh.db;
+    const org = (await d.select().from(orgs).limit(1))[0]!;
+    const estate = (await d.select().from(estates).limit(1))[0]!;
+    const repo = (
+      await d.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: "R2", fullName: "acme/app2" }).returning()
+    )[0]!;
+    const epic = (
+      await d
+        .insert(issues)
+        .values({
+          orgId: org.id,
+          repoId: repo.id,
+          ghNodeId: "I2",
+          number: 2,
+          title: "epic 2",
+          kind: "epic",
+          state: "open",
+          factoryState: "factory:design-ready",
+          ghUpdatedAt: new Date("2026-08-10T00:00:00Z"),
+          ghCreatedAt: new Date("2026-08-01T00:00:00Z"),
+          htmlUrl: "https://gh/2",
+        })
+        .returning()
+    )[0]!;
+    const change = (
+      await d.insert(changes).values({ orgId: org.id, estateId: estate.id, epicIssueId: epic.id, slug: "add-coaching" }).returning()
+    )[0]!;
+
+    const sha = "abc123";
+    const designMd = [
+      "## Open Questions",
+      "",
+      "1. Should the manager's team view show mixed history separately?",
+      "",
+      "| Area | Item | Questions |",
+      "| --- | --- | --- |",
+      "| coaching-hub | Manager's team view | 6, 8 |",
+      "| coaching-hub | Mixed history stays separated | 6 |",
+      "",
+    ].join("\n");
+    await d.insert(artifactCache).values({
+      orgId: org.id,
+      repoId: repo.id,
+      path: "openspec/changes/2-add-coaching/design.md",
+      commitSha: sha,
+      encryptedContent: encryptSecret(designMd, MASTER_KEY),
+    });
+    await d.insert(changeArtifacts).values({
+      orgId: org.id,
+      changeId: change.id,
+      repoId: repo.id,
+      kind: "design",
+      path: "openspec/changes/2-add-coaching/design.md",
+      latestSha: sha,
+      mergedSha: sha,
+    });
+
+    const panel = await app.inject({ method: "GET", url: `/api/epics/${epic.id}/gate`, headers: { cookie } });
+    expect(panel.statusCode).toBe(200);
+    expect(panel.json().openQuestionAreas).toEqual([
+      { area: "coaching-hub", item: "Manager's team view", questionNumbers: ["6", "8"] },
+      { area: "coaching-hub", item: "Mixed history stays separated", questionNumbers: ["6"] },
+    ]);
   });
 });

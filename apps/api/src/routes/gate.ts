@@ -1,4 +1,4 @@
-import { APPROVED_BODY, GATE_STATES, GitHubHttpError, decryptSecret } from "@console/core";
+import { APPROVED_BODY, GATE_STATES, GitHubHttpError, decryptSecret, parseOpenQuestionAreas } from "@console/core";
 import {
   artifactCache,
   auditLog,
@@ -94,6 +94,11 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     );
 
     const rendered = [];
+    // The design doc's own "Open questions by area" table (architect.md step
+    // 3), when the artifact under review has one — kept from the raw markdown
+    // the loop below is already decrypting, so the Decide panel can name which
+    // part of the design an open question is about instead of a bare count.
+    let openQuestionAreas: ReturnType<typeof parseOpenQuestionAreas> = [];
     for (const a of relevant) {
       const sha = a.latestSha ?? a.mergedSha;
       let html: string | null = null;
@@ -105,7 +110,11 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
             .where(and(eq(artifactCache.repoId, a.repoId), eq(artifactCache.path, a.path), eq(artifactCache.commitSha, sha)))
             .limit(1)
         )[0];
-        if (cached) html = renderMarkdown(decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY), { repoId: repo.id });
+        if (cached) {
+          const raw = decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY);
+          html = renderMarkdown(raw, { repoId: repo.id });
+          if (a.kind === "design") openQuestionAreas = parseOpenQuestionAreas(raw);
+        }
       }
       rendered.push({ path: a.path, kind: a.kind, sha, mergedSha: a.mergedSha, html });
     }
@@ -149,6 +158,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       changedSinceLastView,
       lastViewedSha: lastView?.lastViewedSha ?? null,
       openQuestions,
+      openQuestionAreas,
     };
   });
 

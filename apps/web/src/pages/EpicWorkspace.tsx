@@ -777,6 +777,18 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               ) : (
                 <p style={{ margin: "0.4rem 0" }}>See the Threads tab for the details.</p>
               )}
+              {g.openQuestionAreas.length > 0 && (
+                <>
+                  <p style={{ margin: "0.4rem 0 0.2rem" }}>Specifically, on the design:</p>
+                  <ul style={{ margin: "0 0 0.4rem" }}>
+                    {g.openQuestionAreas.map((a, i) => (
+                      <li key={`${a.area}-${a.item}-${i}`}>
+                        {a.area} — {a.item} (Q{a.questionNumbers.join(", Q")})
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               <label>
                 <input type="checkbox" style={{ width: "auto", marginRight: 6 }} checked={ack} onChange={(e) => setAck(e.target.checked)} />
                 Approve anyway — this acknowledgement is recorded in the audit log

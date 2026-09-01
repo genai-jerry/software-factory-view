@@ -397,6 +397,8 @@ export interface GatePanelData {
   changedSinceLastView: boolean;
   lastViewedSha: string | null;
   openQuestions: Array<{ id: string; title: string; topicRef: string; entryCount: number }>;
+  /** From the design doc's own "Open questions by area" table, when it has one — which part of the design each open question is about. */
+  openQuestionAreas: Array<{ area: string; item: string; questionNumbers: string[] }>;
 }
 
 export interface PrSummary {
