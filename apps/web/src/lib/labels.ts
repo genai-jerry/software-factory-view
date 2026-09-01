@@ -30,6 +30,7 @@ export const PEOPLE_LABEL: Record<string, string> = {
   "factory:in-test": "In test",
   "factory:ready-to-ship": "Staging",
   "factory:on-epic": "On epic branch",
+  "factory:epic-ready": "Release to staging",
   "factory:in-staging": "Merge to ship",
   "factory:deployed": "Shipped",
   "factory:blocked": "Agent halted",
@@ -42,8 +43,19 @@ export const PEOPLE_LABEL: Record<string, string> = {
 export const GATE_SHORT: Record<string, string> = {
   "factory:spec-ready": "G1",
   "factory:design-ready": "G2",
+  // GS: the epic is assembled, and releasing it to the integration branch is
+  // a human decision — the one expedite deliberately keeps.
+  "factory:epic-ready": "GS",
   "factory:in-staging": "G3",
 };
+
+/** The one word for the marker, said the same way on every row it appears on. */
+export const EXPEDITE_BADGE = "Expedited";
+
+/** Its tooltip, so a reader who has not met the mode learns it from the badge. */
+export const EXPEDITE_TITLE =
+  "factory:expedite — the factory approves G1 and G2 itself and starts every task stage. " +
+  "The staging (GS) and production (G3) gates still need a human.";
 
 export const PHASE_LABELS = {
   specifying: "Being specified",
@@ -70,6 +82,7 @@ export function attentionReason(kind: string, rank: number, whyYou: string, stat
   if (kind === "gate") {
     if (state === "factory:spec-ready") return "Approve the spec";
     if (state === "factory:design-ready") return "Approve the design";
+    if (state === "factory:epic-ready") return "Release to staging";
     if (state === "factory:in-staging") return "Merge to ship";
     return "Approve at this gate";
   }

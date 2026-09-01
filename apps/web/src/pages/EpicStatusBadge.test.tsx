@@ -33,12 +33,14 @@ const epic: EpicTree["epic"] = {
   gate: null,
   rollup: { total: 4, ready: 1, inReview: 1, inTest: 0, shipping: 0, done: 1, blocked: 0, waiting: 1 },
   status: "Building 1/4",
+  expedited: false,
   nextStep: {
     who: "its tasks",
     how: "Building — 1 of 4 tasks done. Each one moves on its own card; the tabs below have them.",
     startRole: null,
     startLabel: null,
     waitsOnPerson: false,
+    automatic: false,
   },
 };
 
@@ -64,6 +66,7 @@ const node: EpicTree["nodes"][number] = {
     startRole: null,
     startLabel: null,
     waitsOnPerson: false,
+    automatic: false,
   },
 };
 

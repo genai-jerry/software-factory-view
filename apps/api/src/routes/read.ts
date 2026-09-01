@@ -1,8 +1,10 @@
 import {
   decryptSecret,
+  deriveExpedited,
   epicStatus,
   factoryRunIsPending,
   GATE_STATES,
+  IN_PROGRESS_LABEL,
   githubActionsEnabled,
   PIPELINE_ORDER,
   READY_STATE,
@@ -10,6 +12,7 @@ import {
 } from "@console/core";
 import {
   artifactCache,
+  auditLog,
   changeArtifacts,
   changes,
   comments,
@@ -33,7 +36,8 @@ import {
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
-import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
+import { EXPEDITE_ACTIONS, expediteAvailability, loadLastExpediteFlip } from "../expedite.js";
+import { loadApproversForGate, loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
 import { renderMarkdown } from "../render.js";
@@ -207,6 +211,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         open: row.issue.state === "open",
         daysInState: Math.floor(sinceMs / 86_400_000),
         blocked: rollup.blocked > 0 || row.issue.factoryState === "factory:blocked",
+        // The marker changes what the card's state means — an expedited epic
+        // advances between the two remaining gates on its own — so the board
+        // says so rather than leaving the reader to open the workspace.
+        expedited: deriveExpedited(row.issue.labels),
         tasks: rollup,
       });
     }
@@ -253,18 +261,23 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const gateInfo = epic.factoryState ? GATE_STATES[epic.factoryState] : undefined;
     let myGate: { gate: string; label: string; amApprover: boolean; approvers: string[] } | null = null;
     if (gateInfo && epic.state === "open") {
-      const approverRows = await db
-        .select()
-        .from(gateAssignments)
-        .where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.gate, gateInfo.gate)));
-      const approvers = [...new Set(approverRows.map((a) => a.login))];
+      // Down the fallback chain, so GS finds the `release` list on an estate
+      // whose approver file has no `staging` key yet.
+      const owning = await loadApproversForGate(deps, repo.estateId, gateInfo.gate);
       myGate = {
         gate: gateInfo.gate,
         label: gateInfo.label,
-        amApprover: approvers.length === 0 || approvers.includes(ctx.login),
-        approvers,
+        amApprover: owning.approvers.length === 0 || owning.approvers.includes(ctx.login),
+        approvers: owning.approvers,
       };
     }
+
+    // Expedite: the marker on the epic, whether the toggle may be pressed, and
+    // the Console's own record of the last flip. The label is the state — this
+    // is read from the projection like everything else on this payload.
+    const expedited = deriveExpedited(epic.labels);
+    const expediteState = expediteAvailability(epic);
+    const lastFlip = await loadLastExpediteFlip(deps, epic.orgId, `${repo.fullName}#${epic.number}`);
 
     // The task start gate (the `implementation` gate): who may put `Approved`
     // on a `factory:ready` task. Same shape the tree tab reads, so every tab
@@ -312,14 +325,30 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
         status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup),
-        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup }),
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup, expedited }),
+      },
+      /**
+       * The toggle's whole state: on/off from the label, whether it may be
+       * pressed here and why not, and who last flipped it through the Console.
+       * `lastFlip.on` with `on: false` is the factory having taken the marker
+       * back off — it reverts an application from someone it does not accept
+       * and leaves its reason on the epic.
+       */
+      expedite: {
+        on: expedited,
+        available: expediteState.available,
+        dormant: expediteState.dormant,
+        reason: expediteState.reason,
+        lastFlip: lastFlip ? { on: lastFlip.on, actor: lastFlip.actor, at: lastFlip.at } : null,
       },
       repo: { id: repo.id, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       pipeline: PIPELINE_ORDER,
       gate: myGate,
       startGate,
       tasks: taskRows.map((t) => {
-        const startStatus = startStatusOf(t, startFacts.get(t.id));
+        // A task inherits its epic's marker — the factory never copies the
+        // label down, so the epic's answer is the task's answer.
+        const startStatus = startStatusOf(t, startFacts.get(t.id), expedited);
         return {
           id: t.id,
           number: t.number,
@@ -329,7 +358,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           htmlUrl: t.htmlUrl,
           blockedBy: deps_.get(t.id)?.blockedBy ?? [],
           blocks: deps_.get(t.id)?.blocks ?? [],
-          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers, { startStatus }),
+          nextStep: nextStepFor(t.state === "open" ? t.factoryState : null, gateApprovers, {
+            startStatus,
+            expedited,
+            running: t.labels.includes(IN_PROGRESS_LABEL),
+          }),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };
@@ -380,7 +413,31 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       .orderBy(desc(runs.startedAt))
       .limit(100);
 
+    // Expedite flips. The projection records label events only for STATE
+    // labels (worker: projectLabelEvent), and the marker deliberately is not
+    // one — so the audit trail of the Console's own writes is where "who asked
+    // for this, and when" lives. A flip made on GitHub instead shows up as the
+    // marker itself, on the epic, not as a row here.
+    const expediteRows = await db
+      .select({ action: auditLog.action, payload: auditLog.payload, at: auditLog.at })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.orgId, epic.orgId),
+          eq(auditLog.target, `${repo.fullName}#${epic.number}`),
+          inArray(auditLog.action, EXPEDITE_ACTIONS),
+        ),
+      )
+      .orderBy(desc(auditLog.at))
+      .limit(50);
+
     const events = [
+      ...expediteRows.map((r) => ({
+        type: "state" as const,
+        at: r.at,
+        detail: r.action === "epic.expedite.on" ? "Expedite turned on" : "Expedite turned off",
+        actor: typeof r.payload["actor"] === "string" ? r.payload["actor"] : null,
+      })),
       ...history.map((h) => ({
         type: "state" as const,
         at: h.occurredAt,

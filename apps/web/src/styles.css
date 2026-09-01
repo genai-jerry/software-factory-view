@@ -253,6 +253,10 @@ textarea { min-height: 5rem; resize: vertical; }
 .badge.merge { border-color: var(--green); color: var(--green); }
 .badge.task-start { border-color: var(--amber); color: var(--amber); }
 .badge.state { border-color: var(--accent); color: var(--accent); }
+/* The expedite marker and the automatic-next cues it produces. Its own colour
+   (the halt orange, which nothing else on a row uses) because it is neither a
+   state nor a call to action: it says who is driving. */
+.badge.expedite { border-color: var(--halt); color: var(--halt); }
 
 .board { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.75rem; }
 .board-col { min-width: 210px; width: 210px; flex-shrink: 0; }
@@ -1082,6 +1086,16 @@ ol.run-events time {
 /* What the start gate says when there is nothing to press: approved and
    waiting for the run, or a run already live. */
 .start-status { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
+/* An expedited stage's manual start: reachable, deliberately not the first
+   thing on the row — the factory is about to do this by itself. */
+.manual-start > summary { cursor: pointer; color: var(--text-dim); font-size: 0.8rem; }
+.manual-start[open] { display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+/* The expedite toggle sits under the epic header, beside its own explanation. */
+.expedite-toggle { margin: 0.4rem 0 0.2rem; }
+/* Gate GS's evidence table: the epic's tasks and where each one got to. */
+.assembly-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-top: 0.5rem; }
+.assembly-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 0.3rem 0.4rem; }
+.assembly-table td { padding: 0.3rem 0.4rem; border-top: 1px solid var(--border); }
 /* "What now?" — said on every card that shows a factory state, and marked
    when the wait is on a person rather than on the factory. */
 .next-step { font-size: 0.82rem; color: var(--text-dim); margin-top: 0.35rem; }

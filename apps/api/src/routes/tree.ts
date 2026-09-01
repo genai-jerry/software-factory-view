@@ -1,8 +1,20 @@
-import { APPROVED_BODY, epicStatus, GATE_STATES, IN_PROGRESS_LABEL, IN_REVIEW_STATE, READY_STATE, REVIEW_DONE_BODY, startStatusTakesApproval } from "@console/core";
+import {
+  APPROVED_BODY,
+  deriveExpedited,
+  epicStatus,
+  GATE_STATES,
+  IN_PROGRESS_LABEL,
+  IN_REVIEW_STATE,
+  READY_STATE,
+  REVIEW_DONE_BODY,
+  startStatusIsAutomatic,
+  startStatusTakesApproval,
+} from "@console/core";
 import { auditLog, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
+import { loadExpeditedEpics } from "../expedite.js";
 import { postComment } from "../gh-write.js";
 import { loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { loadEpic, loadIssue, taskRollup } from "./read.js";
@@ -105,6 +117,8 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     // offering the button that started it.
     const gateApprovers = await loadGateApprovers(deps, repo.estateId);
     const rollup = await taskRollup(deps, epic.id);
+    // The marker is the epic's; every node in this tree inherits it.
+    const expedited = deriveExpedited(epic.labels);
     const startFacts = await loadTaskStartFacts(
       deps,
       taskRows.filter((t) => t.issue.state === "open" && t.issue.factoryState === READY_STATE).map((t) => t.issue.id),
@@ -125,12 +139,13 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
         // tabs deriving it from separately-counted tasks would drift.
         rollup,
         status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup),
-        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup }),
+        nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup, expedited }),
+        expedited,
       },
       startGate: { approvers, amApprover },
       nodes: taskRows.map((t) => {
         const up = blockedBy.get(t.issue.id) ?? [];
-        const startStatus = startStatusOf(t.issue, startFacts.get(t.issue.id));
+        const startStatus = startStatusOf(t.issue, startFacts.get(t.issue.id), expedited);
         return {
           id: t.issue.id,
           number: t.issue.number,
@@ -145,7 +160,11 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
           blocks: blocks.get(t.issue.id) ?? [],
           waiting: t.issue.state === "open" && up.some((d) => d.open),
           agentHalted: t.issue.factoryState === "factory:blocked",
-          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers, { startStatus }),
+          nextStep: nextStepFor(t.issue.state === "open" ? t.issue.factoryState : null, gateApprovers, {
+            startStatus,
+            expedited,
+            running: t.issue.labels.includes(IN_PROGRESS_LABEL),
+          }),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
         };
@@ -176,8 +195,16 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
         error: "only an open task at factory:ready takes a start approval — epic gates go through the gate panel",
       });
     }
-    const startStatus = startStatusOf(issue, (await loadTaskStartFacts(deps, [issue.id])).get(issue.id));
-    if (!startStatusTakesApproval(startStatus)) {
+    // Expedite makes the start automatic, not forbidden: nothing is running
+    // and nothing is approved at `auto`, so a human taking the stage over by
+    // hand is safe — it is only the *offer* that has to go, and that is the
+    // `approvable` flag the tabs read. The double-start guard below still
+    // covers the two statuses that mean a run is in flight.
+    const expedited = issue.parentIssueId
+      ? (await loadExpeditedEpics(deps, [issue.parentIssueId])).has(issue.parentIssueId)
+      : false;
+    const startStatus = startStatusOf(issue, (await loadTaskStartFacts(deps, [issue.id])).get(issue.id), expedited);
+    if (!startStatusTakesApproval(startStatus) && !startStatusIsAutomatic(startStatus)) {
       return reply.code(409).send({
         error:
           startStatus === "running"

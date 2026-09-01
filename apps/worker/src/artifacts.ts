@@ -152,7 +152,10 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
     return; // malformed file — the validation suite reports it; the mirror keeps its last good state
   }
   await db.delete(gateAssignments).where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.repoId, repo.id)));
-  for (const gate of ["spec", "design", "implementation", "release"] as const) {
+  // `staging` (gate GS) is newer than most approver files; an absent key parses
+  // to an empty list here and the readers fall back to `release` (core:
+  // GATE_FALLBACK) rather than showing the staging gate to nobody.
+  for (const gate of ["spec", "design", "implementation", "staging", "release"] as const) {
     for (const login of parsed[gate]) {
       await db
         .insert(gateAssignments)
@@ -164,9 +167,14 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
 
 /**
  * The Profiler's fixed working branch (commands/profiler.md in the factory
- * repo): its correction PR is always `factory/profile` → the default branch.
- * That constant is what lets webhook events be attributed to the profile
- * onboarding step without the Console ever reading the run's log.
+ * repo): its correction PR always has head `factory/profile`. That constant
+ * is what lets webhook events be attributed to the profile onboarding step
+ * without the Console ever reading the run's log.
+ *
+ * Matched on `head.ref` only, deliberately: the PR's BASE moved to the
+ * integration branch when the factory stopped sending documents straight to
+ * the default branch (FACTORY.md §6), and it is the default branch only for a
+ * repo with no integration branch. The head is the stable half.
  */
 const PROFILE_BRANCH = "factory/profile";
 

@@ -1,9 +1,10 @@
 import { gateOfState, phaseOfState, NEXT_MOVER, stateSentence } from "@console/core";
-import { gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
+import { issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull, or, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention, loadBlockedMeta } from "../attention.js";
 import { requireAuth, type AppDeps } from "../context.js";
+import { loadApproversForGate } from "../start-gate.js";
 import { loadDependencies, loadIssue, resolveRepoFilter, taskRollup, type RepoFilterQuery } from "./read.js";
 
 /**
@@ -143,14 +144,10 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
     const { issue, repo } = found;
 
     const gateInfo = gateOfState(issue.factoryState);
-    let approvers: string[] = [];
-    if (gateInfo) {
-      const rows = await db
-        .select({ login: gateAssignments.login })
-        .from(gateAssignments)
-        .where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.gate, gateInfo.gate)));
-      approvers = [...new Set(rows.map((r) => r.login))];
-    }
+    // Down the fallback chain, so gate GS names the `release` list where an
+    // estate's approver file has no `staging` key yet rather than reading as
+    // unassigned.
+    const approvers = gateInfo ? (await loadApproversForGate(deps, repo.estateId, gateInfo.gate)).approvers : [];
 
     const depMap = await loadDependencies(deps, [issue.id]);
     const lastEventRow = (

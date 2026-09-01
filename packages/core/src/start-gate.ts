@@ -40,7 +40,9 @@ export type TaskStartStatus =
   /** A factory run is live on the issue right now. */
   | "running"
   /** Approved long enough ago that nothing is coming — approving again is the move. */
-  | "stalled";
+  | "stalled"
+  /** The epic is expedited: there is no start gate here, the factory starts it. */
+  | "auto";
 
 export interface TaskStartInput {
   /** Issue open on GitHub. */
@@ -60,12 +62,23 @@ export interface TaskStartInput {
    * evidence available.
    */
   readySince: Date | null;
+  /**
+   * The task's EPIC carries `factory:expedite` (the marker is never copied
+   * onto sub-issues, so this is the epic's answer, not the task's labels).
+   */
+  expedited?: boolean;
   now?: Date;
 }
 
 export function taskStartStatus(input: TaskStartInput): TaskStartStatus {
   if (!input.open || input.state !== READY_STATE) return "none";
   if (input.labels.includes(IN_PROGRESS_LABEL)) return "running";
+  // Expedite removes this gate entirely: the factory routes the implementer as
+  // soon as the dispatcher marks the task ready. Nothing is owed, and offering
+  // the button anyway would race the factory's own start — the router does not
+  // check the run marker, so an `Approved` landing beside it starts a second
+  // implementer on the same task.
+  if (input.expedited) return "auto";
   if (!input.approvedAt) return "awaiting";
   if (input.readySince && input.approvedAt < input.readySince) return "awaiting";
   const age = (input.now ?? new Date()).getTime() - input.approvedAt.getTime();
@@ -75,4 +88,14 @@ export function taskStartStatus(input: TaskStartInput): TaskStartStatus {
 /** True only where pressing Approve is the move — everywhere else the button is noise. */
 export function startStatusTakesApproval(status: TaskStartStatus): boolean {
   return status === "awaiting" || status === "stalled";
+}
+
+/**
+ * True where the factory starts the task itself. Not the same as "no button":
+ * `approved` and `running` also take no approval, but there something is
+ * already in flight — here the Console shows an automatic-next cue and keeps a
+ * manual start reachable, because a human may still take the stage over.
+ */
+export function startStatusIsAutomatic(status: TaskStartStatus): boolean {
+  return status === "auto";
 }

@@ -2,6 +2,7 @@ import {
   GATE_FOR_APPROVERS,
   nextStep,
   READY_STATE,
+  resolveGateApprovers,
   taskStartStatus,
   type NextStep,
   type NextStepContext,
@@ -54,10 +55,15 @@ export async function loadTaskStartFacts(deps: AppDeps, issueIds: string[]): Pro
   return facts;
 }
 
-/** The status of one task, given its row and the batch above. */
+/**
+ * The status of one task, given its row and the batch above. `expedited` is
+ * the task's EPIC's marker (the factory never copies it onto sub-issues) — with
+ * it on there is no start gate at all, so the answer is `auto`.
+ */
 export function startStatusOf(
   issue: { state: string; factoryState: string | null; labels: string[] },
   facts: TaskStartFacts | undefined,
+  expedited = false,
 ): TaskStartStatus {
   return taskStartStatus({
     open: issue.state === "open",
@@ -65,6 +71,7 @@ export function startStatusOf(
     labels: issue.labels,
     approvedAt: facts?.approvedAt ?? null,
     readySince: facts?.readySince ?? null,
+    expedited,
   });
 }
 
@@ -88,7 +95,11 @@ export function nextStepFor(
   ctx: NextStepContext = {},
 ): NextStep {
   const gate = state ? GATE_FOR_APPROVERS[state] : undefined;
-  return nextStep(state, gate ? (approversByGate.get(gate) ?? []) : [], ctx);
+  // Through `resolveGateApprovers`, so gate GS names the `release` list on an
+  // estate whose approver file predates the `staging` key rather than reading
+  // "any collaborator" at it.
+  const approvers = gate ? resolveGateApprovers(gate, (g) => approversByGate.get(g) ?? []).approvers : [];
+  return nextStep(state, approvers, ctx);
 }
 
 /** Every gate's approver list for one estate, in one query. */
@@ -101,4 +112,19 @@ export async function loadGateApprovers(deps: AppDeps, estateId: string): Promis
     byGate.set(row.gate, list);
   }
   return byGate;
+}
+
+/**
+ * The approver list that actually owns one gate on one estate, following the
+ * fallback chain (GS → `staging`, else `release`, else any collaborator).
+ * `gate` in the answer is the list the logins came from, which is what the
+ * panel shows when it has to explain where they came from.
+ */
+export async function loadApproversForGate(
+  deps: AppDeps,
+  estateId: string,
+  gate: string,
+): Promise<{ gate: string; approvers: string[]; fellBackFrom: string | null }> {
+  const byGate = await loadGateApprovers(deps, estateId);
+  return resolveGateApprovers(gate, (g) => byGate.get(g) ?? []);
 }

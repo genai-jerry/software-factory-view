@@ -167,7 +167,7 @@ const stepRows = async () => await deps.dbh.db.select().from(onboardingRuns);
 /** What the route would write for this org — the same call it makes internally. */
 const generatedFiles = () =>
   stubFiles(
-    { spec: [], design: [], implementation: [], release: [] },
+    { spec: [], design: [], implementation: [], staging: [], release: [] },
     "software-factory",
     { defaultBranch: "main", stagingBranch: null },
   );

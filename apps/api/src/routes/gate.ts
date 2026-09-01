@@ -4,17 +4,20 @@ import {
   auditLog,
   changeArtifacts,
   changes,
+  comments,
   decisions,
-  gateAssignments,
   gateViews,
+  issues,
   pullRequests,
+  repos,
   threads,
   type Db,
 } from "@console/db";
-import { and, eq, inArray, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { githubMessage, postComment } from "../gh-write.js";
+import { loadApproversForGate } from "../start-gate.js";
 import { countThreadEntries } from "../threads.js";
 import { renderMarkdown } from "../render.js";
 import { loadEpic } from "./read.js";
@@ -25,6 +28,11 @@ import { loadEpic } from "./read.js";
  * the literal `Approved` comment posted under the user's own identity so the
  * factory router does the merge + label flip untouched. The Console relocates
  * the button, not the authority.
+ *
+ * Four gates hold here, three of them comment-approvable: G1 (spec), G2
+ * (design) and GS (staging release, at `factory:epic-ready`) all take the
+ * literal `Approved`; G3 alone does not — its gate IS the merge, done by a
+ * human in the GitHub UI, and the panel says so.
  */
 export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
@@ -39,11 +47,10 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!gateInfo || epic.state !== "open") return reply.code(409).send({ error: "no gate is open on this epic" });
 
     // Approver status (Console-side UX check; GitHub + router enforce for real).
-    const approverRows = await db
-      .select()
-      .from(gateAssignments)
-      .where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.gate, gateInfo.gate)));
-    const approvers = [...new Set(approverRows.map((a) => a.login))];
+    // Down the fallback chain: GS reads `staging`, then `release`, then any
+    // collaborator — the same order the factory reads them in.
+    const owning = await loadApproversForGate(deps, repo.estateId, gateInfo.gate);
+    const approvers = owning.approvers;
     const amApprover = approvers.length === 0 || approvers.includes(ctx.login);
 
     // The exact document PRs the label refers to.
@@ -77,7 +84,14 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     const artifactRows = change
       ? await db.select().from(changeArtifacts).where(eq(changeArtifacts.changeId, change.id))
       : [];
-    const relevant = artifactRows.filter((a) => artifactIsRelevant(gateInfo.gate, a.kind));
+    // What the panel renders is not the same question as what the guard
+    // watches. At GS the decision is about the assembly, not about re-reading
+    // the spec — so only tasks.md is rendered — while a question left open
+    // anywhere on the change is still a reason not to release it, which is why
+    // `artifactIsRelevant` (below, shared with the guard) stays inclusive.
+    const relevant = artifactRows.filter((a) =>
+      gateInfo.gate === "staging" ? a.kind === "tasks" : artifactIsRelevant(gateInfo.gate, a.kind),
+    );
 
     const rendered = [];
     for (const a of relevant) {
@@ -112,13 +126,22 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     // panel can never enable a button the guard then refuses.
     const openQuestions = await openGateQuestions(db, epic.id, gateInfo.gate);
 
+    // GS's evidence: what the factory assembled, not what a human is about to
+    // read for the first time. The tasks table, the newest agent report on the
+    // epic (assembly/dispatch report, suite results) and the PRs still open
+    // against it.
+    const assembly = gateInfo.gate === "staging" ? await loadAssemblyEvidence(deps, epic, repo) : null;
+
     return {
       gate: gateInfo.gate,
       label: gateInfo.label,
       state: epic.factoryState,
       amApprover,
       approvers,
-      commentApprovable: gateInfo.gate === "spec" || gateInfo.gate === "design" || gateInfo.gate === "implementation",
+      /** Set when this gate's own list is unset and another gate's is standing in. */
+      approversFrom: owning.fellBackFrom ? owning.gate : null,
+      commentApprovable: COMMENT_APPROVABLE.has(gateInfo.gate),
+      assembly,
       documentPrs: docPrs.map(prDto),
       releasePrs: releasePrs.map(prDto),
       artifacts: rendered,
@@ -140,18 +163,16 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { epic, repo } = found;
       const gateInfo = epic.factoryState ? GATE_STATES[epic.factoryState] : undefined;
       if (!gateInfo) return reply.code(409).send({ error: "no gate is open on this epic" });
-      if (gateInfo.gate === "release") {
+      if (!COMMENT_APPROVABLE.has(gateInfo.gate)) {
         return reply.code(409).send({ error: "G3 is not comment-approvable — merge the PRs instead (the merge button is the gate)" });
       }
 
-      // Server-side approver check (UX layer; the router re-checks with authority).
-      const approverRows = await db
-        .select()
-        .from(gateAssignments)
-        .where(and(eq(gateAssignments.estateId, repo.estateId), eq(gateAssignments.gate, gateInfo.gate)));
-      const approvers = [...new Set(approverRows.map((a) => a.login))];
+      // Server-side approver check (UX layer; the router re-checks with
+      // authority), down the same fallback chain the panel showed.
+      const owning = await loadApproversForGate(deps, repo.estateId, gateInfo.gate);
+      const approvers = owning.approvers;
       if (approvers.length > 0 && !approvers.includes(ctx.login)) {
-        return reply.code(403).send({ error: `you are not on the ${gateInfo.gate} approver list` });
+        return reply.code(403).send({ error: `you are not on the ${owning.gate} approver list` });
       }
 
       // Open-questions guard: approving over open questions needs an explicit,
@@ -261,6 +282,77 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
   });
 }
+
+/**
+ * The gates a human passes by commenting the literal `Approved`. G3 is
+ * deliberately absent: its merge IS the gate (FACTORY.md §6a), and making it
+ * comment-approvable here would let the Console promote to production on a
+ * click the factory never accepts.
+ */
+const COMMENT_APPROVABLE = new Set(["spec", "design", "implementation", "staging"]);
+
+/**
+ * What gate GS is deciding on: the epic's tasks and their states, the factory's
+ * newest report on the epic (the Release Manager's assembly/dispatch report,
+ * which carries the suite results), and any PR still open against it.
+ *
+ * All of it is already projected — this is a reading of the epic, not a new
+ * source of truth, and where the factory has posted nothing yet the panel says
+ * so rather than implying the assembly is proven.
+ */
+async function loadAssemblyEvidence(
+  deps: AppDeps,
+  epic: typeof issues.$inferSelect,
+  repo: typeof repos.$inferSelect,
+): Promise<{
+  tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
+  allGreen: boolean;
+  report: { author: string | null; at: Date; html: string; htmlUrl: string | null } | null;
+  prs: ReturnType<typeof prDto>[];
+}> {
+  const { db } = deps.dbh;
+  const taskRows = await db.select().from(issues).where(eq(issues.parentIssueId, epic.id)).orderBy(issues.number);
+  const tasks = taskRows.map((t) => ({
+    number: t.number,
+    title: t.title,
+    state: t.factoryState,
+    open: t.state === "open",
+    htmlUrl: t.htmlUrl,
+  }));
+
+  const report = (
+    await db
+      .select({ author: comments.author, body: comments.body, at: comments.ghCreatedAt, htmlUrl: comments.htmlUrl })
+      .from(comments)
+      .where(and(eq(comments.issueId, epic.id), eq(comments.isAgent, true)))
+      .orderBy(desc(comments.ghCreatedAt))
+      .limit(1)
+  )[0];
+
+  const prRows = await db
+    .select()
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.issueNumber, epic.number), eq(pullRequests.state, "open")));
+
+  return {
+    tasks,
+    // Green at GS means every task has landed: closed, or on the epic branch
+    // and beyond. Anything else and the assembly is not what the label claims.
+    allGreen: tasks.length > 0 && tasks.every((t) => !t.open || ASSEMBLED_TASK_STATES.has(t.state ?? "")),
+    report: report
+      ? {
+          author: report.author,
+          at: report.at,
+          html: renderMarkdown(report.body, { repoId: repo.id }),
+          htmlUrl: report.htmlUrl,
+        }
+      : null,
+    prs: prRows.map(prDto),
+  };
+}
+
+/** Task states that count as landed on the epic branch (FACTORY.md §6b). */
+const ASSEMBLED_TASK_STATES = new Set(["factory:on-epic", "factory:epic-ready", "factory:in-staging", "factory:deployed"]);
 
 /** Artifact kinds a gate is actually about — the set the gate panel renders. */
 function artifactIsRelevant(gate: string, kind: string): boolean {

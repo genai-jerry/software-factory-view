@@ -1,4 +1,4 @@
-import { isFactoryState, RELEASE_KIND_LABEL, type FactoryState } from "./factory.js";
+import { EXPEDITE_LABEL, isFactoryState, RELEASE_KIND_LABEL, type FactoryState } from "./factory.js";
 
 /**
  * Derivations pinned down in the plan (03 §3). These are pure functions of
@@ -14,6 +14,17 @@ export function deriveFactoryState(labels: string[]): FactoryState | null {
   // produces more than one, prefer the last-applied and let the health strip
   // surface the anomaly rather than guessing here.
   return states.length > 0 ? states[states.length - 1]! : null;
+}
+
+/**
+ * Is expedite on? The marker is orthogonal to the state (it never wins
+ * `deriveFactoryState`), and it lives on the EPIC alone: a task is expedited
+ * because its epic is, so a caller asking about a task passes its epic's
+ * labels. An issue with no epic — a plain issue, or a task whose parent the
+ * projection has not caught up with — is simply not expedited.
+ */
+export function deriveExpedited(labels: readonly string[] | null | undefined): boolean {
+  return Boolean(labels?.includes(EXPEDITE_LABEL));
 }
 
 export function deriveIssueKind(input: {

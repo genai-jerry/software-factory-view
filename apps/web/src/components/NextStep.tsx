@@ -23,6 +23,15 @@ export function NextStepLine({ step }: { step: NextStep }) {
   );
 }
 
+/** What the automatic cue calls each role — "auto — Reviewer next". */
+const ROLE_NOUN: Record<NonNullable<NextStep["startRole"]>, string> = {
+  architect: "Architect",
+  reviewer: "Reviewer",
+  qa: "QA",
+  release: "Release Manager",
+  ops: "Ops",
+};
+
 /** Posted as-is; the router treats it as the human equivalent of a clean Reviewer verdict. */
 const MARK_REVIEWED_TITLE =
   'Posts the literal comment "Review Done" as you — skips the Reviewer and moves this task straight to In test. ' +
@@ -57,11 +66,37 @@ export function StartRoleButton({
     },
   });
   if (!step.startRole) return null;
+  const startLabel = step.startLabel ?? `Start the ${step.startRole}`;
+  const button = (
+    <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()} title={step.how}>
+      {start.isPending ? "Starting…" : startLabel}
+    </button>
+  );
+  /**
+   * Expedited: the factory takes this hop itself, so the button is demoted, not
+   * removed. Presenting it as the move would be a lie (nothing is waiting on
+   * the reader), and removing it would strand a stage whose automatic run
+   * never fired — a human may take any stage over, at any time.
+   */
+  if (step.automatic) {
+    return (
+      <span className="approve-action">
+        <span className="badge expedite" title={step.how}>
+          auto — {ROLE_NOUN[step.startRole]} next
+        </span>
+        <details className="manual-start">
+          <summary>Start it by hand</summary>
+          {button}
+          <span className="muted">Only if the automatic run did not fire.</span>
+        </details>
+        {start.isSuccess && <span className="muted">Started — {start.data.detail}</span>}
+        {start.isError && <span className="approve-error">{(start.error as ApiError).message}</span>}
+      </span>
+    );
+  }
   return (
     <span className="approve-action">
-      <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()} title={step.how}>
-        {start.isPending ? "Starting…" : (step.startLabel ?? `Start the ${step.startRole}`)}
-      </button>
+      {button}
       {step.startRole === "reviewer" && (
         <button type="button" disabled={markReviewed.isPending} onClick={() => markReviewed.mutate()} title={MARK_REVIEWED_TITLE}>
           {markReviewed.isPending ? "Marking…" : "Mark Reviewed"}

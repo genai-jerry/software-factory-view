@@ -2,6 +2,11 @@
  * Constants describing the factory's label state machine. These mirror
  * claude-software-factory (FACTORY.md §3, scripts/setup-labels.sh) and must
  * stay in sync with it — the Console renders factory state, never invents it.
+ *
+ * The colours are not decoration: onboarding creates and repairs labels from
+ * this table, and `setup-labels.sh` does the same from its own. A value that
+ * differs between the two does not settle — each run rewrites what the other
+ * wrote, and the label flickers. Copy from `setup-labels.sh`; never pick one.
  */
 
 export const FACTORY_LABELS = [
@@ -19,7 +24,8 @@ export const FACTORY_LABELS = [
   { name: "factory:in-review", color: "C98A1B", description: "Draft PR under agent review" },
   { name: "factory:in-test", color: "D4A017", description: "QA verifying WHEN/THEN scenarios" },
   { name: "factory:ready-to-ship", color: "6AA84F", description: "Green + approved; awaiting the merge onto the epic branch (or staging when the epic has none)" },
-  { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; awaiting the epic's integration merge" },
+  { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; waiting for the rest of the epic" },
+  { name: "factory:epic-ready", color: "41A08A", description: "Epic fully assembled and green; awaiting gate GS (release to staging)" },
   { name: "factory:in-staging", color: "3D9970", description: "Merged to staging and verified there; awaiting gate G3 promotion to the default branch" },
   { name: "factory:deployed", color: "0B8043", description: "In production; soak in progress" },
   { name: "factory:fast-track", color: "8C8C8C", description: "Small fix bypassing OpenSpec ceremony" },
@@ -30,14 +36,38 @@ export const FACTORY_LABELS = [
 /**
  * Kind/marker labels the factory also creates. Deliberately NOT states:
  * `factory:release` marks a release tracker issue (which also carries one
- * `factory:release-*` state), and `factory:in-progress` sits alongside the
- * state label for the duration of an agent run. They are provisioned during
- * onboarding but must never win state derivation.
+ * `factory:release-*` state), `factory:in-progress` sits alongside the state
+ * label for the duration of an agent run, and `factory:expedite` sits
+ * alongside it for as long as a human wants the epic run without the per-stage
+ * starts. They are provisioned during onboarding but must never win state
+ * derivation.
  */
 export const RELEASE_KIND_LABEL = "factory:release";
 
 /** The run marker: a factory agent is working on this issue right now. */
 export const IN_PROGRESS_LABEL = "factory:in-progress";
+
+/**
+ * The expedite marker: a human asked for this epic to be built without the
+ * per-stage human starts (claude-software-factory: `add-expedite-mode`).
+ *
+ * Orthogonal, exactly like the run marker — it never replaces the state label,
+ * and it is applied to the EPIC only: a task is expedited because its epic is,
+ * so the factory never copies the label onto the sub-issues and neither does
+ * the Console. While it is present the factory approves G1 and G2 itself and
+ * starts each task's implementer, reviewer, QA and assembly as the previous
+ * one lands. It waives starts, not decisions: gate GS (`factory:epic-ready`)
+ * and gate G3 (`factory:in-staging`) stay human.
+ */
+export const EXPEDITE_LABEL = "factory:expedite";
+
+/**
+ * The epic's own assembled-but-not-released state, between `factory:on-epic`
+ * (its last task landed on the epic branch) and `factory:in-staging` (the
+ * integration branch has it). Universal: every epic passes through it,
+ * expedited or not, because gate GS holds here.
+ */
+export const EPIC_READY_STATE = "factory:epic-ready";
 
 /**
  * The state an epic holds for the whole of its build.
@@ -54,6 +84,7 @@ export const DESIGN_APPROVED_STATE = "factory:design-approved";
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
   { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
+  { name: EXPEDITE_LABEL, color: "D93F87", description: "Auto-advance every stage after the spec, up to the staging gate (kind, not a state)" },
 ] as const;
 
 export type FactoryState = (typeof FACTORY_LABELS)[number]["name"];
@@ -81,24 +112,64 @@ export const PIPELINE_ORDER: readonly FactoryState[] = [
   "factory:in-test",
   "factory:ready-to-ship",
   "factory:on-epic",
+  EPIC_READY_STATE,
   "factory:in-staging",
   "factory:deployed",
 ];
 
-export type Gate = "spec" | "design" | "implementation" | "release";
+export type Gate = "spec" | "design" | "implementation" | "staging" | "release";
 
 /** States at which a gate holds, and which approver list owns it. */
 export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
   "factory:spec-ready": { gate: "spec", label: "G1" },
   "factory:design-ready": { gate: "design", label: "G2" },
   "factory:ready": { gate: "implementation", label: "start" },
+  // GS holds at epic-ready: the epic is assembled and green on its own branch
+  // but nothing of it is on the integration branch yet, so releasing it there
+  // is a decision — the last one before staging proves the change. Comment-
+  // approvable like G1/G2, and universal: expedite waives the starts before
+  // this point, never this gate. factory:on-epic still deliberately has NO
+  // gate; it is the Release Manager's assembly step (FACTORY.md §6b).
+  [EPIC_READY_STATE]: { gate: "staging", label: "GS" },
   // G3 holds at in-staging, not ready-to-ship or on-epic: the merges onto the
   // epic branch (FACTORY.md §6b) and the integration branch (§6a) are the
-  // Release Manager's steps — factory:on-epic deliberately has NO gate — and
-  // only once the change is proved on staging does a human decide whether to
-  // promote it.
+  // Release Manager's steps, and only once the change is proved on staging
+  // does a human decide whether to promote it.
   "factory:in-staging": { gate: "release", label: "G3" },
 };
+
+/**
+ * Gates that borrow another gate's approver list when their own is unset.
+ *
+ * GS is newer than most `.github/factory-approvers.json` files, so an estate
+ * that has never heard of it has no `staging` key at all. The factory reads
+ * `staging`, then `release`, then "any collaborator"; the Console must route
+ * attention down the same chain or it would show the staging gate to nobody
+ * on exactly the estates that have not upgraded their approver file.
+ */
+export const GATE_FALLBACK: Partial<Record<Gate, Gate>> = { staging: "release" };
+
+/** A gate's approver lists in priority order — the first non-empty one owns it. */
+export function gateApproverChain(gate: string): string[] {
+  const next = GATE_FALLBACK[gate as Gate];
+  return next ? [gate, next] : [gate];
+}
+
+/**
+ * The list that actually owns a gate here, given a lookup into whatever the
+ * caller has already loaded. An all-empty chain answers with the gate's own
+ * (empty) list, which every caller already reads as "any collaborator".
+ */
+export function resolveGateApprovers(
+  gate: string,
+  listFor: (gate: string) => string[],
+): { gate: string; approvers: string[]; fellBackFrom: string | null } {
+  for (const candidate of gateApproverChain(gate)) {
+    const approvers = listFor(candidate);
+    if (approvers.length > 0) return { gate: candidate, approvers, fellBackFrom: candidate === gate ? null : gate };
+  }
+  return { gate, approvers: [], fellBackFrom: null };
+}
 
 /** Exact comment body the factory router accepts for G1/G2/implementation starts. */
 export const APPROVED_BODY = "Approved";
@@ -113,6 +184,8 @@ export interface ApproverFile {
   spec: string[];
   design: string[];
   implementation: string[];
+  /** Gate GS. Absent in files written before GS existed — see `GATE_FALLBACK`. */
+  staging: string[];
   release: string[];
 }
 
@@ -124,6 +197,7 @@ export function parseApproverFile(json: unknown): ApproverFile {
     spec: list("spec"),
     design: list("design"),
     implementation: list("implementation"),
+    staging: list("staging"),
     release: list("release"),
   };
 }

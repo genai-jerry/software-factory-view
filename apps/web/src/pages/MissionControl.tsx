@@ -9,7 +9,7 @@ import { PipelineBoard } from "../components/PipelineBoard.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { useHalt } from "../components/Shell.js";
 import { useFocus } from "../lib/filter.js";
-import { PHASE_LABELS, attentionReason, factoryShort, peopleLabel } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, PHASE_LABELS, attentionReason, factoryShort, peopleLabel } from "../lib/labels.js";
 import type { AttentionEntry, BoardCard, EstateSummary, IngestionHealth, MineRow, MyWork, Phase, WaitingRow } from "../types.js";
 
 const PHASE_ORDER: Phase[] = ["held", "specifying", "planning", "building", "shipping"];
@@ -150,6 +150,12 @@ function AttentionRow({ entry: e, onPeek }: { entry: AttentionEntry; onPeek: (id
           {chip && (
             <span className="badge state" title={e.state ?? undefined}>
               {chip}
+            </span>
+          )}
+          {/* Why this epic's other rows are missing: the factory has them. */}
+          {e.expedited && (
+            <span className="badge expedite" title={EXPEDITE_TITLE}>
+              {EXPEDITE_BADGE}
             </span>
           )}
         </div>
