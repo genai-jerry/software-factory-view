@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FACTORY_LABELS, GATE_FOR_APPROVERS, isStartableRole, nextStep } from "../src/index.js";
+import { FACTORY_LABELS, GATE_FOR_APPROVERS, isStartableRole, nextStep, type NextStepProgress } from "../src/index.js";
 
 /**
  * A state is not an instruction. Every state the factory can leave an issue
@@ -99,21 +99,41 @@ describe("nextStep with the facts the label cannot carry", () => {
     }
   });
 
+  /** The rollup the API sends, with only the counts a case cares about set. */
+  const rollup = (counts: Partial<NextStepProgress> & { total: number }): NextStepProgress => ({
+    total: 0,
+    done: 0,
+    blocked: 0,
+    inReview: 0,
+    inTest: 0,
+    shipping: 0,
+    ...counts,
+  });
+
   it("reports an epic's build instead of the dispatcher that started it", () => {
-    const step = nextStep("factory:design-approved", [], { tasks: { total: 4, done: 1, blocked: 0 } });
+    const step = nextStep("factory:design-approved", [], { tasks: rollup({ total: 4, done: 1 }) });
     expect(step.how).toMatch(/1 of 4 tasks done/);
     expect(step.how).not.toMatch(/Dispatcher/);
   });
 
+  it("counts the tasks an agent is on, which the done count cannot see", () => {
+    // Every task mid-chain and none closed: "0 of 8 done" on its own reads as
+    // an epic nothing has touched.
+    const step = nextStep("factory:design-approved", [], {
+      tasks: rollup({ total: 8, inReview: 3, inTest: 2, shipping: 1 }),
+    });
+    expect(step.how).toMatch(/0 of 8 tasks done, 6 in flight/);
+  });
+
   it("names a halted task on the epic, and the release once every task is done", () => {
-    expect(nextStep("factory:design-approved", [], { tasks: { total: 4, done: 1, blocked: 1 } }).waitsOnPerson).toBe(true);
-    const done = nextStep("factory:design-approved", [], { tasks: { total: 4, done: 4, blocked: 0 } });
+    expect(nextStep("factory:design-approved", [], { tasks: rollup({ total: 4, done: 1, blocked: 1 }) }).waitsOnPerson).toBe(true);
+    const done = nextStep("factory:design-approved", [], { tasks: rollup({ total: 4, done: 4 }) });
     expect(done.startRole).toBe("release");
     expect(done.how).toMatch(/All 4 tasks are done/);
   });
 
   it("leaves a not-yet-dispatched epic on the table's own answer", () => {
-    const step = nextStep("factory:design-approved", [], { tasks: { total: 0, done: 0, blocked: 0 } });
+    const step = nextStep("factory:design-approved", [], { tasks: rollup({ total: 0 }) });
     expect(step.how).toMatch(/Dispatcher/);
     expect(step.startRole).toBeNull();
   });

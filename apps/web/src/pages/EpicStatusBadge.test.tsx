@@ -31,7 +31,7 @@ const epic: EpicTree["epic"] = {
   htmlUrl: "https://github.com/acme/app/issues/250",
   repo: "acme/app",
   gate: null,
-  rollup: { total: 4, ready: 1, inReview: 1, inTest: 0, shipping: 0, done: 1, blocked: 0, waiting: 1 },
+  rollup: { total: 4, ready: 1, inReview: 1, inTest: 0, shipping: 0, done: 1, blocked: 0, waiting: 1, inFlight: 1 },
   status: "Building 1/4",
   expedited: false,
   nextStep: {
@@ -100,7 +100,7 @@ describe("the epic header badge", () => {
 
   it("falls back to the label before the dispatcher has fanned the epic out", async () => {
     renderTree({
-      epic: { ...epic, status: null, rollup: { ...epic.rollup, total: 0, ready: 0, inReview: 0, done: 0, waiting: 0 } },
+      epic: { ...epic, status: null, rollup: { ...epic.rollup, total: 0, ready: 0, inReview: 0, done: 0, waiting: 0, inFlight: 0 } },
       startGate: { approvers: [], amApprover: true },
       nodes: [node],
     });

@@ -89,7 +89,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     expedite: { ...off, on: true },
     startGate: { approvers: [], amApprover: true },
     tasks: [autoTask, autoQaTask],
-    rollup: { total: 2, ready: 1, inReview: 0, inTest: 1, shipping: 0, done: 0, blocked: 0, waiting: 0 },
+    rollup: { total: 2, ready: 1, inReview: 0, inTest: 1, shipping: 0, done: 0, blocked: 0, waiting: 0, inFlight: 1 },
     blockedSubIssues: [],
     change: null,
     artifacts: [],

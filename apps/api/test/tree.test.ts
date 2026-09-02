@@ -101,6 +101,20 @@ beforeAll(async () => {
   id.ready = t2.id;
   id.blocked = t3.id;
   id.cross = t4.id;
+
+  // A second epic, mid-build: nothing closed, an agent on every task. The
+  // badge derived from its rollup is what this fixture exists for.
+  const building = await mkIssue(repo.id, {
+    number: 10,
+    title: "epic mid-build",
+    kind: "epic",
+    factoryState: "factory:design-approved",
+  });
+  await mkIssue(repo.id, { number: 11, title: "task(10): a", factoryState: "factory:in-review", parentIssueId: building.id });
+  await mkIssue(repo.id, { number: 12, title: "task(10): b", factoryState: "factory:in-test", parentIssueId: building.id });
+  await mkIssue(repo.id, { number: 13, title: "task(10): c", factoryState: "factory:on-epic", parentIssueId: building.id });
+  await mkIssue(repo.id, { number: 14, title: "task(10): d", factoryState: "factory:ready", parentIssueId: building.id });
+  id.building = building.id;
 });
 
 describe("GET /api/epics/:id/tree", () => {
@@ -139,6 +153,28 @@ describe("GET /api/epics/:id carries the same start gate as the tree", () => {
     const byNumber = Object.fromEntries((body.tasks as Array<{ number: number }>).map((t) => [t.number, t]));
     expect(byNumber[2]).toMatchObject({ approvable: true });
     expect(byNumber[3]).toMatchObject({ approvable: false });
+  });
+});
+
+/**
+ * `factory:design-approved` sits on the epic for the whole build and a task
+ * closes only at the very end of the line, so the done count on its own reads
+ * "0/4" — nothing has happened — for an epic with an agent on every task. The
+ * rollup knows better and both payloads that carry a status say so.
+ */
+describe("the epic status counts the tasks agents are on", () => {
+  it("reports the in-flight tasks the done count cannot see", async () => {
+    for (const url of [`/api/epics/${id.building}`, `/api/epics/${id.building}/tree`]) {
+      const res = await app.inject({ method: "GET", url, headers: { cookie } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().epic.status).toBe("Building 0/4 · 3 in flight");
+      expect(res.json().epic.nextStep.how).toMatch(/0 of 4 tasks done, 3 in flight/);
+    }
+  });
+
+  it("ships the count on the rollup so the board reads it without re-deriving it", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/epics/${id.building}/tree`, headers: { cookie } });
+    expect(res.json().epic.rollup).toMatchObject({ total: 4, done: 0, ready: 1, inReview: 1, inTest: 1, shipping: 1, inFlight: 3 });
   });
 });
 

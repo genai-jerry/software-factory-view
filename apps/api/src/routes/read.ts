@@ -9,6 +9,7 @@ import {
   PIPELINE_ORDER,
   READY_STATE,
   startStatusTakesApproval,
+  tasksInFlight,
 } from "@console/core";
 import {
   artifactCache,
@@ -754,6 +755,12 @@ export interface TaskRollup {
   done: number;
   blocked: number;
   waiting: number;
+  /**
+   * `inReview + inTest + shipping` — the tasks an agent has already carried
+   * past the start gate. Counted once here (by core, the same function the
+   * badge reads) so the browser never re-derives it and drifts.
+   */
+  inFlight: number;
 }
 
 export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<TaskRollup> {
@@ -762,7 +769,17 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     .select({ id: issues.id, factoryState: issues.factoryState, state: issues.state })
     .from(issues)
     .where(eq(issues.parentIssueId, epicIssueId));
-  const rollup = { total: tasks.length, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0 };
+  const rollup = {
+    total: tasks.length,
+    ready: 0,
+    inReview: 0,
+    inTest: 0,
+    shipping: 0,
+    done: 0,
+    blocked: 0,
+    waiting: 0,
+    inFlight: 0,
+  };
   const openIds: string[] = [];
   for (const t of tasks) {
     if (t.state === "open") openIds.push(t.id);
@@ -785,6 +802,7 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
       .where(and(inArray(taskDependencies.blockedIssueId, openIds), eq(issues.state, "open")));
     rollup.waiting = waiting.length;
   }
+  rollup.inFlight = tasksInFlight(rollup);
   return rollup;
 }
 

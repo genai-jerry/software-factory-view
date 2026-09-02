@@ -1,3 +1,4 @@
+import { type EpicProgress, tasksInFlight } from "./epic-status.js";
 import { DESIGN_APPROVED_STATE } from "./factory.js";
 import { READY_STATE, type TaskStartStatus } from "./start-gate.js";
 
@@ -51,12 +52,12 @@ export interface NextStepContext {
   running?: boolean;
 }
 
-/** The slice of the task rollup that changes what an epic's next step is. */
-export interface NextStepProgress {
-  total: number;
-  done: number;
-  blocked: number;
-}
+/**
+ * The slice of the task rollup that changes what an epic's next step is — the
+ * same counts the badge reads (`epic-status.ts`), so the two lines beside each
+ * other cannot tell different stories about the same epic.
+ */
+export type NextStepProgress = EpicProgress;
 
 /** Roles a person starts by hand; the factory routes everything else itself. */
 export const STARTABLE_ROLES = ["architect", "reviewer", "qa", "release", "ops"] as const;
@@ -348,9 +349,14 @@ function buildingEntry(tasks: NextStepProgress | undefined, expedited: boolean |
       waitsOnPerson: true,
     };
   }
+  // A task closes only at the end of the line (§6d), so "0 of 8 done" is the
+  // whole truth about an epic whose every task is mid-chain and none of what
+  // is actually happening on it. Say how many are moving.
+  const moving = tasksInFlight(tasks);
+  const inFlight = moving > 0 ? `, ${moving} in flight` : "";
   return {
     who: "its tasks",
-    how: `Building — ${tasks.done} of ${tasks.total} tasks done. Each one moves on its own card; the tabs below have them.`,
+    how: `Building — ${tasks.done} of ${tasks.total} tasks done${inFlight}. Each one moves on its own card; the tabs below have them.`,
   };
 }
 

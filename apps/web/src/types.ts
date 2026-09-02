@@ -277,6 +277,8 @@ export interface TaskRollup {
   blocked: number;
   /** Open tasks that have at least one open blocker. */
   waiting: number;
+  /** In review, in test or on a branch — the work the done count cannot see. */
+  inFlight: number;
 }
 
 export interface EpicWorkspace {
