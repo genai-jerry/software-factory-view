@@ -50,14 +50,40 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       let targetIssue = epic;
       const taskMatch = thread.topicRef.match(/^task\/(\d+)$/);
       if (taskMatch) {
-        const task = (
-          await db
-            .select()
-            .from(issues)
-            .where(and(eq(issues.repoId, epic.repoId), eq(issues.number, Number(taskMatch[1]))))
-            .limit(1)
-        )[0];
-        if (task) targetIssue = task;
+        const number = Number(taskMatch[1]);
+        // By the parent link, not by the epic's repo: a cross-repo epic
+        // (FACTORY.md §7) keeps its sub-issues in the repos that implement
+        // them, so #<number> is very often not in the epic's repo at all —
+        // and when a repo does happen to have an issue with that number it is
+        // an unrelated one. The projector sets `parentIssueId` for every task
+        // it files, and only a task with that link ever gets a `task/N`
+        // thread, so this is the same link the thread was created from.
+        // Every other reader of an epic's tasks already resolves them this
+        // way; this route was the one that did not.
+        const candidates = await db
+          .select()
+          .from(issues)
+          .where(and(eq(issues.parentIssueId, epic.id), eq(issues.number, number)));
+        if (candidates.length > 1) {
+          // One `task/N` thread, two repos holding a task numbered N under
+          // this epic. The thread cannot say which is meant (its topicRef
+          // carries no repo), so neither can this route — and picking one
+          // would post a human's approval on the wrong issue.
+          return reply.code(409).send({
+            error: `#${number} is ambiguous — more than one repo in this epic has a task with that number. Reply on the task issue in GitHub instead.`,
+          });
+        }
+        const task = candidates[0];
+        // Never fall back to the epic. Posting a task reply onto the epic is
+        // silently wrong twice over: the reply shows up in this thread (its
+        // marker puts it there) while the task issue never sees it, and an
+        // `Approved` meant for one task reads as a gate approval on the epic.
+        if (!task) {
+          return reply.code(404).send({
+            error: `task #${number} of this epic is not in the Console yet — nothing to post to. Reply on the task issue in GitHub instead.`,
+          });
+        }
+        targetIssue = task;
       }
       const repo = (await db.select().from(repos).where(eq(repos.id, targetIssue.repoId)).limit(1))[0]!;
       const [owner, name] = repo.fullName.split("/") as [string, string];
