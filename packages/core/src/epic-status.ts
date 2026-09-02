@@ -21,8 +21,26 @@ export interface EpicProgress {
   total: number;
   done: number;
   blocked: number;
+  /** Draft PR under agent review (§5). */
+  inReview: number;
+  /** QA is verifying the scenarios (§5). */
+  inTest: number;
   /** Merged onto the epic/integration branch, not yet closed (§6a, §6b). */
   shipping: number;
+}
+
+/**
+ * Tasks an agent has already carried past the start gate and that are not yet
+ * closed: in review, in test, or green on a branch waiting for the epic.
+ *
+ * The done count alone cannot see them, and a task only closes at the very end
+ * of the line (§6d), so an epic whose every task is mid-chain rolls up as
+ * "0 done" — which reads as "nothing has happened" precisely when the most is
+ * happening. Counted here once so the badge and the next-step line cannot
+ * drift apart.
+ */
+export function tasksInFlight(tasks: EpicProgress): number {
+  return tasks.inReview + tasks.inTest + tasks.shipping;
 }
 
 export function epicStatus(state: string | null | undefined, tasks: EpicProgress | undefined): string | null {
@@ -33,6 +51,9 @@ export function epicStatus(state: string | null | undefined, tasks: EpicProgress
   if (tasks.shipping > 0 && tasks.done + tasks.shipping === tasks.total) {
     return `Shipping ${tasks.done}/${tasks.total}`;
   }
-  const halted = tasks.blocked > 0 ? ` · ${tasks.blocked} halted` : "";
-  return `Building ${tasks.done}/${tasks.total}${halted}`;
+  const notes: string[] = [];
+  const moving = tasksInFlight(tasks);
+  if (moving > 0) notes.push(`${moving} in flight`);
+  if (tasks.blocked > 0) notes.push(`${tasks.blocked} halted`);
+  return [`Building ${tasks.done}/${tasks.total}`, ...notes].join(" · ");
 }

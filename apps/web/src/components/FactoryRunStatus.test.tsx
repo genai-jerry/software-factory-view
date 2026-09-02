@@ -52,7 +52,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     expedite: { on: false, available: true, dormant: false, reason: null, lastFlip: null },
     startGate: { approvers: [], amApprover: true },
     tasks: [],
-    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0 },
+    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0, inFlight: 0 },
     blockedSubIssues: [],
     change: null,
     artifacts: [],

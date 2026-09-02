@@ -94,6 +94,9 @@ function BoardCardView({ card: c, onPeek }: { card: BoardCard; onPeek: (id: stri
             {c.tasks.done}/{c.tasks.total} tasks
           </span>
         )}
+        {/* A task closes only at the end of the line, so "0/8 tasks" is what
+            a fully-busy epic reads as. The tasks agents are on say the rest. */}
+        {c.tasks.inFlight > 0 && <span>{c.tasks.inFlight} in flight</span>}
         {c.tasks.waiting > 0 && <span>{c.tasks.waiting} waiting</span>}
         {/* The marker changes what the state means — this epic advances
             between gates on its own — so the card says so. */}

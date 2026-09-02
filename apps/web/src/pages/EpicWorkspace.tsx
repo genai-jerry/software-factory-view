@@ -450,6 +450,15 @@ function OverviewTab({ data }: { data: EpicWorkspace }) {
             </span>
             <span className="badge">{data.rollup.inReview} in review</span>
             <span className="badge">{data.rollup.inTest} in test</span>
+            {/* Green and merged onto the epic branch, waiting for the rest of
+                the epic (§6a, §6b). It appears in no other badge here, so
+                without this a task that has passed review and QA reads as one
+                nothing has happened to. */}
+            {data.rollup.shipping > 0 && (
+              <span className="badge" title="green and on the epic branch, waiting for the rest of the epic">
+                {data.rollup.shipping} shipping
+              </span>
+            )}
             {data.rollup.blocked > 0 && <span className="badge blocked">{data.rollup.blocked} blocked</span>}
           </div>
         </div>
