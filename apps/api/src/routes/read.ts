@@ -56,7 +56,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
    * guards every route that returns estate data.
    */
   app.get("/api/me", async (req, reply) => {
-    const ctx = await resolveSession(db, deps.cfg, req);
+    const ctx = await resolveSession(deps, req);
     if (!ctx) return reply.code(401).send({ error: "not signed in" });
     const user = (await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1))[0]!;
     const orgRows = await db
@@ -90,11 +90,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       if (auth) {
         token = await auth.installationToken(row.estate.installationId);
       } else {
-        token = ctx.userToken();
+        token = await ctx.userToken();
       }
     } catch {
       try {
-        token = ctx.userToken();
+        token = await ctx.userToken();
       } catch {
         return reply.code(503).send({ error: "no GitHub credentials available to fetch media" });
       }

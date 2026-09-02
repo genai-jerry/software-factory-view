@@ -105,6 +105,14 @@ export const users = pgTable(
     name: text("name"),
     avatarUrl: text("avatar_url"),
     encryptedOauthToken: text("encrypted_oauth_token"),
+    // A GitHub App that expires user authorizations issues 8-hour access
+    // tokens alongside a 6-month refresh token, and rotates the refresh token
+    // on every use. Both halves and both expiries live here so the API can
+    // renew the grant in the background instead of asking the human to sign
+    // out and back in twice a day.
+    encryptedOauthRefreshToken: text("encrypted_oauth_refresh_token"),
+    oauthTokenExpiresAt: timestamp("oauth_token_expires_at", { withTimezone: true }),
+    oauthRefreshTokenExpiresAt: timestamp("oauth_refresh_token_expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("users_gh_user_id").on(t.ghUserId)],

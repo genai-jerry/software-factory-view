@@ -145,20 +145,111 @@ export class AppAuth {
     return json as never;
   }
 
-  async exchangeOAuthCode(code: string, githubWebUrl: string): Promise<{ accessToken: string }> {
+  async exchangeOAuthCode(code: string, githubWebUrl: string): Promise<OAuthGrant> {
+    return this.oauthTokenRequest(githubWebUrl, {
+      client_id: this.cfg.oauthClientId,
+      client_secret: this.cfg.oauthClientSecret,
+      code,
+    });
+  }
+
+  /**
+   * Trade a refresh token for a fresh user access token.
+   *
+   * A GitHub App with "Expire user authorization tokens" enabled — the default
+   * for new Apps — issues user tokens that die after 8 hours. Without this the
+   * Console can only tell the user to sign out and back in twice a working day.
+   * GitHub rotates the refresh token on every use, so the caller must persist
+   * the whole grant it gets back, not just the access token.
+   *
+   * A refusal GitHub attributes to the refresh token itself (expired, revoked,
+   * already rotated) raises `OAuthRefreshError` with `mustReauthorize` set: the
+   * only cure is a new authorization, and no amount of retrying substitutes.
+   */
+  async refreshOAuthToken(refreshToken: string, githubWebUrl: string): Promise<OAuthGrant> {
+    return this.oauthTokenRequest(githubWebUrl, {
+      client_id: this.cfg.oauthClientId,
+      client_secret: this.cfg.oauthClientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    });
+  }
+
+  private async oauthTokenRequest(githubWebUrl: string, body: Record<string, string>): Promise<OAuthGrant> {
     const res = await fetch(`${githubWebUrl}/login/oauth/access_token`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        client_id: this.cfg.oauthClientId,
-        client_secret: this.cfg.oauthClientSecret,
-        code,
-      }),
+      body: JSON.stringify(body),
     });
-    const data = (await res.json()) as { access_token?: string; error?: string; error_description?: string };
-    if (!data.access_token) throw new Error(`OAuth exchange failed: ${data.error ?? "no token"} ${data.error_description ?? ""}`);
-    return { accessToken: data.access_token };
+    const data = (await res.json().catch(() => null)) as OAuthTokenResponse | null;
+    if (!data?.access_token) {
+      const code = data?.error ?? (res.ok ? "no token" : `HTTP ${res.status}`);
+      throw new OAuthRefreshError(
+        `OAuth exchange failed: ${code}${data?.error_description ? ` ${data.error_description}` : ""}`,
+        code,
+      );
+    }
+    const now = Date.now();
+    return {
+      accessToken: data.access_token,
+      // A non-expiring App (the toggle turned off) simply omits expires_in;
+      // null then means "no known expiry" rather than "expired".
+      expiresAt: secondsFromNow(now, data.expires_in),
+      refreshToken: data.refresh_token ?? null,
+      refreshTokenExpiresAt: secondsFromNow(now, data.refresh_token_expires_in),
+    };
   }
+}
+
+interface OAuthTokenResponse {
+  access_token?: string;
+  expires_in?: number | string;
+  refresh_token?: string;
+  refresh_token_expires_in?: number | string;
+  error?: string;
+  error_description?: string;
+}
+
+/** One GitHub user authorization, with everything needed to renew it. */
+export interface OAuthGrant {
+  accessToken: string;
+  /** Epoch ms, or null when this App does not expire user tokens. */
+  expiresAt: number | null;
+  refreshToken: string | null;
+  refreshTokenExpiresAt: number | null;
+}
+
+/**
+ * GitHub's OAuth token endpoint answers 200 with an `error` field rather than a
+ * status code, so failures arrive as this rather than `GitHubHttpError`.
+ */
+export class OAuthRefreshError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+    this.name = "OAuthRefreshError";
+  }
+
+  /** True when re-authorization is the only cure — retrying cannot help. */
+  get mustReauthorize(): boolean {
+    return REAUTHORIZE_CODES.has(this.code);
+  }
+}
+
+const REAUTHORIZE_CODES = new Set([
+  "bad_refresh_token",
+  "bad_verification_code",
+  "incorrect_client_credentials",
+  "unauthorized_client",
+  "invalid_grant",
+  "access_denied",
+]);
+
+function secondsFromNow(now: number, seconds: number | string | undefined): number | null {
+  const n = typeof seconds === "string" ? Number(seconds) : seconds;
+  return typeof n === "number" && Number.isFinite(n) ? now + n * 1000 : null;
 }
 
 /**
@@ -313,17 +404,37 @@ export function githubAppConfigureUrl(opts: { webUrl: string; slug: string; inst
   return `${web}/apps/${opts.slug}/installations/${opts.installationId}`;
 }
 
+/** How a client obtains its bearer token; `forceFresh` asks it to renew first. */
+export type TokenProvider = (opts?: { forceFresh?: boolean }) => Promise<string>;
+
 /** Read + non-authoritative operations, shared by both identities. */
 export class RepoReader {
   constructor(
     protected readonly apiUrl: string,
-    protected readonly tokenProvider: () => Promise<string>,
+    protected readonly tokenProvider: TokenProvider,
   ) {}
 
+  /**
+   * One REST call, retried once on 401 with a renewed token.
+   *
+   * A token can pass the pre-flight expiry check and still be dead by the time
+   * GitHub sees it — clock skew, a revoked authorization, an App that rotated
+   * its credentials. A provider that can renew hands back a different token
+   * here and the call succeeds on the retry; one that cannot returns the same
+   * string, and the original 401 stands without a wasted round trip.
+   */
   protected async req(method: string, path: string, body?: unknown): Promise<unknown> {
     const token = await this.tokenProvider();
-    const { json } = await ghFetch(this.apiUrl, token, method, path, body);
-    return json;
+    try {
+      const { json } = await ghFetch(this.apiUrl, token, method, path, body);
+      return json;
+    } catch (err) {
+      if (!(err instanceof GitHubHttpError) || err.status !== 401) throw err;
+      const fresh = await this.tokenProvider({ forceFresh: true });
+      if (fresh === token) throw err;
+      const { json } = await ghFetch(this.apiUrl, fresh, method, path, body);
+      return json;
+    }
   }
 
   /** Follow page= until a short page, capped so a huge org cannot stall onboarding. */
@@ -496,7 +607,10 @@ export class RepoReader {
  */
 export class InstallationClient extends RepoReader {
   constructor(apiUrl: string, auth: AppAuth, installationId: number) {
-    super(apiUrl, () => auth.installationToken(installationId));
+    // `forceFresh` is passed through so the 401 retry in `RepoReader.req` can
+    // actually help: an installation token is cached with a minute of slack
+    // and a long ingest run can outlive it mid-request.
+    super(apiUrl, (opts) => auth.installationToken(installationId, { forceFresh: opts?.forceFresh === true }));
   }
 
   async createLabel(owner: string, repo: string, label: { name: string; color: string; description: string }): Promise<"created" | "updated"> {
@@ -598,8 +712,8 @@ export class InstallationClient extends RepoReader {
  * permission check runs on every call.
  */
 export class UserClient extends RepoReader {
-  constructor(apiUrl: string, userToken: string) {
-    super(apiUrl, async () => userToken);
+  constructor(apiUrl: string, userToken: string | TokenProvider) {
+    super(apiUrl, typeof userToken === "string" ? async () => userToken : userToken);
   }
 
   async me(): Promise<{ id: number; login: string; name: string | null; avatar_url: string }> {

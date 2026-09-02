@@ -1,8 +1,9 @@
-import { encryptSecret, GitHubHttpError, randomToken, UserClient } from "@console/core";
+import { GitHubHttpError, randomToken, UserClient } from "@console/core";
 import { estates, memberships, orgs, repos, sessions, users } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { SESSION_COOKIE, type AppDeps } from "./context.js";
+import { SESSION_COOKIE, userTokens, type AppDeps } from "./context.js";
+import { sealGrant } from "./user-token.js";
 
 const SESSION_TTL_DAYS = 14;
 const oauthStates = new Map<string, { expiry: number; next?: string }>(); // state -> expiry; single-process MVP
@@ -44,27 +45,33 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     const auth = await deps.credentials.auth();
     if (!auth) return reply.code(409).send({ error: "no GitHub App registered — complete setup first" });
-    const { accessToken } = await auth.exchangeOAuthCode(code, cfg.GITHUB_WEB_URL);
-    const gh = new UserClient(cfg.GITHUB_API_URL, accessToken);
+    // The whole grant, not just the access token: an App that expires user
+    // authorizations issues an 8-hour token plus the refresh token that keeps
+    // it alive, and dropping the latter is what forced a re-login twice a day.
+    const grant = await auth.exchangeOAuthCode(code, cfg.GITHUB_WEB_URL);
+    const gh = new UserClient(cfg.GITHUB_API_URL, grant.accessToken);
     const me = await gh.me();
 
     const existing = await dbh.db.select().from(users).where(eq(users.ghUserId, me.id)).limit(1);
-    const encrypted = encryptSecret(accessToken, cfg.CONSOLE_MASTER_KEY);
+    const sealed = sealGrant(grant, cfg.CONSOLE_MASTER_KEY);
     let userId: string;
     if (existing[0]) {
       userId = existing[0].id;
       await dbh.db
         .update(users)
-        .set({ login: me.login, name: me.name, avatarUrl: me.avatar_url, encryptedOauthToken: encrypted })
+        .set({ login: me.login, name: me.name, avatarUrl: me.avatar_url, ...sealed })
         .where(eq(users.id, userId));
     } else {
       userId = (
         await dbh.db
           .insert(users)
-          .values({ ghUserId: me.id, login: me.login, name: me.name, avatarUrl: me.avatar_url, encryptedOauthToken: encrypted })
+          .values({ ghUserId: me.id, login: me.login, name: me.name, avatarUrl: me.avatar_url, ...sealed })
           .returning()
       )[0]!.id;
     }
+    // This authorization supersedes whatever the refresh cache still holds for
+    // the user — including a grant it has just given up on.
+    userTokens(deps).remember(userId, grant);
 
     await bootstrapMemberships(deps, userId, gh);
     await createSession(deps, userId, reply);
@@ -87,7 +94,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.post("/api/auth/logout", async (req, reply) => {
     const sid = req.cookies[SESSION_COOKIE];
-    if (sid) await dbh.db.delete(sessions).where(eq(sessions.id, sid));
+    if (sid) {
+      const row = (await dbh.db.select({ userId: sessions.userId }).from(sessions).where(eq(sessions.id, sid)).limit(1))[0];
+      await dbh.db.delete(sessions).where(eq(sessions.id, sid));
+      if (row) userTokens(deps).forget(row.userId);
+    }
     void reply.clearCookie(SESSION_COOKIE, { path: "/" });
     return { ok: true };
   });

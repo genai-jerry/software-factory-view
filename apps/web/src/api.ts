@@ -1,4 +1,5 @@
 /** Fetch wrapper: same-origin cookie auth + the CSRF custom header on writes. */
+import { noteReauthNeeded } from "./lib/reauth.js";
 
 export class ApiError extends Error {
   constructor(
@@ -8,6 +9,21 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+
+  /**
+   * The API could not renew the GitHub authorization on its own — only a fresh
+   * sign-in will do. Distinct from a plain 401 (no session at all), which the
+   * app already handles by showing the front door.
+   */
+  get needsReauth(): boolean {
+    return this.status === 401 && (this.body as { reauth?: boolean } | null)?.reauth === true;
+  }
+}
+
+/** Send the browser through GitHub sign-in, returning to the current page. */
+export function reauthenticate(): void {
+  const next = `${location.pathname}${location.search}`;
+  location.assign(`/auth/github/login?next=${encodeURIComponent(next)}`);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -23,7 +39,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const json = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const message = (json as { error?: string } | null)?.error ?? `${method} ${path} failed (${res.status})`;
-    throw new ApiError(res.status, message, json);
+    const err = new ApiError(res.status, message, json);
+    if (err.needsReauth) noteReauthNeeded();
+    throw err;
   }
   return json as T;
 }

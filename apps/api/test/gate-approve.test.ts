@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
+import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@console/core";
 import {
   changeArtifacts,
   changes,
@@ -194,5 +194,51 @@ describe("a GitHub refusal reaches the caller", () => {
     const res = await approve({ acknowledgeOpenQuestions: true });
     expect(res.statusCode).toBe(401);
     expect(res.json().error).toContain("sign in again");
+    expect(res.json().reauth).toBe(true);
+  });
+
+  it("renews an expired authorization mid-approval rather than refusing it", async () => {
+    // The failure this replaces: a GitHub App that expires user tokens leaves
+    // an 8-hour-old session posting nothing and saying "sign out and back in".
+    await deps.dbh.db
+      .update(users)
+      .set({
+        encryptedOauthToken: encryptSecret("ghu_expired", MASTER_KEY),
+        encryptedOauthRefreshToken: encryptSecret("ghr_1", MASTER_KEY),
+        oauthTokenExpiresAt: new Date(Date.now() - 60_000),
+      })
+      .where(eq(users.login, "alice"));
+
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push(String(url));
+        if (String(url).endsWith("/login/oauth/access_token")) {
+          return new Response(
+            JSON.stringify({ access_token: "ghu_fresh", expires_in: 28_800, refresh_token: "ghr_2" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        // The comment must go out on the renewed token, not the dead one.
+        expect((init.headers as Record<string, string>).authorization).toBe("Bearer ghu_fresh");
+        return new Response(JSON.stringify({ node_id: "C3", html_url: "https://gh/1#c3" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    const res = await approve({ acknowledgeOpenQuestions: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, commentUrl: "https://gh/1#c3" });
+    expect(calls).toEqual([
+      "https://github.com/login/oauth/access_token",
+      `${API_URL}/repos/acme/app/issues/1/comments`,
+    ]);
+
+    // The rotated grant is on the row, so tomorrow's session renews too.
+    const row = (await deps.dbh.db.select().from(users).where(eq(users.login, "alice")).limit(1))[0]!;
+    expect(decryptSecret(row.encryptedOauthRefreshToken!, MASTER_KEY)).toBe("ghr_2");
   });
 });

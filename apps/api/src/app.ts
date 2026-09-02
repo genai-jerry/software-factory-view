@@ -1,5 +1,5 @@
 import cookie from "@fastify/cookie";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import { registerAuthRoutes } from "./auth.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 import { registerReadRoutes } from "./routes/read.js";
@@ -17,6 +17,7 @@ import { registerOpsRoutes } from "./routes/ops.js";
 import { registerEstateRoutes } from "./routes/estates.js";
 import { registerSetupRoutes } from "./setup.js";
 import type { AppDeps } from "./context.js";
+import { SignInRequiredError } from "./user-token.js";
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: deps.cfg.NODE_ENV === "test" ? "warn" : "info" } });
@@ -30,6 +31,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       reply.header("x-content-type-options", "nosniff");
     }
     return payload;
+  });
+
+  /**
+   * A grant the Console could not renew is a 401 with `reauth`, never a 500.
+   * Routes that talk to GitHub on the user's behalf are spread across a dozen
+   * files; handling it here means a new one cannot forget to, and the SPA gets
+   * one machine-readable signal to send the person back through GitHub.
+   */
+  app.setErrorHandler((err: FastifyError, req, reply) => {
+    if (err instanceof SignInRequiredError) {
+      return reply.code(401).send({ error: err.message, reauth: true });
+    }
+    req.log.error({ err }, "unhandled route error");
+    const status = typeof err.statusCode === "number" && err.statusCode >= 400 ? err.statusCode : 500;
+    return reply.code(status).send({ error: status === 500 ? "internal error" : err.message });
   });
 
   app.get("/api/health", async () => ({ ok: true, service: "console-api" }));
