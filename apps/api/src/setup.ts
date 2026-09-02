@@ -66,7 +66,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       if (req.query.state) qs.set("state", req.query.state);
       const here = `/setup/install${qs.size ? `?${qs}` : ""}`;
 
-      const ctx = await resolveSession(db, deps.cfg, req);
+      const ctx = await resolveSession(deps, req);
       if (!ctx) return reply.redirect(`/auth/github/login?next=${encodeURIComponent(here)}`);
 
       const installationId = Number(req.query.installation_id);
@@ -141,7 +141,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
       const pkcs8 = await toPkcs8(created.pem);
       const key = deps.cfg.CONSOLE_MASTER_KEY;
 
-      const ctx = await resolveSession(db, deps.cfg, req);
+      const ctx = await resolveSession(deps, req);
       await db
         .insert(githubAppConfig)
         .values({
@@ -322,7 +322,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   /** Bootstrap the very first user as an owner when no memberships exist yet. */
   app.post("/api/setup/claim-owner", async (req, reply) => {
-    const ctx = await resolveSession(db, deps.cfg, req);
+    const ctx = await resolveSession(deps, req);
     if (!ctx) return reply.code(401).send({ error: "sign in first" });
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
     const existing = await db.select().from(memberships).limit(1);
@@ -347,7 +347,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
  */
 export async function setupAccess(deps: AppDeps, req: FastifyRequest): Promise<{ allowed: boolean; ctx: RequestCtx | null }> {
   const db = deps.dbh.db;
-  const ctx = await resolveSession(db, deps.cfg, req);
+  const ctx = await resolveSession(deps, req);
 
   if (await deps.credentials.isConfigured()) {
     if (!ctx) return { allowed: false, ctx: null };

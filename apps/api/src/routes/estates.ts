@@ -87,7 +87,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
    * a first-time sign-in can tick repos and go to GitHub's install screen.
    */
   app.get("/api/installations", async (req, reply) => {
-    const ctx = await resolveSession(db, deps.cfg, req);
+    const ctx = await resolveSession(deps, req);
     if (!ctx) return reply.code(401).send({ error: "not signed in" });
     if (!(await deps.credentials.isConfigured())) {
       return reply.code(409).send({ error: "no GitHub App registered yet", needsSetup: true });
@@ -274,7 +274,7 @@ export function registerEstateRoutes(app: FastifyInstance, deps: AppDeps): void 
   app.post<{
     Body: { installationId: number; name?: string; repoNodeIds?: string[]; coordinationRepoNodeId?: string };
   }>("/api/estates", async (req, reply) => {
-    const ctx = await resolveSession(db, deps.cfg, req);
+    const ctx = await resolveSession(deps, req);
     if (!ctx) return reply.code(401).send({ error: "not signed in" });
     if (req.headers["x-console-csrf"] !== "1") return reply.code(403).send({ error: "missing CSRF header" });
 

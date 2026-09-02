@@ -1,6 +1,7 @@
 import { GitHubHttpError, type GhComment } from "@console/core";
 import type { FastifyReply } from "fastify";
 import { userClient, type AppDeps, type RequestCtx } from "./context.js";
+import { SignInRequiredError } from "./user-token.js";
 
 /** The human-readable half of a GitHub error body. */
 export function githubMessage(err: GitHubHttpError): string {
@@ -15,8 +16,9 @@ export function githubMessage(err: GitHubHttpError): string {
 
 /**
  * Post a comment on an issue as the acting user, turning a GitHub refusal —
- * or a missing/expired OAuth token — into GitHub's own answer with a status
- * the SPA can render, instead of the anonymous 500 an uncaught throw produces.
+ * or an authorization the Console can no longer renew — into GitHub's own
+ * answer with a status the SPA can render, instead of the anonymous 500 an
+ * uncaught throw produces.
  *
  * Returns `null` once the reply has been sent, so callers read:
  *
@@ -33,20 +35,22 @@ export async function postComment(
   body: string,
 ): Promise<GhComment | null> {
   const target = `${owner}/${repo}#${issueNumber}`;
-  let gh;
-  try {
-    gh = userClient(deps, ctx);
-  } catch (err) {
-    void reply.code(401).send({ error: `${(err as Error).message}` });
-    return null;
-  }
+  // Construction is free now: the token is resolved — and the grant renewed if
+  // it has aged out — inside the call, so failures land in the catch below.
+  const gh = userClient(deps, ctx);
   try {
     return await gh.createComment(owner, repo, issueNumber, body);
   } catch (err) {
+    if (err instanceof SignInRequiredError) {
+      void reply.code(401).send({ error: err.message, reauth: true });
+      return null;
+    }
     if (err instanceof GitHubHttpError) {
       const detail = githubMessage(err);
       if (err.status === 401) {
-        void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign out and back in` });
+        // A 401 that survived the client's forced-refresh retry: the
+        // authorization is genuinely gone, not merely aged out.
+        void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign in again`, reauth: true });
       } else if (err.status === 403 || err.status === 404) {
         void reply.code(403).send({
           error: `GitHub declined to comment on ${target}: ${detail}. Posting needs write access to the repository and the Console's GitHub App granted Issues: write.`,
@@ -82,22 +86,22 @@ export async function writeLabel(
   action: "add" | "remove",
 ): Promise<boolean> {
   const target = `${owner}/${repo}#${issueNumber}`;
-  let gh;
-  try {
-    gh = userClient(deps, ctx);
-  } catch (err) {
-    void reply.code(401).send({ error: `${(err as Error).message}` });
-    return false;
-  }
+  const gh = userClient(deps, ctx);
   try {
     if (action === "add") await gh.addLabels(owner, repo, issueNumber, [label]);
     else await gh.removeLabel(owner, repo, issueNumber, label);
     return true;
   } catch (err) {
+    if (err instanceof SignInRequiredError) {
+      void reply.code(401).send({ error: err.message, reauth: true });
+      return false;
+    }
     if (err instanceof GitHubHttpError) {
       const detail = githubMessage(err);
       if (err.status === 401) {
-        void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign out and back in` });
+        // A 401 that survived the client's forced-refresh retry: the
+        // authorization is genuinely gone, not merely aged out.
+        void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign in again`, reauth: true });
       } else if (err.status === 403 || err.status === 404) {
         void reply.code(403).send({
           error: `GitHub declined to ${action} \`${label}\` on ${target}: ${detail}. Labelling needs write access to the repository, and the label has to exist — run the Labels step in Onboarding if it does not.`,

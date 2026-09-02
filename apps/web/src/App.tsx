@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, reauthenticate } from "./api.js";
 import type { Me, SetupStatus } from "./types.js";
 import { Banner } from "./components/Banner.js";
+import { useReauthNeeded } from "./lib/reauth.js";
 import { Shell, canReachSettings } from "./components/Shell.js";
 import { HomePage } from "./pages/Home.js";
 import { MissionControl } from "./pages/MissionControl.js";
@@ -20,6 +21,7 @@ function isOrchestratorRunPath(pathname: string): boolean {
 
 export function App() {
   const location = useLocation();
+  const reauthNeeded = useReauthNeeded();
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status"), retry: false });
   const me = useQuery<Me, ApiError>({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/me"), retry: false });
 
@@ -103,6 +105,14 @@ export function App() {
 
   return (
     <Shell me={user!} setup={setup.data}>
+      {reauthNeeded ? (
+        <Banner tone="error">
+          GitHub sign-in has expired and could not be renewed — writes will fail until you sign in again.{" "}
+          <button className="link" onClick={reauthenticate}>
+            Sign in again
+          </button>
+        </Banner>
+      ) : null}
       <Routes>
         <Route path="/" element={<MissionControl />} />
         <Route path="/flow" element={<FlowPage />} />

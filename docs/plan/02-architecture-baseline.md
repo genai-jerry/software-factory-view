@@ -112,6 +112,20 @@ and the Console needs no parallel enforcement layer. GitHub's native permission
 checks still apply: a user who cannot merge on GitHub cannot merge via the
 Console.
 
+**Token lifetime and renewal.** Both paths expire, and neither expiry is
+allowed to reach the user as an error. Installation tokens live ~1h and are
+minted on demand, with a re-mint forced when a call comes back 401. A GitHub App
+with *Expire user authorization tokens* enabled — the default — issues user
+tokens that die after **8 hours**, alongside a refresh token good for **6
+months** which GitHub rotates on every use. The API therefore stores the whole
+grant (access token, refresh token, both expiries, encrypted) and renews it
+five minutes ahead of expiry, again on a 401, and only ever once at a time per
+user — two exchanges racing on one rotating refresh token would leave the
+loser holding a credential GitHub has already retired. A human is asked to sign
+in again only when GitHub disowns the refresh token itself; that answer reaches
+the SPA as `401 {reauth: true}`, which raises a "sign in again" banner rather
+than a dead-end error.
+
 **Enforcement mechanism.** `packages/core` exposes two client factories,
 `installationClient(estateId)` and `userClient(session)`. The merge, approve,
 label-flip and comment-as-human operations live on a module that only accepts a
@@ -166,8 +180,10 @@ decision, which is why both live in the same section.
   unscoped query builder — obtaining one requires an explicit, greppable
   `unsafeUnscoped()` escape hatch used only by the reconciler.
 - **User OAuth tokens** encrypted at rest with a per-tenant data key
-  (KMS-style envelope). **Installation tokens are never persisted** — minted on
-  demand, ~1h lifetime.
+  (KMS-style envelope) — the refresh token alongside the access token, since
+  the grant is renewed server-side (§3). Clearing a user's stored grant takes
+  effect on their next request, not on the next restart. **Installation tokens
+  are never persisted** — minted on demand, ~1h lifetime.
 - **Webhook payloads** are HMAC-verified before enqueue; raw payloads retained
   30 days for replay/debug, then dropped.
 - **Repo file content in the artifact cache is customer source material:**

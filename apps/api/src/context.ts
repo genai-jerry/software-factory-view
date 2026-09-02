@@ -1,8 +1,9 @@
-import { CredentialStore, decryptSecret, UserClient, type ConsoleConfig } from "@console/core";
-import { memberships, sessions, users, type Db, type DbHandle } from "@console/db";
+import { CredentialStore, UserClient, type ConsoleConfig, type TokenProvider } from "@console/core";
+import { memberships, sessions, users, type DbHandle } from "@console/db";
 import { and, eq, gt } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Queue } from "bullmq";
+import { UserTokenStore } from "./user-token.js";
 
 /** Per-process dependencies threaded through routes. */
 export interface AppDeps {
@@ -20,17 +21,47 @@ export interface RequestCtx {
   userId: string;
   login: string;
   orgIds: string[];
-  userToken: () => string; // decrypts lazily; throws if absent
+  /**
+   * A live GitHub user token. Resolves lazily and renews the OAuth grant when
+   * it is within minutes of expiring; rejects with `SignInRequiredError` only
+   * when a human really does have to authorize again.
+   */
+  userToken: TokenProvider;
+}
+
+/**
+ * One token store per app instance, created on first use. It is keyed off the
+ * deps object rather than held in `AppDeps` so that its refresh cache — which
+ * must be the single writer of a user's rotating grant — cannot be duplicated
+ * by a caller assembling deps by hand.
+ */
+const tokenStores = new WeakMap<AppDeps, UserTokenStore>();
+
+export function userTokens(deps: AppDeps): UserTokenStore {
+  let store = tokenStores.get(deps);
+  if (!store) {
+    store = new UserTokenStore(() => deps);
+    tokenStores.set(deps, store);
+  }
+  return store;
 }
 
 export const SESSION_COOKIE = "console_session";
 export const CSRF_HEADER = "x-console-csrf";
 
-export async function resolveSession(db: Db, cfg: ConsoleConfig, req: FastifyRequest): Promise<RequestCtx | null> {
+export async function resolveSession(deps: AppDeps, req: FastifyRequest): Promise<RequestCtx | null> {
+  const db = deps.dbh.db;
   const sid = req.cookies[SESSION_COOKIE];
   if (!sid) return null;
   const rows = await db
-    .select({ userId: sessions.userId, login: users.login, token: users.encryptedOauthToken })
+    .select({
+      userId: sessions.userId,
+      login: users.login,
+      token: users.encryptedOauthToken,
+      refreshToken: users.encryptedOauthRefreshToken,
+      expiresAt: users.oauthTokenExpiresAt,
+      refreshTokenExpiresAt: users.oauthRefreshTokenExpiresAt,
+    })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(eq(sessions.id, sid), gt(sessions.expiresAt, new Date())))
@@ -42,10 +73,12 @@ export async function resolveSession(db: Db, cfg: ConsoleConfig, req: FastifyReq
     userId: row.userId,
     login: row.login,
     orgIds: orgRows.map((r) => r.orgId),
-    userToken: () => {
-      if (!row.token) throw new Error("no OAuth token on file — sign in again");
-      return decryptSecret(row.token, cfg.CONSOLE_MASTER_KEY);
-    },
+    userToken: userTokens(deps).provider(row.userId, {
+      accessToken: row.token,
+      refreshToken: row.refreshToken,
+      expiresAt: row.expiresAt,
+      refreshTokenExpiresAt: row.refreshTokenExpiresAt,
+    }),
   };
 }
 
@@ -55,7 +88,7 @@ export async function resolveSession(db: Db, cfg: ConsoleConfig, req: FastifyReq
  * a CORS preflight, and this API serves no CORS (plan 02 §1a).
  */
 export async function requireAuth(deps: AppDeps, req: FastifyRequest, reply: FastifyReply): Promise<RequestCtx | null> {
-  const ctx = await resolveSession(deps.dbh.db, deps.cfg, req);
+  const ctx = await resolveSession(deps, req);
   if (!ctx) {
     void reply.code(401).send({ error: "not signed in" });
     return null;
@@ -71,6 +104,11 @@ export async function requireAuth(deps: AppDeps, req: FastifyRequest, reply: Fas
   return ctx;
 }
 
+/**
+ * A GitHub client on the acting user's identity. Construction is free: the
+ * token is fetched — and renewed if need be — when a call is actually made,
+ * and a 401 from GitHub forces one more renewal before the call gives up.
+ */
 export function userClient(deps: AppDeps, ctx: RequestCtx): UserClient {
-  return new UserClient(deps.cfg.GITHUB_API_URL, ctx.userToken());
+  return new UserClient(deps.cfg.GITHUB_API_URL, ctx.userToken);
 }
