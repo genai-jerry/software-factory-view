@@ -89,11 +89,9 @@ export class UserTokenStore {
     if (!forceFresh && grant && !isExpiring(grant.expiresAt)) return grant.accessToken;
     if (!grant) throw new SignInRequiredError("no token on file");
     // Nothing to renew with: an App that does not expire user tokens has no
-    // refresh token, so a 401 there really does mean a revoked authorization.
-    if (!grant.refreshToken) {
-      if (!forceFresh && !isExpiring(grant.expiresAt)) return grant.accessToken;
-      throw new SignInRequiredError("no refresh token on file");
-    }
+    // refresh token, so reaching here — a 401 from GitHub, or an expiry we
+    // somehow recorded — really does mean the authorization is gone.
+    if (!grant.refreshToken) throw new SignInRequiredError("no refresh token on file");
     return (await this.refresh(userId, grant)).accessToken;
   }
 
