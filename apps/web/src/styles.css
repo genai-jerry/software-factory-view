@@ -252,6 +252,10 @@ textarea { min-height: 5rem; resize: vertical; }
 .badge.blocked { border-color: var(--red); color: var(--red); }
 .badge.merge { border-color: var(--green); color: var(--green); }
 .badge.task-start { border-color: var(--amber); color: var(--amber); }
+/* A system test case waiting for a person (FACTORY.md §4b). Deliberately not
+   `task-start`'s amber: at badge size that token does not clear the contrast
+   floor on the light theme, and this chip is how a tester finds their work. */
+.badge.test-run { border-color: var(--halt); color: var(--halt); }
 .badge.state { border-color: var(--accent); color: var(--accent); }
 /* The expedite marker and the automatic-next cues it produces. Its own colour
    (the halt orange, which nothing else on a row uses) because it is neither a

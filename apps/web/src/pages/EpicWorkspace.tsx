@@ -742,7 +742,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
                         {c.title.replace(/^test\([^)]*\):?\s*(ST-\d+)?\s*/i, "")} <GitHubLink href={c.htmlUrl} />
                       </td>
                       <td>
-                        <span className={`badge ${c.verdict === "passed" ? "merge" : c.verdict === "failed" ? "blocked" : "state"}`}>
+                        <span className={`badge ${c.verdict === "passed" ? "merge" : c.verdict === "failed" ? "blocked" : c.verdict === "runnable" ? "test-run" : "state"}`}>
                           {c.verdict === "passed"
                             ? "Passed"
                             : c.verdict === "failed"
@@ -1089,7 +1089,7 @@ function SystemTestCases({ data, cases }: { data: EpicWorkspace; cases: EpicWork
                 <div className="meta">
                   <span
                     className={`badge ${
-                      c.state === "factory:test-failed" ? "blocked" : c.state === "factory:manual-test" ? "task-start" : "state"
+                      c.state === "factory:test-failed" ? "blocked" : c.state === "factory:manual-test" ? "test-run" : "state"
                     }`}
                   >
                     {c.state === "factory:manual-test"

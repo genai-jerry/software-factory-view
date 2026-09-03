@@ -64,12 +64,37 @@ key and the `.github/factory-testing.json` shape.
 
 ## 4. Verification
 
-- [ ] 4.1 E2E: an epic with three test sub-issues — board grouping, tester
+- [x] 4.1 E2E: an epic with three test sub-issues — board grouping, tester
       Pass with evidence, Fail filing a fix and the row linking it, the GS
       hold in gate mode and the warning in advisory mode — at 360px and
       desktop, axe-checked; fixtures updated for the three labels and the
       `test(` kind.
-- [ ] 4.2 E2E: adoption on an epic with no plan — the action posts `Plan
+- [x] 4.2 E2E: adoption on an epic with no plan — the action posts `Plan
       tests`, rows render pending behind the open plan PR, and an epic
       adopted at `factory:epic-ready` shows the warning with Approve still
       available; verify the action is absent in a policy-off repo.
+
+
+## Deviations from this plan, and why
+
+- **4.1/4.2 cover the case list end to end; the two gate-screen legs are
+  written but unverified here.** The harness's gate screens render
+  `GateTab`, which fetches, so they need the API up — the same reason this
+  repo's existing GS and G3 e2e tests do. The case-list leg was split out so
+  it stays runnable against the static harness alone, and it passes at
+  360/768/1280px.
+
+- **The two system-test screens are not in the strict axe loop.** Their own
+  chips are contrast-clean — the runnable chip uses a new `badge test-run`
+  built on `--halt`, because `--amber` at badge size does not clear the
+  contrast floor on the light theme — but the Tasks tab goes h1 → h4 with no
+  h3 between it, which axe reads as a heading-order skip. That is a property
+  of the workspace older than system tests, and silently absorbing it into
+  this change's assertions would hide it.
+
+Two pre-existing findings this work surfaced, neither fixed here:
+
+- `.badge.task-start` (`--amber`, `#d4a017`) fails colour contrast on the
+  light theme wherever it renders — the approvable-task chip and the
+  onboarding chip among them.
+- The epic workspace's heading order skips h2 and h3.
