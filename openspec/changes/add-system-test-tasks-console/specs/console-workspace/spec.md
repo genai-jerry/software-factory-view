@@ -74,6 +74,40 @@ is gate G2's merge of the design PR). A test sub-issue's peek SHALL show its
 - **THEN** it shows ST-4's Covers, Preconditions, Steps and Expected from the
   approved plan, and the records of every data set in its `Data:` line
 
+### Requirement: Adopting tests on an epic that has none
+
+On an epic with no system test plan, in a repo whose
+`.github/factory-testing.json` enables system tests, the workspace SHALL
+offer a **Plan system tests** action that posts the literal comment `Plan
+tests` as the acting member through the user-token client. It SHALL say, before
+posting, that the Test Planner will write a plan and open one sub-issue per
+case, and that the resulting plan PR must be merged before any case reaches
+a tester. It SHALL be hidden — with the factory's own reason where one
+applies — on epics earlier than `factory:planned`, on `factory:deployed` or
+closed epics, on task and test sub-issues, on release trackers, on the
+profile issue and on `factory:fast-track` issues. While a plan PR is open,
+test rows SHALL render as pending with that reason and a link to the PR,
+never as runnable.
+
+#### Scenario: Offering adoption on a mid-build epic
+
+- **WHEN** a member opens an epic at `factory:design-approved` with no test
+  plan, in a repo where the policy is on
+- **THEN** the workspace offers Plan system tests, and confirming it posts
+  exactly `Plan tests` as that member
+
+#### Scenario: Cases pending behind an unmerged plan
+
+- **WHEN** the Test Planner has opened the sub-issues and the
+  `factory/<epic>-tests` PR is still open
+- **THEN** every test row reads as pending, names the open plan PR, and
+  offers neither Pass nor Fail
+
+#### Scenario: Hidden where the factory would refuse
+
+- **WHEN** the epic is `factory:deployed`, or the issue is a fast-track issue
+- **THEN** no Plan system tests action is shown
+
 ### Requirement: Gate GS panel carries the test matrix
 
 The GS panel at `factory:epic-ready` SHALL include a test matrix — every
@@ -97,3 +131,10 @@ above Approve (or above the G3 merge buttons) rather than hiding it.
 - **WHEN** the same epic is at `factory:epic-ready` under `mode: advisory`
 - **THEN** the GS panel shows the matrix with the two unverified cases as a
   warning and still offers Approve
+
+#### Scenario: An epic that adopted tests late is not blocked
+
+- **WHEN** an epic already at `factory:epic-ready` adopts a plan under
+  `mode: gate` and two of its cases are runnable
+- **THEN** the GS panel warns that two cases are unverified and still offers
+  Approve, because the factory has not revoked the state

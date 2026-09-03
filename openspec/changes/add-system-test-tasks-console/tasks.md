@@ -37,6 +37,11 @@ key and the `.github/factory-testing.json` shape.
       the `Review Done` path), visibility by `testers` fallback chain and
       state, pending-verdict rendering; verify the writes never use the app
       token and the verdict body is posted last.
+- [ ] 2.2a Plan system tests action: visible only on an epic with no plan in
+      a policy-on repo and only in the states the factory accepts, posting
+      the literal `Plan tests` as the user after a confirm that says what it
+      does; render test rows as pending with the open plan PR linked until it
+      merges; verify the action is hidden in every refused case.
 - [ ] 2.3 Artifact reader and peek: list `system-tests/test-plan.md` and
       `test-data.md` with the as-proposed ⇄ as-approved toggle; extract a
       case's `### ST-<n>` section and its `Data:` sets for the test
@@ -45,7 +50,9 @@ key and the `.github/factory-testing.json` shape.
       projected verdict comments; hold the GS panel before
       `factory:epic-ready` with the open cases and testers named; advisory
       / no-epic-branch warning above Approve and above the G3 merge
-      buttons; verify both modes with unit tests.
+      buttons; verify both modes with unit tests, including an epic that
+      adopted its plan after reaching `factory:epic-ready` (warn, never
+      block).
 
 ## 3. Attention queue
 
@@ -62,3 +69,7 @@ key and the `.github/factory-testing.json` shape.
       hold in gate mode and the warning in advisory mode — at 360px and
       desktop, axe-checked; fixtures updated for the three labels and the
       `test(` kind.
+- [ ] 4.2 E2E: adoption on an epic with no plan — the action posts `Plan
+      tests`, rows render pending behind the open plan PR, and an epic
+      adopted at `factory:epic-ready` shows the warning with Approve still
+      available; verify the action is absent in a policy-off repo.

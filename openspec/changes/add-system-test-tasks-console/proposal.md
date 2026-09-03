@@ -44,8 +44,20 @@ humans in the loop decide; the tester is now one of them.
   sub-issue's peek shows its case section from the plan.
 - **Gate GS panel:** the evidence block gains the **test matrix** — case,
   verdict, tester, when — and, under `mode: gate`, the panel is not offered
-  until the matrix is all green; under `advisory`, or for an epic without an
-  epic branch, unverified cases are listed as a warning above Approve.
+  until the matrix is all green; under `advisory`, for an epic without an
+  epic branch, or for an epic that adopted its plan after reaching the gate,
+  unverified cases are listed as a warning above Approve. The Console never
+  implies a state the factory has not set: an epic that adopted tests late
+  keeps `factory:epic-ready` and reads as approvable-with-warnings.
+- **Adopting tests on an in-flight epic:** an epic with no test plan, in a
+  repo where the policy is on, shows a **Plan system tests** action that
+  posts the literal `Plan tests` as the acting user (the same mechanism as
+  Approve and Review Done), with a note saying what it will do and that the
+  resulting plan PR has to be merged before any case reaches a tester. While
+  that PR is open the workspace shows the cases as pending with the reason
+  and a link to the PR, rather than as runnable. The action is hidden where
+  the factory refuses adoption — before `factory:planned`, on shipped or
+  closed epics, on trackers, profile and fast-track issues.
 - **Attention queue:** a case reaching `factory:manual-test` is a needs-you
   item for the testers ("system test ST-4 is ready to run"); a
   `factory:test-failed` case surfaces to the implementation approvers via
@@ -77,9 +89,10 @@ the existing attention queue.
   next-step.ts, a new test-verdict helper), `apps/api` (tree routes for the
   two comments, attention, read routes for the two artifacts), `apps/web`
   (task board, peek, gate tab, artifact reader), e2e fixtures.
-- Depends on the factory change's label names, comment bodies, `testers`
-  key and `.github/factory-testing.json` shape; build after
-  `add-system-test-generation` sections 1 and 6 land.
+- Depends on the factory change's label names, comment bodies (`Test
+  Passed`, `Test Failed`, `Plan tests`), the `testers` key and the
+  `.github/factory-testing.json` shape; build after
+  `add-system-test-generation` sections 1, 2 and 3 land.
 - No schema migration: the three labels and the `test(` title flow through
   the existing projection; the policy file is read like the other
   `.github/factory-*.json` files.
