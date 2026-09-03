@@ -34,6 +34,8 @@ const autoTask: EpicWorkspace["tasks"][number] = {
   id: "task-10",
   number: 10,
   title: "task(api): reminder schedule",
+  kind: "task",
+  caseId: null,
   state: "factory:ready",
   open: true,
   htmlUrl: "https://gh/10",

@@ -28,16 +28,16 @@ key and the `.github/factory-testing.json` shape.
 
 ## 2. Workspace
 
-- [ ] 2.1 Task board: render test sub-issues as their own group with case
+- [x] 2.1 Task board: render test sub-issues as their own group with case
       identifier, dependency chips, state and fix-task link; exclude them
       from code-task counts; verify non-test rendering is byte-identical to
       today.
-- [ ] 2.2 Pass / Fail actions: `apps/api` tree route that posts an optional
+- [x] 2.2 Pass / Fail actions: `apps/api` tree route that posts an optional
       evidence comment then the literal verdict body as the user (reusing
       the `Review Done` path), visibility by `testers` fallback chain and
       state, pending-verdict rendering; verify the writes never use the app
       token and the verdict body is posted last.
-- [ ] 2.2a Plan system tests action: visible only on an epic with no plan in
+- [x] 2.2a Plan system tests action: visible only on an epic with no plan in
       a policy-on repo and only in the states the factory accepts, posting
       the literal `Plan tests` as the user after a confirm that says what it
       does; render test rows as pending with the open plan PR linked until it
