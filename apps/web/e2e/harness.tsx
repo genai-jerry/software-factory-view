@@ -312,6 +312,8 @@ const expeditedWorkspace: EpicWorkspace = {
       id: "task-10",
       number: 10,
       title: "task(api): reminder schedule",
+      kind: "task",
+      caseId: null,
       state: "factory:ready",
       open: true,
       htmlUrl: "https://github.com/acme/api/issues/10",
@@ -332,6 +334,8 @@ const expeditedWorkspace: EpicWorkspace = {
       id: "task-11",
       number: 11,
       title: "task(api): reminder email",
+      kind: "task",
+      caseId: null,
       state: "factory:in-test",
       open: true,
       htmlUrl: "https://github.com/acme/api/issues/11",
@@ -371,6 +375,8 @@ const gsPanel: GatePanelData = {
       { number: 10, title: "task(api): reminder schedule", state: "factory:on-epic", open: true, htmlUrl: "https://gh/10" },
       { number: 11, title: "task(api): reminder email", state: "factory:on-epic", open: true, htmlUrl: "https://gh/11" },
     ],
+    cases: [],
+    testsOutstanding: 0,
     allGreen: true,
     report: {
       author: "factory-bot",
@@ -466,6 +472,74 @@ function ExpediteConfirmScreen() {
   );
 }
 
+/**
+ * An epic whose code is assembled and whose system test cases are not
+ * (FACTORY.md §4b): the state the tests add, and the one a task count cannot
+ * express. One case is runnable, one failed, one passed.
+ */
+const testCase = (over: Partial<EpicWorkspace["tasks"][number]> & { id: string; number: number; title: string }) => ({
+  kind: "test",
+  caseId: /ST-\d+/.exec(over.title)?.[0] ?? null,
+  state: "factory:manual-test",
+  open: true,
+  htmlUrl: `https://github.com/acme/api/issues/${over.number}`,
+  blockedBy: [],
+  blocks: [],
+  startStatus: "none" as const,
+  approvable: false,
+  nextStep: {
+    who: "the testers — @tester",
+    how: "Run it, then comment exactly Test Passed or Test Failed with what you saw.",
+    startRole: null,
+    startLabel: null,
+    waitsOnPerson: true,
+    automatic: false,
+  },
+  ...over,
+});
+
+const testedWorkspace: EpicWorkspace = {
+  ...expeditedWorkspace,
+  epic: {
+    ...expeditedWorkspace.epic,
+    labels: ["factory:design-approved"],
+    status: "Assembled · waiting on 2 tests",
+  },
+  expedite: { ...expediteState, on: false },
+  tasks: [
+    ...expeditedWorkspace.tasks.map((t) => ({ ...t, state: "factory:on-epic", startStatus: "none" as const, approvable: false })),
+    testCase({ id: "case-30", number: 30, title: "test(9): ST-1 Reminder fires on the due date" }),
+    testCase({ id: "case-31", number: 31, title: "test(9): ST-2 Invalid card is rejected", state: "factory:test-failed" }),
+    testCase({ id: "case-32", number: 32, title: "test(9): ST-3 Receipt is emailed", state: "factory:test-passed", open: false }),
+  ],
+};
+
+const gsPanelWithTests: GatePanelData = {
+  ...gsPanel,
+  assembly: {
+    ...gsPanel.assembly!,
+    cases: [
+      { number: 30, title: "test(9): ST-1 Reminder fires on the due date", state: "factory:manual-test", open: true,
+        htmlUrl: "https://gh/30", caseId: "ST-1", verdict: "runnable", verdictBy: null, verdictAt: null },
+      { number: 32, title: "test(9): ST-3 Receipt is emailed", state: "factory:test-passed", open: false,
+        htmlUrl: "https://gh/32", caseId: "ST-3", verdict: "passed", verdictBy: "tester",
+        verdictAt: "2026-09-02T09:00:00.000Z" },
+    ],
+    testsOutstanding: 1,
+  },
+};
+
+function SystemTestsScreen() {
+  return (
+    <Shell me={me} setup={setup}>
+      {/* The real workspace heads the page with the epic; the fixture has to
+          as well, or the screen is judged without the landmark it ships with. */}
+      <h1>#9 Payment reminders</h1>
+      <TasksTab data={testedWorkspace} />
+    </Shell>
+  );
+}
+
 function GatePanelScreen({ panel }: { panel: GatePanelData }) {
   return (
     <QueryClientProvider client={gateClient(panel)}>
@@ -511,8 +585,12 @@ function Screen() {
       return <ExpediteWorkspaceScreen />;
     case "expedite-confirm":
       return <ExpediteConfirmScreen />;
+    case "system-tests":
+      return <SystemTestsScreen />;
     case "gate-staging":
       return <GatePanelScreen panel={gsPanel} />;
+    case "gate-staging-tests":
+      return <GatePanelScreen panel={gsPanelWithTests} />;
     case "gate-g3":
       return <GatePanelScreen panel={g3Panel} />;
     case "api-down":

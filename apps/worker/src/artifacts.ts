@@ -97,7 +97,10 @@ export async function refreshEpicArtifacts(
         if (f.type === "file") {
           const parsed = parseChangePath(f.path);
           if (parsed?.artifact) paths.set(f.path, { slug: parsed.slug, kind: parsed.artifact });
-        } else if (f.type === "dir" && f.path.endsWith("/specs")) {
+        } else if (f.type === "dir" && (f.path.endsWith("/specs") || f.path.endsWith("/system-tests"))) {
+          // `specs/` holds one file per capability; `system-tests/` holds the
+          // plan and its data (FACTORY.md §4b). Both are change content the
+          // reader has to find when there is no PR file list to read it from.
           for (const s of await reader.listDir(owner, name, f.path)) {
             const parsed = parseChangePath(s.path);
             if (parsed?.artifact) paths.set(s.path, { slug: parsed.slug, kind: parsed.artifact });
@@ -155,7 +158,7 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
   // `staging` (gate GS) is newer than most approver files; an absent key parses
   // to an empty list here and the readers fall back to `release` (core:
   // GATE_FALLBACK) rather than showing the staging gate to nobody.
-  for (const gate of ["spec", "design", "implementation", "staging", "release"] as const) {
+  for (const gate of ["spec", "design", "implementation", "testers", "staging", "release"] as const) {
     for (const login of parsed[gate]) {
       await db
         .insert(gateAssignments)

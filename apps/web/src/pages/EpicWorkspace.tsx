@@ -705,6 +705,63 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               )}
             </tbody>
           </table>
+          {/* The test matrix (FACTORY.md §4b): what a person actually
+              exercised. Where the factory holds this gate on the cases it
+              never lets the epic arrive here with any open, so an epic that
+              IS here with cases outstanding is one the policy did not hold —
+              advisory mode, no epic branch, or a plan adopted after the gate
+              was reached. The decision is the approver's; say plainly what is
+              unverified and leave the button alone. */}
+          {g.assembly.cases.length > 0 && (
+            <>
+              <div className="spread" style={{ marginTop: "1rem" }}>
+                <h4 style={{ margin: 0 }}>System tests</h4>
+                <span className={`badge ${g.assembly.testsOutstanding === 0 ? "merge" : "task-start"}`}>
+                  {g.assembly.cases.length - g.assembly.testsOutstanding}/{g.assembly.cases.length} passed
+                </span>
+              </div>
+              {g.assembly.testsOutstanding > 0 && (
+                <div className="banner warn">
+                  {g.assembly.testsOutstanding} case{g.assembly.testsOutstanding === 1 ? "" : "s"} not passed. Approving
+                  releases this epic to staging with those unverified — read the matrix below before you do.
+                </div>
+              )}
+              <table className="assembly-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Case</th>
+                    <th scope="col">Verdict</th>
+                    <th scope="col">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.assembly.cases.map((c) => (
+                    <tr key={c.number}>
+                      <td>
+                        {c.caseId ? <strong>{c.caseId}</strong> : null} #{c.number}{" "}
+                        {c.title.replace(/^test\([^)]*\):?\s*(ST-\d+)?\s*/i, "")} <GitHubLink href={c.htmlUrl} />
+                      </td>
+                      <td>
+                        <span className={`badge ${c.verdict === "passed" ? "merge" : c.verdict === "failed" ? "blocked" : c.verdict === "runnable" ? "test-run" : "state"}`}>
+                          {c.verdict === "passed"
+                            ? "Passed"
+                            : c.verdict === "failed"
+                              ? "Failed"
+                              : c.verdict === "runnable"
+                                ? "Not run"
+                                : "Not runnable"}
+                        </span>
+                      </td>
+                      <td className="muted">
+                        {c.verdictBy ? `@${c.verdictBy}` : "—"}
+                        {c.verdictAt ? ` · ${new Date(c.verdictAt).toLocaleDateString()}` : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
           {g.assembly.prs.length > 0 && (
             <p className="muted">
               Open against this epic:{" "}
@@ -877,8 +934,14 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
     { title: "Blocked", match: (t) => t.open && t.state === "factory:blocked" },
   ];
   if (data.tasks.length === 0) return <p className="muted">No task sub-issues yet — tasks appear after the plan (G1) is approved and the planner runs.</p>;
-  const approvable = data.tasks.filter((t) => t.approvable);
-  const started = data.tasks.filter((t) => t.startStatus === "approved" || t.startStatus === "running");
+  // System test cases (FACTORY.md §4b) are children of the epic like tasks,
+  // but they are not tasks: no implementer runs on one, and what they want is
+  // a human's verdict. Grouped apart so the columns keep meaning what they
+  // say — a case in "Waiting" would read as work the factory owes.
+  const cases = data.tasks.filter((t) => t.kind === "test");
+  const codeTasks = data.tasks.filter((t) => t.kind !== "test");
+  const approvable = codeTasks.filter((t) => t.approvable);
+  const started = codeTasks.filter((t) => t.startStatus === "approved" || t.startStatus === "running");
   return (
     <div className="tasks-list">
       {/* Expedited: say once, at the top, why no row is asking for anything.
@@ -911,7 +974,7 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
           entirely. Anything left over lands in the last group instead —
           losing a task off the board is worse than an odd heading. */}
       {[...cols, { title: "Elsewhere", match: (t: Task) => !cols.some((c) => c.match(t)) }].map((c) => {
-        const items = data.tasks.filter((t) => c.match(t));
+        const items = codeTasks.filter((t) => c.match(t));
         if (items.length === 0) return null;
         return (
           <div key={c.title}>
@@ -968,6 +1031,149 @@ export function TasksTab({ data }: { data: EpicWorkspace }) {
           </div>
         );
       })}
+      <SystemTestCases data={data} cases={cases} />
+    </div>
+  );
+}
+
+/**
+ * The epic's system test cases (FACTORY.md §4b) — the work a person does
+ * against the assembled change.
+ *
+ * Not a column on the board above: a case is a parallel track, and the only
+ * control it ever offers is a verdict. Pending cases are shown too, because
+ * "three cases exist and none is runnable yet" is the honest reading of an
+ * epic mid-build; hiding them would make the tests look absent rather than
+ * waiting.
+ */
+function SystemTestCases({ data, cases }: { data: EpicWorkspace; cases: EpicWorkspace["tasks"] }) {
+  if (cases.length === 0) return null;
+  const runnable = cases.filter((c) => c.state === "factory:manual-test");
+  const passed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
+  const failed = cases.filter((c) => c.state === "factory:test-failed");
+  const pending = cases.filter(
+    (c) => c.open && c.state !== "factory:manual-test" && c.state !== "factory:test-failed" && c.state !== "factory:test-passed",
+  );
+  return (
+    <div className="system-tests">
+      <h4 className="phase-head">
+        System tests ({passed.length}/{cases.length} passed)
+      </h4>
+      {runnable.length > 0 && (
+        <div className="banner info">
+          {runnable.length} case{runnable.length === 1 ? "" : "s"} ready to run. Run it against the environment the
+          plan names, then record what you saw — a pass closes the case, a failure files the task to fix it.
+        </div>
+      )}
+      {runnable.length === 0 && pending.length > 0 && (
+        <div className="banner info">
+          {pending.length} case{pending.length === 1 ? "" : "s"} not runnable yet — each waits for the tasks it
+          covers to be assembled, and for the test plan to be merged.
+        </div>
+      )}
+      {[
+        { title: "Ready to run", items: runnable },
+        { title: "Failed", items: failed },
+        { title: "Not runnable yet", items: pending },
+        { title: "Passed", items: passed },
+      ].map((g) =>
+        g.items.length === 0 ? null : (
+          <div key={g.title}>
+            <h5 className="phase-head">
+              {g.title} ({g.items.length})
+            </h5>
+            {g.items.map((c) => (
+              <div className={`board-card${c.state === "factory:test-failed" ? " blocked" : ""}`} key={c.id}>
+                {c.caseId ? <strong>{c.caseId}</strong> : null} #{c.number}{" "}
+                {c.title.replace(/^test\([^)]*\):?\s*(ST-\d+)?\s*/i, "")}
+                <div className="meta">
+                  <span
+                    className={`badge ${
+                      c.state === "factory:test-failed" ? "blocked" : c.state === "factory:manual-test" ? "test-run" : "state"
+                    }`}
+                  >
+                    {c.state === "factory:manual-test"
+                      ? "Ready to run"
+                      : c.state === "factory:test-passed" || !c.open
+                        ? "Passed"
+                        : c.state === "factory:test-failed"
+                          ? "Failed"
+                          : "Waiting"}
+                  </span>
+                  {c.blockedBy.filter((d) => d.open).length > 0 && (
+                    <span title={c.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>
+                      after {c.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
+                    </span>
+                  )}
+                  <GitHubLink href={c.htmlUrl} />
+                </div>
+                <NextStepLine step={c.nextStep} />
+                {c.state === "factory:manual-test" && <TestVerdict caseId={c.id} label={c.caseId ?? `#${c.number}`} />}
+              </div>
+            ))}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+/**
+ * Pass / Fail on a runnable case. Posts the literal `Test Passed` or
+ * `Test Failed` as the acting member, exactly as the gate buttons post
+ * `Approved` — the router does everything that follows.
+ *
+ * The evidence box is optional and is posted first, as an ordinary comment,
+ * so the verdict is the newest comment on the thread: the router matches the
+ * body exactly, and a verdict with observations appended would not be one.
+ */
+function TestVerdict({ caseId, label }: { caseId: string; label: string }) {
+  const qc = useQueryClient();
+  const [evidence, setEvidence] = useState("");
+  const [confirming, setConfirming] = useState<null | "passed" | "failed">(null);
+  const post = useMutation({
+    mutationFn: (verdict: "passed" | "failed") =>
+      api.post(`/api/issues/${caseId}/test-verdict`, { verdict, evidence: evidence.trim() || undefined }),
+    onSuccess: () => {
+      setEvidence("");
+      setConfirming(null);
+      void qc.invalidateQueries();
+    },
+  });
+  return (
+    <div className="dep-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "0.4rem" }}>
+      <textarea
+        value={evidence}
+        onChange={(e) => setEvidence(e.target.value)}
+        placeholder="What you saw (optional) — posted as a comment before the verdict"
+        rows={2}
+        aria-label={`Evidence for ${label}`}
+      />
+      {confirming === null ? (
+        <div className="dep-actions">
+          <button type="button" onClick={() => setConfirming("passed")} disabled={post.isPending}>
+            Pass
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming("failed")} disabled={post.isPending}>
+            Fail
+          </button>
+        </div>
+      ) : (
+        <div className="dep-actions">
+          <span className="muted">
+            {confirming === "passed"
+              ? `Record ${label} as passed? It closes the case.`
+              : `Record ${label} as failed? The factory files a task to fix it and brings this case back when that lands.`}
+          </span>
+          <button type="button" onClick={() => post.mutate(confirming)} disabled={post.isPending}>
+            {post.isPending ? "Posting…" : "Confirm"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(null)} disabled={post.isPending}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {post.isError && <div className="banner error">{(post.error as ApiError).message}</div>}
     </div>
   );
 }

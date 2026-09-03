@@ -167,7 +167,7 @@ const stepRows = async () => await deps.dbh.db.select().from(onboardingRuns);
 /** What the route would write for this org — the same call it makes internally. */
 const generatedFiles = () =>
   stubFiles(
-    { spec: [], design: [], implementation: [], staging: [], release: [] },
+    { spec: [], design: [], implementation: [], testers: [], staging: [], release: [] },
     "software-factory",
     { defaultBranch: "main", stagingBranch: null },
   );
@@ -215,5 +215,51 @@ describe("stub step re-run on an enabled repo", () => {
     // epics:false is the repo's answer, not a gap to fill.
     const row = (await stepRows()).find((r) => r.step === "stubs");
     expect((row?.detail as { inSync?: boolean }).inSync).toBe(true);
+  });
+});
+
+
+describe("adopting system tests through the same sync", () => {
+  it("carries the policy file to a repo that predates it", async () => {
+    // The whole point of the additive sync: a repo enabled before system
+    // tests existed has no .github/factory-testing.json at all, and the file
+    // is what turns the Test Planner on. A missing file travels whole.
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    const write = putBodies.find((b) => b.path.includes("factory-testing.json"));
+    expect(write, "the policy file should be in the sync PR").toBeTruthy();
+    const written = JSON.parse(Buffer.from(write!.content, "base64").toString("utf8")) as Record<string, unknown>;
+    expect(written["system_tests"]).toBe(true);
+    expect(written["mode"]).toBe("gate");
+  });
+
+  it("adds the Test Planner's model chain without touching a hand-tuned one", async () => {
+    // A repo that has retuned its chains keeps every one of them; only the
+    // role it had never heard of is added.
+    reply(
+      "GET /repos/acme/api/contents/.github/factory-models.json",
+      fileBody("m1", `${JSON.stringify({ planner: ["claude-sonnet-5"], implementer: ["claude-sonnet-5"] }, null, 2)}\n`),
+    );
+    await post();
+    const write = putBodies.find((b) => b.path.includes("factory-models.json"));
+    const merged = JSON.parse(Buffer.from(write!.content, "base64").toString("utf8")) as Record<string, string[]>;
+    expect(merged["testplanner"]).toEqual(["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]);
+    expect(merged["planner"]).toEqual(["claude-sonnet-5"]);
+    expect(merged["implementer"]).toEqual(["claude-sonnet-5"]);
+  });
+
+  it("leaves a repo that has already answered the question alone", async () => {
+    // system_tests:false is a decision, not a gap. Additive means the sync
+    // must not flip it back on — and the generated `_comment` this
+    // hand-written file lacks must not drag it into a PR on its own.
+    for (const [path, content] of Object.entries(generatedFiles())) {
+      reply(`GET /repos/acme/api/contents/${path}`, fileBody(`sha-${path}`, content));
+    }
+    reply(
+      "GET /repos/acme/api/contents/.github/factory-testing.json",
+      fileBody("t1", `${JSON.stringify({ system_tests: false, mode: "gate" }, null, 2)}\n`),
+    );
+    await post();
+    expect(putBodies.some((b) => b.path.includes("factory-testing.json"))).toBe(false);
   });
 });

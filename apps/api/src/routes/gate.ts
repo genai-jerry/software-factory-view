@@ -1,4 +1,14 @@
-import { APPROVED_BODY, GATE_STATES, GitHubHttpError, decryptSecret } from "@console/core";
+import {
+  APPROVED_BODY,
+  GATE_STATES,
+  GitHubHttpError,
+  MANUAL_TEST_STATE,
+  TEST_FAILED_BODY,
+  TEST_FAILED_STATE,
+  TEST_PASSED_BODY,
+  TEST_PASSED_STATE,
+  decryptSecret,
+} from "@console/core";
 import {
   artifactCache,
   auditLog,
@@ -305,19 +315,65 @@ async function loadAssemblyEvidence(
   epic: typeof issues.$inferSelect,
   repo: typeof repos.$inferSelect,
 ): Promise<{
+  cases: Array<{
+    number: number;
+    title: string;
+    state: string | null;
+    open: boolean;
+    htmlUrl: string;
+    caseId: string | null;
+    verdict: "passed" | "failed" | "runnable" | "pending";
+    verdictBy: string | null;
+    verdictAt: Date | null;
+  }>;
+  testsOutstanding: number;
   tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
   allGreen: boolean;
   report: { author: string | null; at: Date; html: string; htmlUrl: string | null } | null;
   prs: ReturnType<typeof prDto>[];
 }> {
   const { db } = deps.dbh;
-  const taskRows = await db.select().from(issues).where(eq(issues.parentIssueId, epic.id)).orderBy(issues.number);
-  const tasks = taskRows.map((t) => ({
+  const childRows = await db.select().from(issues).where(eq(issues.parentIssueId, epic.id)).orderBy(issues.number);
+  const dto = (t: (typeof childRows)[number]) => ({
     number: t.number,
     title: t.title,
     state: t.factoryState,
     open: t.state === "open",
     htmlUrl: t.htmlUrl,
+  });
+  const tasks = childRows.filter((t) => t.kind !== "test").map(dto);
+  // The test matrix (FACTORY.md §4b): every case with its verdict and who
+  // gave it. This is the evidence gate GS is actually weighed on where a repo
+  // runs system tests — the assembly report proves the code built, and the
+  // matrix proves a person exercised it.
+  const caseRows = childRows.filter((t) => t.kind === "test");
+  const verdicts = caseRows.length
+    ? await db
+        .select({ issueId: comments.issueId, author: comments.author, body: comments.body, at: comments.ghCreatedAt })
+        .from(comments)
+        .where(inArray(comments.issueId, caseRows.map((c) => c.id)))
+        .orderBy(desc(comments.ghCreatedAt))
+    : [];
+  const verdictOf = new Map<string, { author: string | null; at: Date | null }>();
+  for (const v of verdicts) {
+    // Newest first, so the first strict-match verdict per case wins.
+    if (verdictOf.has(v.issueId)) continue;
+    const body = (v.body ?? "").trim();
+    if (body === TEST_PASSED_BODY || body === TEST_FAILED_BODY) verdictOf.set(v.issueId, { author: v.author, at: v.at });
+  }
+  const cases = caseRows.map((c) => ({
+    ...dto(c),
+    caseId: /^test\(\d+\):\s*(ST-\d+)/i.exec(c.title)?.[1] ?? null,
+    verdict:
+      c.factoryState === TEST_PASSED_STATE || (!(c.state === "open") && c.factoryState !== TEST_FAILED_STATE)
+        ? ("passed" as const)
+        : c.factoryState === TEST_FAILED_STATE
+          ? ("failed" as const)
+          : c.factoryState === MANUAL_TEST_STATE
+            ? ("runnable" as const)
+            : ("pending" as const),
+    verdictBy: verdictOf.get(c.id)?.author ?? null,
+    verdictAt: verdictOf.get(c.id)?.at ?? null,
   }));
 
   const report = (
@@ -336,6 +392,18 @@ async function loadAssemblyEvidence(
 
   return {
     tasks,
+    cases,
+    /**
+     * Cases neither passed nor abandoned. Rendered as a warning above
+     * Approve rather than as a reason to withhold it: the factory holds the
+     * gate itself where its policy says to (`mode: gate` with an epic
+     * branch), so an epic that is *at* this gate with cases open is one the
+     * factory decided not to hold — an advisory repo, a repo with no epic
+     * branch, or an epic that adopted its plan after reaching the gate. In
+     * every one of those the decision is the approver's, and hiding the
+     * button would strand it.
+     */
+    testsOutstanding: cases.filter((c) => c.verdict !== "passed").length,
     // Green at GS means every task has landed: closed, or on the epic branch
     // and beyond. Anything else and the assembly is not what the label claims.
     allGreen: tasks.length > 0 && tasks.every((t) => !t.open || ASSEMBLED_TASK_STATES.has(t.state ?? "")),
@@ -357,7 +425,10 @@ const ASSEMBLED_TASK_STATES = new Set(["factory:on-epic", "factory:epic-ready", 
 /** Artifact kinds a gate is actually about — the set the gate panel renders. */
 function artifactIsRelevant(gate: string, kind: string): boolean {
   if (gate === "spec") return kind === "proposal" || kind === "spec";
-  if (gate === "design") return kind === "design" || kind === "tasks";
+  // G2 approves the plan, the design AND the system test plan: the Test
+  // Planner commits all of it to the one design PR, and that merge is the
+  // only review those cases ever get (FACTORY.md §4b).
+  if (gate === "design") return kind === "design" || kind === "tasks" || kind === "test-plan" || kind === "test-data";
   return true;
 }
 

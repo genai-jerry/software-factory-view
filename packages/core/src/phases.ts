@@ -34,6 +34,11 @@ const PHASE_MAP: Record<string, Phase> = {
   "factory:in-test": "building",
   "factory:ready-to-ship": "shipping",
   "factory:on-epic": "shipping",
+  // A case is work still to be done on the change, so it reads as building
+  // even though its code has landed: somebody has to run it.
+  "factory:manual-test": "building",
+  "factory:test-failed": "building",
+  "factory:test-passed": "shipping",
   "factory:epic-ready": "shipping",
   "factory:in-staging": "shipping",
   "factory:deployed": "shipping",
@@ -68,6 +73,9 @@ export const STATE_SENTENCE: Record<string, string> = {
   "factory:in-test": "QA is verifying the WHEN/THEN scenarios.",
   "factory:ready-to-ship": "Green; the release manager is merging it onto the epic branch (or staging when the epic has none) and checking it there.",
   "factory:on-epic": "Merged onto its epic branch and green there; waiting for the epic to complete and be carried to staging.",
+  "factory:manual-test": "A system test case ready for a human to run — testers: {approvers}.",
+  "factory:test-failed": "A system test case that failed; the fix task named on it is in flight.",
+  "factory:test-passed": "A system test case that passed.",
   "factory:epic-ready":
     "Assembled and green on its epic branch, awaiting gate GS — the release to staging, not to production. Approvers: {approvers}.",
   "factory:in-staging": "On staging and verified there, awaiting gate G3 — the promotion to the default branch. Approvers: {approvers}.",
@@ -94,6 +102,9 @@ export const NEXT_MOVER: Record<string, string> = {
   "factory:in-test": "QA posts the test report and moves it to ready-to-ship.",
   "factory:ready-to-ship": "The Release Manager merges it onto the epic branch (or staging when the epic has none) and verifies it there.",
   "factory:on-epic": "The Release Manager assembles the completed epic and moves it to epic-ready (gate GS).",
+  "factory:manual-test": "A tester runs the case and comments Test Passed or Test Failed on it.",
+  "factory:test-failed": "The fix task lands; the Dispatcher then returns the case to manual-test for a re-run.",
+  "factory:test-passed": "Nothing — the case is done. The epic waits on its remaining cases and tasks.",
   "factory:epic-ready": "A staging approver comments Approved on the epic (GS); the Release Manager then merges it onto the integration branch.",
   "factory:in-staging": "A human merges the promotion PR(s) via the GitHub UI (G3).",
   "factory:deployed": "Ops verifies health, archives the change, and closes the issue.",

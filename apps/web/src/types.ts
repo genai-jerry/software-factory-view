@@ -266,6 +266,16 @@ export interface BoardCard {
   tasks: TaskRollup;
 }
 
+/** An epic's system test cases (FACTORY.md §4b), counted apart from its code
+ * tasks. Absent where the repo runs no system tests, or the epic has none. */
+export interface TestRollup {
+  total: number;
+  passed: number;
+  runnable: number;
+  failed: number;
+  outstanding: number;
+}
+
 export interface TaskRollup {
   total: number;
   ready: number;
@@ -279,6 +289,7 @@ export interface TaskRollup {
   waiting: number;
   /** In review, in test or on a branch — the work the done count cannot see. */
   inFlight: number;
+  tests?: TestRollup;
 }
 
 export interface EpicWorkspace {
@@ -317,6 +328,8 @@ export interface EpicWorkspace {
     id: string;
     number: number;
     title: string;
+    kind: string;
+    caseId: string | null;
     state: string | null;
     open: boolean;
     htmlUrl: string;
@@ -387,6 +400,18 @@ export interface GatePanelData {
   commentApprovable: boolean;
   /** Gate GS only: what the factory assembled, which is what GS decides on. */
   assembly: {
+    cases: Array<{
+      number: number;
+      title: string;
+      state: string | null;
+      open: boolean;
+      htmlUrl: string;
+      caseId: string | null;
+      verdict: "passed" | "failed" | "runnable" | "pending";
+      verdictBy: string | null;
+      verdictAt: string | null;
+    }>;
+    testsOutstanding: number;
     tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
     allGreen: boolean;
     report: { author: string | null; at: string; html: string; htmlUrl: string | null } | null;

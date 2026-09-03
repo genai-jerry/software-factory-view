@@ -6,6 +6,9 @@ import {
   GATE_STATES,
   IN_PROGRESS_LABEL,
   githubActionsEnabled,
+  MANUAL_TEST_STATE,
+  TEST_FAILED_STATE,
+  TEST_PASSED_STATE,
   PIPELINE_ORDER,
   READY_STATE,
   startStatusTakesApproval,
@@ -325,7 +328,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         author: epic.author,
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
-        status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup),
+        status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup, rollup.tests),
         nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup, expedited }),
       },
       /**
@@ -354,6 +357,12 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           id: t.id,
           number: t.number,
           title: t.title,
+          // `task` or `test` (FACTORY.md §4b). A case is a child of the epic
+          // like a task, and everything downstream treats it differently:
+          // it is grouped apart, counted apart, and offers a verdict where a
+          // task offers a start.
+          kind: t.kind,
+          caseId: caseIdOf(t.title),
           state: t.factoryState,
           open: t.state === "open",
           htmlUrl: t.htmlUrl,
@@ -746,6 +755,27 @@ export async function loadDependencies(
 /** Green, merged onto a branch, not yet closed — the states between in-test and done. */
 const SHIPPING_STATES = new Set(["factory:ready-to-ship", "factory:on-epic", "factory:in-staging"]);
 
+/**
+ * An epic's system test cases (FACTORY.md §4b), rolled up beside its code
+ * tasks and never mixed into them. A case is a child of the epic like a task
+ * is, so without this split a `test(` sub-issue inflates `total` while
+ * falling into no bucket — and a passed case, which the router closes, would
+ * count as a task done.
+ */
+/** `test(9): ST-4 Renewal fires` -> `ST-4` — the identifier testers cite. */
+function caseIdOf(title: string): string | null {
+  return /^test\(\d+\):\s*(ST-\d+)/i.exec(title)?.[1] ?? null;
+}
+
+export interface TestRollup {
+  total: number;
+  passed: number;
+  runnable: number;
+  failed: number;
+  /** Cases neither passed nor abandoned: what the epic still waits on. */
+  outstanding: number;
+}
+
 export interface TaskRollup {
   total: number;
   ready: number;
@@ -761,14 +791,27 @@ export interface TaskRollup {
    * badge reads) so the browser never re-derives it and drifts.
    */
   inFlight: number;
+  /** Absent where the repo runs no system tests, or the epic has no cases. */
+  tests?: TestRollup;
 }
 
 export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<TaskRollup> {
   const { db } = deps.dbh;
-  const tasks = await db
-    .select({ id: issues.id, factoryState: issues.factoryState, state: issues.state })
+  const children = await db
+    .select({ id: issues.id, kind: issues.kind, factoryState: issues.factoryState, state: issues.state })
     .from(issues)
     .where(eq(issues.parentIssueId, epicIssueId));
+  // Cases are counted apart from code tasks — see TestRollup.
+  const tasks = children.filter((c) => c.kind !== "test");
+  const cases = children.filter((c) => c.kind === "test");
+  const tests: TestRollup = { total: cases.length, passed: 0, runnable: 0, failed: 0, outstanding: 0 };
+  for (const c of cases) {
+    if (c.factoryState === TEST_PASSED_STATE || (c.state === "closed" && c.factoryState !== TEST_FAILED_STATE)) {
+      tests.passed++;
+    } else if (c.factoryState === TEST_FAILED_STATE) tests.failed++;
+    else if (c.factoryState === MANUAL_TEST_STATE) tests.runnable++;
+  }
+  tests.outstanding = tests.total - tests.passed;
   const rollup = {
     total: tasks.length,
     ready: 0,
@@ -779,6 +822,7 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     blocked: 0,
     waiting: 0,
     inFlight: 0,
+    ...(cases.length > 0 ? { tests } : {}),
   };
   const openIds: string[] = [];
   for (const t of tasks) {

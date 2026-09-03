@@ -26,6 +26,13 @@ export const FACTORY_LABELS = [
   { name: "factory:ready-to-ship", color: "6AA84F", description: "Green + approved; awaiting the merge onto the epic branch (or staging when the epic has none)" },
   { name: "factory:on-epic", color: "4F9E58", description: "Merged onto the epic branch and green there; waiting for the rest of the epic" },
   { name: "factory:epic-ready", color: "41A08A", description: "Epic fully assembled and green; awaiting gate GS (release to staging)" },
+  // System test cases (FACTORY.md §4b). States, but only ever on a
+  // `test(<epic>)` sub-issue: a case a human runs against the assembled epic.
+  // No role is ever started on one, which is why none of them appears in the
+  // expedite map or offers a start control.
+  { name: "factory:manual-test", color: "D96C1F", description: "System test case ready for a human to run (test sub-issue)" },
+  { name: "factory:test-passed", color: "1F7A4D", description: "System test case passed (test sub-issue; terminal)" },
+  { name: "factory:test-failed", color: "C0392B", description: "System test case failed; a fix task is in flight (test sub-issue)" },
   { name: "factory:in-staging", color: "3D9970", description: "Merged to staging and verified there; awaiting gate G3 promotion to the default branch" },
   { name: "factory:deployed", color: "0B8043", description: "In production; soak in progress" },
   { name: "factory:fast-track", color: "8C8C8C", description: "Small fix bypassing OpenSpec ceremony" },
@@ -81,6 +88,37 @@ export const EPIC_READY_STATE = "factory:epic-ready";
  */
 export const DESIGN_APPROVED_STATE = "factory:design-approved";
 
+/**
+ * The three states of a system test case (FACTORY.md §4b), and the two
+ * comment bodies that move it.
+ *
+ * A case is released to `MANUAL_TEST_STATE` by the Dispatcher once its plan is
+ * merged and the code it exercises is assembled; a human runs it and records
+ * the verdict. `Test Passed` is authorised against the `testers` list (which
+ * falls back to `implementation`); `Test Failed` is open to any collaborator,
+ * because a failure only adds work — it files a fix task and parks the case
+ * until that lands.
+ */
+export const MANUAL_TEST_STATE = "factory:manual-test";
+export const TEST_PASSED_STATE = "factory:test-passed";
+export const TEST_FAILED_STATE = "factory:test-failed";
+
+/** Exact comment body the router accepts as a passing system test verdict. */
+export const TEST_PASSED_BODY = "Test Passed";
+/** Exact comment body the router accepts as a failing system test verdict. */
+export const TEST_FAILED_BODY = "Test Failed";
+/** Exact comment body that asks the Test Planner to write a plan for an epic. */
+export const PLAN_TESTS_BODY = "Plan tests";
+
+/** The epic states from which a system test plan may still be adopted (§4b). */
+export const PLAN_TESTS_STATES: readonly string[] = [
+  "factory:planned",
+  "factory:design-ready",
+  DESIGN_APPROVED_STATE,
+  EPIC_READY_STATE,
+  "factory:in-staging",
+];
+
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
   { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
@@ -117,7 +155,26 @@ export const PIPELINE_ORDER: readonly FactoryState[] = [
   "factory:deployed",
 ];
 
-export type Gate = "spec" | "design" | "implementation" | "staging" | "release";
+/**
+ * The system test case states (FACTORY.md §4b), in the order a case moves
+ * through them.
+ *
+ * Deliberately NOT part of `PIPELINE_ORDER`: the rail and the board columns
+ * are the path a *change* takes, and a case is a parallel track hanging off
+ * one point of it. Splicing them into the rail would shift every epic's
+ * stage display to describe work belonging to its sub-issues.
+ */
+export const TEST_STATE_ORDER: readonly string[] = [
+  MANUAL_TEST_STATE,
+  TEST_FAILED_STATE,
+  TEST_PASSED_STATE,
+];
+
+export function isTestState(label: string | null | undefined): boolean {
+  return Boolean(label && TEST_STATE_ORDER.includes(label));
+}
+
+export type Gate = "spec" | "design" | "implementation" | "testers" | "staging" | "release";
 
 /** States at which a gate holds, and which approver list owns it. */
 export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
@@ -131,6 +188,10 @@ export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
   // this point, never this gate. factory:on-epic still deliberately has NO
   // gate; it is the Release Manager's assembly step (FACTORY.md §6b).
   [EPIC_READY_STATE]: { gate: "staging", label: "GS" },
+  // Not a gate in the approval sense — nothing is being authorised — but the
+  // same shape: a state that holds until a named group of humans acts, whose
+  // list the Console has to resolve to show the case to the right people.
+  [MANUAL_TEST_STATE]: { gate: "testers", label: "system test" },
   // G3 holds at in-staging, not ready-to-ship or on-epic: the merges onto the
   // epic branch (FACTORY.md §6b) and the integration branch (§6a) are the
   // Release Manager's steps, and only once the change is proved on staging
@@ -147,7 +208,13 @@ export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
  * attention down the same chain or it would show the staging gate to nobody
  * on exactly the estates that have not upgraded their approver file.
  */
-export const GATE_FALLBACK: Partial<Record<Gate, Gate>> = { staging: "release" };
+export const GATE_FALLBACK: Partial<Record<Gate, Gate>> = {
+  staging: "release",
+  // `testers` is newer still, and a repo that turns system tests on before
+  // naming its testers must still show a runnable case to somebody. The
+  // factory reads testers, then implementation, then "any collaborator".
+  testers: "implementation",
+};
 
 /** A gate's approver lists in priority order — the first non-empty one owns it. */
 export function gateApproverChain(gate: string): string[] {
@@ -184,6 +251,8 @@ export interface ApproverFile {
   spec: string[];
   design: string[];
   implementation: string[];
+  /** Who runs system test cases and may pass them (§4b). See `GATE_FALLBACK`. */
+  testers: string[];
   /** Gate GS. Absent in files written before GS existed — see `GATE_FALLBACK`. */
   staging: string[];
   release: string[];
@@ -197,6 +266,7 @@ export function parseApproverFile(json: unknown): ApproverFile {
     spec: list("spec"),
     design: list("design"),
     implementation: list("implementation"),
+    testers: list("testers"),
     staging: list("staging"),
     release: list("release"),
   };

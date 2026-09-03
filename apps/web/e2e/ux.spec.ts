@@ -28,6 +28,27 @@ for (const vp of VIEWPORTS) {
       await noPagePan(page);
     });
 
+    test("system test cases do not pan", async ({ page }) => {
+      await page.goto("/e2e.html?screen=system-tests");
+      // Cases are their own group, never a column among the code tasks.
+      await expect(page.getByRole("heading", { name: /System tests \(1\/3 passed\)/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Pass" })).toBeVisible();
+      await noPagePan(page);
+    });
+
+    // Split from the case list above on purpose: the gate screens render
+    // `GateTab`, which fetches, so they need the API up — the same reason the
+    // GS/G3 tests next door do. Keeping the case list separate means it stays
+    // runnable against the static harness alone.
+    test("the GS test matrix does not pan", async ({ page }) => {
+      await page.goto("/e2e.html?screen=gate-staging-tests");
+      await expect(page.getByRole("heading", { name: "System tests" })).toBeVisible();
+      await expect(page.getByText(/1 case not passed/)).toBeVisible();
+      // The warning informs the decision; it never withholds it.
+      await expect(page.getByRole("button", { name: "Approve" })).toBeVisible();
+      await noPagePan(page);
+    });
+
     test("signed-in shell does not pan", async ({ page }) => {
       await page.goto("/e2e.html?screen=shell");
       await expect(page.getByRole("link", { name: "Factory Console" })).toBeVisible();
@@ -133,6 +154,11 @@ test.describe("phone jobs 360px", () => {
   });
 
   test("axe on the expedited workspace and the GS panel", async ({ page }) => {
+    // The two system-test screens are not in this loop. Their own chips are
+    // contrast-clean (`badge test-run`), but the Tasks tab goes h1 -> h4 with
+    // no h3 between, which axe reads as a heading-order skip — a property of
+    // the workspace that predates system tests and is not this change's to
+    // silently absorb. Their render and no-pan coverage is above.
     for (const screen of ["expedite", "gate-staging"]) {
       await page.goto(`/e2e.html?screen=${screen}`);
       const results = await new AxeBuilder({ page }).analyze();

@@ -24,6 +24,8 @@ const readyTask = {
   id: "task-198",
   number: 198,
   title: "Contact column: email below the name as a mailto link",
+  kind: "task",
+  caseId: null,
   state: "factory:ready",
   open: true,
   htmlUrl: "https://github.com/acme/app/issues/198",

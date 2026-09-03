@@ -34,6 +34,8 @@ const autoTask: EpicWorkspace["tasks"][number] = {
   id: "task-10",
   number: 10,
   title: "task(api): reminder schedule",
+  kind: "task",
+  caseId: null,
   state: "factory:ready",
   open: true,
   htmlUrl: "https://gh/10",
@@ -227,6 +229,8 @@ const gsPanel: GatePanelData = {
   commentApprovable: true,
   assembly: {
     tasks: [{ number: 10, title: "task(api): reminder schedule", state: "factory:on-epic", open: true, htmlUrl: "https://gh/10" }],
+    cases: [],
+    testsOutstanding: 0,
     allGreen: true,
     report: { author: "factory-bot", at: "2026-08-31T10:00:00.000Z", html: "<p>Assembly green.</p>", htmlUrl: "https://gh/9#c9" },
     prs: [],
@@ -251,6 +255,41 @@ describe("the GS gate panel", () => {
     expect(screen.getByText("all tasks landed")).toBeTruthy();
     expect(screen.getByText(/Assembly green/)).toBeTruthy();
     expect(screen.getByText(/#10 reminder schedule/)).toBeTruthy();
+  });
+
+  it("shows no test matrix for an epic that runs none", async () => {
+    vi.mocked(api.get).mockResolvedValue(gsPanel as never);
+    renderIn(<GateTab epicId="epic-9" me={me} />);
+    await screen.findByText("all tasks landed");
+    expect(screen.queryByText("System tests")).toBeNull();
+  });
+
+  it("carries the test matrix as the evidence for the decision", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...gsPanel,
+      assembly: {
+        ...gsPanel.assembly,
+        cases: [
+          { number: 30, title: "test(9): ST-1 Reminder fires", state: "factory:test-passed", open: false,
+            htmlUrl: "https://gh/30", caseId: "ST-1", verdict: "passed", verdictBy: "tess",
+            verdictAt: "2026-09-02T09:00:00.000Z" },
+          { number: 31, title: "test(9): ST-2 Refund path", state: "factory:manual-test", open: true,
+            htmlUrl: "https://gh/31", caseId: "ST-2", verdict: "runnable", verdictBy: null, verdictAt: null },
+        ],
+        testsOutstanding: 1,
+      },
+    } as never);
+    renderIn(<GateTab epicId="epic-9" me={me} />);
+    expect(await screen.findByText("System tests")).toBeTruthy();
+    expect(screen.getByText("1/2 passed")).toBeTruthy();
+    expect(screen.getByText(/#30 Reminder fires/)).toBeTruthy();
+    // Who gave the verdict is the point; the date's format is the runtime's.
+    expect(screen.getByText(/@tess/)).toBeTruthy();
+    // Unverified cases warn, and never withhold the button: an epic that is
+    // AT this gate with cases open is one the factory chose not to hold, so
+    // the decision belongs to the approver.
+    expect(screen.getByText(/1 case not passed/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
   it("approves by the same comment mechanism as G1 and G2", async () => {

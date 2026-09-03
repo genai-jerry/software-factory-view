@@ -30,6 +30,27 @@ export interface EpicProgress {
 }
 
 /**
+ * An epic's system test cases (FACTORY.md §4b), counted apart from its code
+ * tasks. They are a different kind of work — a human running the assembled
+ * change — and folding them into the task counts would make an epic whose
+ * code is finished read as still building, or one whose cases nobody has run
+ * read as done. Absent where the repo does not run system tests.
+ */
+export interface EpicTests {
+  total: number;
+  passed: number;
+  /** Released and waiting for a tester. */
+  runnable: number;
+  /** Failed; a fix task is in flight. */
+  failed: number;
+}
+
+/** Cases neither passed nor abandoned — what the epic is still waiting on. */
+export function testsOutstanding(tests: EpicTests | undefined): number {
+  return tests ? tests.total - tests.passed : 0;
+}
+
+/**
  * Tasks an agent has already carried past the start gate and that are not yet
  * closed: in review, in test, or green on a branch waiting for the epic.
  *
@@ -43,9 +64,21 @@ export function tasksInFlight(tasks: EpicProgress): number {
   return tasks.inReview + tasks.inTest + tasks.shipping;
 }
 
-export function epicStatus(state: string | null | undefined, tasks: EpicProgress | undefined): string | null {
+export function epicStatus(
+  state: string | null | undefined,
+  tasks: EpicProgress | undefined,
+  tests?: EpicTests,
+): string | null {
   if (state !== DESIGN_APPROVED_STATE) return null;
   if (!tasks || tasks.total === 0) return null;
+  const open = testsOutstanding(tests);
+  const codeDone = tasks.done + tasks.shipping === tasks.total || tasks.done === tasks.total;
+  // The state system tests add: the code is built and the epic is held by
+  // people, not by the factory. Reading "All tasks done" there would say the
+  // epic is finished when what it is really doing is waiting for its testers.
+  if (codeDone && open > 0) {
+    return `Assembled · waiting on ${open} test${open === 1 ? "" : "s"}`;
+  }
   if (tasks.done === tasks.total) return `All ${tasks.total} tasks done`;
   // Everything left is on a branch waiting to ship — no longer "building".
   if (tasks.shipping > 0 && tasks.done + tasks.shipping === tasks.total) {
@@ -55,5 +88,6 @@ export function epicStatus(state: string | null | undefined, tasks: EpicProgress
   const moving = tasksInFlight(tasks);
   if (moving > 0) notes.push(`${moving} in flight`);
   if (tasks.blocked > 0) notes.push(`${tasks.blocked} halted`);
+  if (tests && tests.total > 0) notes.push(`Testing ${tests.passed}/${tests.total}`);
   return [`Building ${tasks.done}/${tasks.total}`, ...notes].join(" · ");
 }
