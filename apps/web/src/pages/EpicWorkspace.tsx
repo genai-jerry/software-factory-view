@@ -705,6 +705,63 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               )}
             </tbody>
           </table>
+          {/* The test matrix (FACTORY.md §4b): what a person actually
+              exercised. Where the factory holds this gate on the cases it
+              never lets the epic arrive here with any open, so an epic that
+              IS here with cases outstanding is one the policy did not hold —
+              advisory mode, no epic branch, or a plan adopted after the gate
+              was reached. The decision is the approver's; say plainly what is
+              unverified and leave the button alone. */}
+          {g.assembly.cases.length > 0 && (
+            <>
+              <div className="spread" style={{ marginTop: "1rem" }}>
+                <h4 style={{ margin: 0 }}>System tests</h4>
+                <span className={`badge ${g.assembly.testsOutstanding === 0 ? "merge" : "task-start"}`}>
+                  {g.assembly.cases.length - g.assembly.testsOutstanding}/{g.assembly.cases.length} passed
+                </span>
+              </div>
+              {g.assembly.testsOutstanding > 0 && (
+                <div className="banner warn">
+                  {g.assembly.testsOutstanding} case{g.assembly.testsOutstanding === 1 ? "" : "s"} not passed. Approving
+                  releases this epic to staging with those unverified — read the matrix below before you do.
+                </div>
+              )}
+              <table className="assembly-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Case</th>
+                    <th scope="col">Verdict</th>
+                    <th scope="col">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.assembly.cases.map((c) => (
+                    <tr key={c.number}>
+                      <td>
+                        {c.caseId ? <strong>{c.caseId}</strong> : null} #{c.number}{" "}
+                        {c.title.replace(/^test\([^)]*\):?\s*(ST-\d+)?\s*/i, "")} <GitHubLink href={c.htmlUrl} />
+                      </td>
+                      <td>
+                        <span className={`badge ${c.verdict === "passed" ? "merge" : c.verdict === "failed" ? "blocked" : "state"}`}>
+                          {c.verdict === "passed"
+                            ? "Passed"
+                            : c.verdict === "failed"
+                              ? "Failed"
+                              : c.verdict === "runnable"
+                                ? "Not run"
+                                : "Not runnable"}
+                        </span>
+                      </td>
+                      <td className="muted">
+                        {c.verdictBy ? `@${c.verdictBy}` : "—"}
+                        {c.verdictAt ? ` · ${new Date(c.verdictAt).toLocaleDateString()}` : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
           {g.assembly.prs.length > 0 && (
             <p className="muted">
               Open against this epic:{" "}

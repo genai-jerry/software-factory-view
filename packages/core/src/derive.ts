@@ -154,10 +154,15 @@ export function parseChangePath(path: string): { slug: string; epicNumber: numbe
   else if (rest === "design.md") artifact = "design";
   else if (rest === "tasks.md") artifact = "tasks";
   else if (rest.startsWith("specs/")) artifact = "spec";
+  // System tests (FACTORY.md §4b). They are change content like every other
+  // artifact: written before gate G2, approved by its merge, read from the
+  // branch that carries the change folder, archived with it.
+  else if (rest === "system-tests/test-plan.md") artifact = "test-plan";
+  else if (rest === "system-tests/test-data.md") artifact = "test-data";
   return { slug: m[1]!, epicNumber: Number(m[2]), artifact };
 }
 
-export type ArtifactKind = "proposal" | "spec" | "design" | "tasks";
+export type ArtifactKind = "proposal" | "spec" | "design" | "tasks" | "test-plan" | "test-data";
 
 /** Thread topic refs are stable strings that survive projection rebuilds. */
 export function artifactThreadRef(artifact: ArtifactKind, path?: string): string {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveIssueKind,
   epicStatus,
+  parseChangePath,
   gateApproverChain,
   isTestState,
   MANUAL_TEST_STATE,
@@ -173,5 +174,27 @@ describe("the hand-off wording", () => {
 
   it("tells a failed case's reader that nothing is asked of them", () => {
     expect(nextStep(TEST_FAILED_STATE, []).how).toContain("fix");
+  });
+});
+
+describe("the change folder knows the two new artifacts", () => {
+  it("classifies the plan and its data", () => {
+    expect(parseChangePath("openspec/changes/9-renewals/system-tests/test-plan.md"))
+      .toEqual({ slug: "9-renewals", epicNumber: 9, artifact: "test-plan" });
+    expect(parseChangePath("openspec/changes/9-renewals/system-tests/test-data.md")?.artifact)
+      .toBe("test-data");
+  });
+
+  it("leaves every other artifact reading as it did", () => {
+    expect(parseChangePath("openspec/changes/9-renewals/proposal.md")?.artifact).toBe("proposal");
+    expect(parseChangePath("openspec/changes/9-renewals/design.md")?.artifact).toBe("design");
+    expect(parseChangePath("openspec/changes/9-renewals/tasks.md")?.artifact).toBe("tasks");
+    expect(parseChangePath("openspec/changes/9-renewals/specs/billing/spec.md")?.artifact).toBe("spec");
+  });
+
+  it("does not classify a stray file under system-tests", () => {
+    // Data files a plan references live under system-tests/data/; they are
+    // content the plan links, not artifacts the reader lists on their own.
+    expect(parseChangePath("openspec/changes/9-renewals/system-tests/data/customers.csv")?.artifact).toBeNull();
   });
 });

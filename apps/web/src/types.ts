@@ -400,6 +400,18 @@ export interface GatePanelData {
   commentApprovable: boolean;
   /** Gate GS only: what the factory assembled, which is what GS decides on. */
   assembly: {
+    cases: Array<{
+      number: number;
+      title: string;
+      state: string | null;
+      open: boolean;
+      htmlUrl: string;
+      caseId: string | null;
+      verdict: "passed" | "failed" | "runnable" | "pending";
+      verdictBy: string | null;
+      verdictAt: string | null;
+    }>;
+    testsOutstanding: number;
     tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
     allGreen: boolean;
     report: { author: string | null; at: string; html: string; htmlUrl: string | null } | null;

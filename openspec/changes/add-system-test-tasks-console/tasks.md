@@ -42,11 +42,11 @@ key and the `.github/factory-testing.json` shape.
       the literal `Plan tests` as the user after a confirm that says what it
       does; render test rows as pending with the open plan PR linked until it
       merges; verify the action is hidden in every refused case.
-- [ ] 2.3 Artifact reader and peek: list `system-tests/test-plan.md` and
+- [x] 2.3 Artifact reader and peek: list `system-tests/test-plan.md` and
       `test-data.md` with the as-proposed ⇄ as-approved toggle; extract a
       case's `### ST-<n>` section and its `Data:` sets for the test
       sub-issue's peek; verify against a fixture change folder.
-- [ ] 2.4 Gate tab: test matrix (case, verdict, tester, when) from the
+- [x] 2.4 Gate tab: test matrix (case, verdict, tester, when) from the
       projected verdict comments; hold the GS panel before
       `factory:epic-ready` with the open cases and testers named; advisory
       / no-epic-branch warning above Approve and above the G3 merge

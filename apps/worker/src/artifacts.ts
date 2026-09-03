@@ -97,7 +97,10 @@ export async function refreshEpicArtifacts(
         if (f.type === "file") {
           const parsed = parseChangePath(f.path);
           if (parsed?.artifact) paths.set(f.path, { slug: parsed.slug, kind: parsed.artifact });
-        } else if (f.type === "dir" && f.path.endsWith("/specs")) {
+        } else if (f.type === "dir" && (f.path.endsWith("/specs") || f.path.endsWith("/system-tests"))) {
+          // `specs/` holds one file per capability; `system-tests/` holds the
+          // plan and its data (FACTORY.md §4b). Both are change content the
+          // reader has to find when there is no PR file list to read it from.
           for (const s of await reader.listDir(owner, name, f.path)) {
             const parsed = parseChangePath(s.path);
             if (parsed?.artifact) paths.set(s.path, { slug: parsed.slug, kind: parsed.artifact });
