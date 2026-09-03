@@ -62,6 +62,16 @@ key and the `.github/factory-testing.json` shape.
       `factory:epic-ready` only; verify with queue unit tests for tester and
       non-tester users.
 
+## 3a. Onboarding
+
+- [x] 3a.1 Ship `.github/factory-testing.json`, the `testplanner` model chain
+      and the `testers` approver key from `stubFiles`, so "Correct setup"
+      carries them to an already-enabled repo through the existing additive
+      sync; mirror `testers` into `gate_assignments` and include it in the
+      validation suite's collaborator check; verify with sync tests that the
+      file travels whole to a repo that lacks it, that a hand-tuned model
+      chain survives, and that `system_tests: false` is left alone.
+
 ## 4. Verification
 
 - [x] 4.1 E2E: an epic with three test sub-issues — board grouping, tester

@@ -158,7 +158,7 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
   // `staging` (gate GS) is newer than most approver files; an absent key parses
   // to an empty list here and the readers fall back to `release` (core:
   // GATE_FALLBACK) rather than showing the staging gate to nobody.
-  for (const gate of ["spec", "design", "implementation", "staging", "release"] as const) {
+  for (const gate of ["spec", "design", "implementation", "testers", "staging", "release"] as const) {
     for (const login of parsed[gate]) {
       await db
         .insert(gateAssignments)

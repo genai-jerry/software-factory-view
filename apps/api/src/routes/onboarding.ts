@@ -316,6 +316,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         spec: approversFromEstate("spec"),
         design: approversFromEstate("design"),
         implementation: approversFromEstate("implementation"),
+        testers: approversFromEstate("testers"),
         staging: approversFromEstate("staging"),
         release: approversFromEstate("release"),
       };
@@ -725,7 +726,19 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: AppDeps): v
         try {
           const parsed = parseApproverFile(JSON.parse(approversFile.content));
           const collaborators = new Set((await client.listCollaborators(owner, name)).map((c) => c.login));
-          const all = [...new Set([...parsed.spec, ...parsed.design, ...parsed.implementation, ...parsed.staging, ...parsed.release])];
+          const all = [
+            ...new Set([
+              ...parsed.spec,
+              ...parsed.design,
+              ...parsed.implementation,
+              // A tester who is not a collaborator is unassignable and never
+              // hears that a case is waiting — exactly the silent failure
+              // this check exists to catch.
+              ...parsed.testers,
+              ...parsed.staging,
+              ...parsed.release,
+            ]),
+          ];
           const strangers = all.filter((l) => !collaborators.has(l));
           push(
             "approvers",
@@ -1036,7 +1049,7 @@ async function ensurePull(
 
 /** The consuming repo's whole footprint (FACTORY.md §10), templated. */
 export function stubFiles(
-  approvers: { spec: string[]; design: string[]; implementation: string[]; staging: string[]; release: string[] },
+  approvers: { spec: string[]; design: string[]; implementation: string[]; testers: string[]; staging: string[]; release: string[] },
   consoleEngine: string,
   branches: { defaultBranch: string; stagingBranch: string | null },
 ): Record<string, string> {
@@ -1141,6 +1154,7 @@ jobs:
           "Model preference chain per factory stage: the workflow probes each model in order and uses the first one the repo's credential can access.",
         intake: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
         planner: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
+        testplanner: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
         architect: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
         reviewer: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
         implementer: ["claude-opus-5", "claude-sonnet-5"],
@@ -1156,8 +1170,18 @@ jobs:
     ".github/factory-approvers.json": `${JSON.stringify(
       {
         _comment:
-          "Gate -> GitHub usernames. spec = G1; design = G2; implementation = who may start ready tasks; staging = GS (release to the integration branch); release = G3. Empty list = any collaborator; an empty staging list falls back to release.",
+          "Gate -> GitHub usernames. spec = G1; design = G2; implementation = who may start ready tasks; testers = who runs the system test cases and may pass them (FACTORY.md §4b); staging = GS (release to the integration branch); release = G3. Empty list = any collaborator; an empty staging list falls back to release, and an empty testers list falls back to implementation.",
         ...approvers,
+      },
+      null,
+      2,
+    )}\n`,
+    ".github/factory-testing.json": `${JSON.stringify(
+      {
+        _comment:
+          "System tests (FACTORY.md §4b). With system_tests on, the Test Planner writes system-tests/test-plan.md and test-data.md into each epic's change folder between the Planner and the Architect, and opens one test(<epic>) sub-issue per case; the Dispatcher releases each case once the code it covers is assembled, and a human comments exactly 'Test Passed' or 'Test Failed' on it. mode 'gate' holds an epic short of factory:epic-ready until every case has passed; 'advisory' flips it and lists the open cases as unverified instead. An epic already past gate G2 when this landed has no plan — comment 'Plan tests' on it to write one.",
+        system_tests: true,
+        mode: "gate",
       },
       null,
       2,
@@ -1243,13 +1267,18 @@ export function reconcileStubFile(existing: string | null, wanted: string): stri
   const want = parse(wanted);
   if (!have || !want) return null;
 
+  // `_comment` is documentation, not configuration. A repo whose file was
+  // written by hand usually has none, and counting it as an addition meant
+  // every such repo got a PR that changed nothing but prose — on every click,
+  // until somebody merged it. It still rides along when a real key travels;
+  // it just never justifies the trip on its own.
   let added = false;
   const merge = (into: Record<string, unknown>, from: Record<string, unknown>): Record<string, unknown> => {
     const out: Record<string, unknown> = { ...into };
     for (const [k, v] of Object.entries(from)) {
       if (!(k in out)) {
         out[k] = v;
-        added = true;
+        if (k !== "_comment") added = true;
         continue;
       }
       const a = out[k];
@@ -1286,12 +1315,14 @@ function stubPrBody(actions: boolean): string {
 - \`.github/factory-orchestrator.json\` — engine \`github-actions\` (this org's Console setting).
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
+- \`.github/factory-testing.json\` — system tests (FACTORY.md §4b): the Test Planner writes a plan of human-run cases per epic, and each case becomes a sub-issue a tester passes or fails. Set \`system_tests\` to false to leave them off.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.`
     : `- \`.github/factory-branches.json\` — branch policy: implementation PRs merge to staging (cut from the default branch on first need), and \`epics: true\` gives every epic its own factory/epic-<n> branch that carries its spec, design and task PRs.
 - \`.github/factory-orchestrator.json\` — claims this repo for the Software Factory orchestrator (\`engine: langgraph\`). GitHub Actions is not used.
 - \`.github/factory-models.json\` — model preference chain per role; edit and merge to retune.
 - \`.github/factory-approvers.json\` — who owns each gate; pre-filled from this organisation's gate assignments.
+- \`.github/factory-testing.json\` — system tests (FACTORY.md §4b): the Test Planner writes a plan of human-run cases per epic, and each case becomes a sub-issue a tester passes or fails. Set \`system_tests\` to false to leave them off.
 - \`.claude/settings.json\` — merge deny-list (half of the G3 enforcement) + factory plugin registration.
 - \`.github/ISSUE_TEMPLATE/factory-requirement.yml\` — the intake entry point.
 
