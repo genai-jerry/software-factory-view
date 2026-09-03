@@ -99,7 +99,14 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       )}
 
       <div className="row" style={{ marginTop: "1rem" }}>
-        <Link to={`/epics/${data.epicId}${issue.kind === "task" ? "?tab=tasks" : data.gate ? "?tab=gate" : ""}`} onClick={onClose}>
+        {/* Each kind lands on the tab that can act on it: a task on the board,
+            a system test case on the Tests tab, an epic at its open gate. */}
+        <Link
+          to={`/epics/${data.epicId}${
+            issue.kind === "task" ? "?tab=tasks" : issue.kind === "test" ? "?tab=tests" : data.gate ? "?tab=gate" : ""
+          }`}
+          onClick={onClose}
+        >
           <button className="primary">Open workspace</button>
         </Link>
         <GitHubLink href={issue.htmlUrl} />

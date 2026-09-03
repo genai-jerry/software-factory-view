@@ -24,6 +24,7 @@ import {
 } from "./project.js";
 import {
   importGateAssignments,
+  importTestingPolicy,
   refreshEpicArtifacts,
   refreshRepoProfile,
   updateProfileStepFromComment,
@@ -139,6 +140,7 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
         const reader = new InstallationClient(cfg.GITHUB_API_URL, auth, p.installation.id);
         await refreshRepoProfile(db, repo, reader);
         await importGateAssignments(db, repo, reader);
+        await importTestingPolicy(db, repo, reader);
       }
       break;
     }

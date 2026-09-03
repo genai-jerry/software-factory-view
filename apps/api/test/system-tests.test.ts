@@ -59,7 +59,18 @@ beforeAll(async () => {
   await d.insert(sessions).values({ id: "sess-1", userId: alice.id, expiresAt: new Date(Date.now() + 3600_000) });
   const estate = (await d.insert(estates).values({ orgId: org.id, name: "acme", installationId: 1 }).returning())[0]!;
   const repo = (
-    await d.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: "R1", fullName: "acme/app" }).returning()
+    await d
+      .insert(repos)
+      .values({ orgId: org.id, estateId: estate.id, ghNodeId: "R1", fullName: "acme/app", systemTests: true, testMode: "gate" })
+      .returning()
+  )[0]!;
+  // The same estate with system tests explicitly off — the shape the Plan
+  // tests action must never appear in.
+  const offRepo = (
+    await d
+      .insert(repos)
+      .values({ orgId: org.id, estateId: estate.id, ghNodeId: "R2", fullName: "acme/off", systemTests: false })
+      .returning()
   )[0]!;
 
   let n = 0;
@@ -101,6 +112,18 @@ beforeAll(async () => {
   const plain = await mk({ title: "plain epic", kind: "epic", factoryState: "factory:design-approved" });
   await mk({ title: "task(7): only", factoryState: "factory:on-epic", parentIssueId: plain.id });
   id.plain = plain.id;
+
+  // An in-flight epic with no plan at all: the one the adoption action exists
+  // for. Same repo, so the policy is on.
+  const adoptable = await mk({ title: "adoptable epic", kind: "epic", factoryState: "factory:design-approved" });
+  await mk({ title: "task(8): only", factoryState: "factory:ready", parentIssueId: adoptable.id });
+  id.adoptable = adoptable.id;
+
+  // Too early for a plan — no task breakdown to derive `Depends on:` from.
+  id.early = (await mk({ title: "early epic", kind: "epic", factoryState: "factory:spec-approved" })).id;
+
+  // An epic in a repo whose policy says no.
+  id.off = (await mk({ title: "off epic", kind: "epic", factoryState: "factory:design-approved", repoId: offRepo.id })).id;
 });
 
 const get = async (epicId: string) =>
@@ -156,5 +179,69 @@ describe("POST /api/issues/:id/test-verdict", () => {
 
   it("409s on an issue that is not a case at all", async () => {
     expect((await post(id.epic!, { verdict: "passed" })).statusCode).toBe(409);
+  });
+});
+
+describe("the epic's system-test standing", () => {
+  it("offers Plan tests on an in-flight epic with no plan", async () => {
+    const { systemTests } = await get(id.adoptable!);
+    expect(systemTests.enabled).toBe(true);
+    expect(systemTests.mode).toBe("gate");
+    expect(systemTests.planned).toBe(false);
+    expect(systemTests.planTests).toEqual({ offered: true, reason: null });
+  });
+
+  it("does not offer it on an epic that already has cases", async () => {
+    const { systemTests } = await get(id.epic!);
+    expect(systemTests.planned).toBe(true);
+    expect(systemTests.planTests.offered).toBe(false);
+  });
+
+  it("does not offer it before the Planner has run", async () => {
+    const { systemTests } = await get(id.early!);
+    expect(systemTests.planTests.offered).toBe(false);
+    expect(systemTests.planTests.reason).toMatch(/Planner/);
+  });
+
+  it("does not offer it where the repo runs no system tests", async () => {
+    const { systemTests } = await get(id.off!);
+    expect(systemTests.enabled).toBe(false);
+    expect(systemTests.planTests.offered).toBe(false);
+  });
+});
+
+describe("POST /api/epics/:id/plan-tests", () => {
+  const post = (epicId: string) =>
+    app.inject({
+      method: "POST",
+      url: `/api/epics/${epicId}/plan-tests`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: {},
+    });
+
+  it("409s where the repo runs no system tests", async () => {
+    const res = await post(id.off!);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/factory-testing\.json/);
+  });
+
+  it("409s before the Planner has run", async () => {
+    const res = await post(id.early!);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/Planner/);
+  });
+
+  it("409s on an epic that already has a plan", async () => {
+    expect((await post(id.epic!)).statusCode).toBe(409);
+  });
+
+  it("409s on a sub-issue rather than commenting on it", async () => {
+    // The endpoint takes an epic id; a case is not one, and the guard — not
+    // the route shape — is what has to say so.
+    expect((await post(id.runnable!)).statusCode).toBe(409);
+  });
+
+  it("404s on an epic in another org", async () => {
+    expect((await post("00000000-0000-0000-0000-000000000000")).statusCode).toBe(404);
   });
 });

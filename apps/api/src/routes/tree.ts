@@ -8,12 +8,14 @@ import {
   READY_STATE,
   REVIEW_DONE_BODY,
   MANUAL_TEST_STATE,
+  PLAN_TESTS_BODY,
+  planTestsAvailability,
   TEST_PASSED_BODY,
   TEST_FAILED_BODY,
   startStatusIsAutomatic,
   startStatusTakesApproval,
 } from "@console/core";
-import { auditLog, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
+import { auditLog, changeArtifacts, changes, comments, gateAssignments, issues, repos, taskDependencies } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
@@ -355,4 +357,63 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       return { ok: true, commentUrl: comment.html_url };
     },
   );
+
+  /**
+   * Ask the Test Planner for a system test plan (FACTORY.md §4b, adoption):
+   * post the literal `Plan tests` on the epic as the acting user, exactly as
+   * the gate buttons post `Approved`. The router does the rest — it starts
+   * the Test Planner, which writes `system-tests/test-plan.md` and
+   * `test-data.md` and opens one sub-issue per case.
+   *
+   * The guard is `planTestsAvailability`, the same function the payload uses
+   * to decide whether to draw the button, so a click that the screen offered
+   * cannot be refused here and a click on a stale screen is refused with the
+   * reason the screen would have shown. Nothing about authorisation is
+   * decided here: the factory checks the commenter's access itself, and the
+   * comment is posted under their own GitHub identity.
+   */
+  app.post<{ Params: { id: string } }>("/api/epics/:id/plan-tests", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadEpic(deps, ctx, req.params.id);
+    if (!found) return reply.code(404).send({ error: "epic not found" });
+    const { epic, repo } = found;
+
+    const children = await db
+      .select({ kind: issues.kind })
+      .from(issues)
+      .where(eq(issues.parentIssueId, epic.id));
+    const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epic.id)).limit(1))[0];
+    const planArtifact = change
+      ? (
+          await db
+            .select({ id: changeArtifacts.id })
+            .from(changeArtifacts)
+            .where(and(eq(changeArtifacts.changeId, change.id), eq(changeArtifacts.kind, "test-plan")))
+            .limit(1)
+        )[0]
+      : undefined;
+
+    const availability = planTestsAvailability({
+      state: epic.factoryState,
+      open: epic.state === "open",
+      kind: epic.kind,
+      labels: epic.labels,
+      systemTests: repo.systemTests,
+      hasPlan: Boolean(planArtifact) || children.some((c) => c.kind === "test"),
+    });
+    if (!availability.offered) return reply.code(409).send({ error: availability.reason });
+
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    const comment = await postComment(deps, ctx, reply, owner, name, epic.number, PLAN_TESTS_BODY);
+    if (!comment) return;
+    await db.insert(auditLog).values({
+      orgId: epic.orgId,
+      actorUserId: ctx.userId,
+      action: "epic.plan-tests",
+      target: `${repo.fullName}#${epic.number}`,
+      payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url },
+    });
+    return { ok: true, commentUrl: comment.html_url };
+  });
 }
