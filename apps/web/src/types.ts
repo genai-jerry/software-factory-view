@@ -346,6 +346,24 @@ export interface EpicWorkspace {
   change: { id: string; slug: string; status: string } | null;
   artifacts: Array<{ id: string; kind: string; path: string; latestSha: string | null; mergedSha: string | null; diverged: boolean }>;
   threads: Array<{ id: string; topicKind: string; topicRef: string; title: string; status: string; entryCount: number }>;
+  /**
+   * The epic's system-test standing (FACTORY.md §4b) — what the Tests tab
+   * renders when there are no cases to render.
+   *
+   * `enabled` is the repo's mirrored `.github/factory-testing.json`: null
+   * means the Console has not read the file, which is not the same as tests
+   * being off and must not render as it.
+   */
+  systemTests: {
+    enabled: boolean | null;
+    mode: "gate" | "advisory" | null;
+    /** A plan exists: the document, the cases, or both. */
+    planned: boolean;
+    /** The plan document. `merged: false` is why cases are not runnable yet. */
+    plan: { path: string; merged: boolean } | null;
+    /** Whether to offer Plan tests, and — when not — why not. */
+    planTests: { offered: boolean; reason: string | null };
+  };
   freshness: { lastSyncedAt: string | null; stale: boolean };
   orchestrator: {
     engine: "github-actions" | "software-factory";

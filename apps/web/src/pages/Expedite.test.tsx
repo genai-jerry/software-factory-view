@@ -96,6 +96,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
     change: null,
     artifacts: [],
     threads: [],
+    systemTests: { enabled: null, mode: null, planned: false, plan: null, planTests: { offered: false, reason: null } },
     freshness: { lastSyncedAt: null, stale: false },
     orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
     ...overrides,

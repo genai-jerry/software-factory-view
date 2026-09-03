@@ -11,6 +11,7 @@ import { Banner } from "../src/components/Banner.js";
 import { FactoryRunStatus } from "../src/components/FactoryRunStatus.js";
 import { HomePage } from "../src/pages/Home.js";
 import { ExpediteToggle, GateTab, TasksTab } from "../src/pages/EpicWorkspace.js";
+import { TestsTab } from "../src/pages/SystemTests.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE } from "../src/lib/labels.js";
 import type { EpicWorkspace, GatePanelData, Me, SetupStatus } from "../src/types.js";
 import "@fontsource/ibm-plex-sans/400.css";
@@ -358,6 +359,13 @@ const expeditedWorkspace: EpicWorkspace = {
   change: null,
   artifacts: [],
   threads: [],
+  systemTests: {
+    enabled: true,
+    mode: "gate",
+    planned: true,
+    plan: { path: "openspec/changes/9-payment-reminders/system-tests/test-plan.md", merged: true },
+    planTests: { offered: false, reason: "This epic already has a test plan." },
+  },
   freshness: { lastSyncedAt: null, stale: false },
   orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
 };
@@ -535,7 +543,32 @@ function SystemTestsScreen() {
       {/* The real workspace heads the page with the epic; the fixture has to
           as well, or the screen is judged without the landmark it ships with. */}
       <h1>#9 Payment reminders</h1>
-      <TasksTab data={testedWorkspace} />
+      <TestsTab data={testedWorkspace} />
+    </Shell>
+  );
+}
+
+/**
+ * The same tab on an epic with no plan at all — where the Tests tab is not a
+ * list but an offer (FACTORY.md §4b, adoption).
+ */
+const untestedWorkspace: EpicWorkspace = {
+  ...expeditedWorkspace,
+  expedite: { ...expediteState, on: false },
+  systemTests: {
+    enabled: true,
+    mode: "gate",
+    planned: false,
+    plan: null,
+    planTests: { offered: true, reason: null },
+  },
+};
+
+function PlanTestsScreen() {
+  return (
+    <Shell me={me} setup={setup}>
+      <h1>#9 Payment reminders</h1>
+      <TestsTab data={untestedWorkspace} />
     </Shell>
   );
 }
@@ -587,6 +620,8 @@ function Screen() {
       return <ExpediteConfirmScreen />;
     case "system-tests":
       return <SystemTestsScreen />;
+    case "plan-tests":
+      return <PlanTestsScreen />;
     case "gate-staging":
       return <GatePanelScreen panel={gsPanel} />;
     case "gate-staging-tests":

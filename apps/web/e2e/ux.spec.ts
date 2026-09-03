@@ -30,9 +30,17 @@ for (const vp of VIEWPORTS) {
 
     test("system test cases do not pan", async ({ page }) => {
       await page.goto("/e2e.html?screen=system-tests");
-      // Cases are their own group, never a column among the code tasks.
+      // Cases are their own tab, never a column among the code tasks.
       await expect(page.getByRole("heading", { name: /System tests \(1\/3 passed\)/ })).toBeVisible();
       await expect(page.getByRole("button", { name: "Pass" })).toBeVisible();
+      await noPagePan(page);
+    });
+
+    test("the Tests tab of an epic with no plan does not pan", async ({ page }) => {
+      await page.goto("/e2e.html?screen=plan-tests");
+      // The tab exists to be the offer when there is nothing to list.
+      await expect(page.getByText(/No test plan on this epic yet/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Plan tests" })).toBeVisible();
       await noPagePan(page);
     });
 

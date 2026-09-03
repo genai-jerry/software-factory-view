@@ -233,7 +233,8 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
         rank: 3,
         whyYou: `system test ${caseIdOf(issue.title) ?? "case"} is ready to run — ${whyBase}`,
         ...base,
-        link: `/epics/${epicId}?tab=tasks`,
+        // The Tests tab, not the task board: the verdict controls live there.
+        link: `/epics/${epicId}?tab=tests`,
       });
     } else if (issue.kind === "task" && state === READY_STATE) {
       // `startStatusOf` answers `auto` for an expedited task, which takes no

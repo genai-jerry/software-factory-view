@@ -10,15 +10,17 @@ vi.mock("../api.js", async (importOriginal) => ({
 }));
 
 const { api } = await import("../api.js");
+const { TestsTab } = await import("./SystemTests.js");
 const { TasksTab } = await import("./EpicWorkspace.js");
 
 /**
- * System test cases in the task board (FACTORY.md §4b).
+ * The Tests tab (FACTORY.md §4b).
  *
- * Two invariants: a case never appears among the code tasks (a case in a
+ * Three invariants: a case never appears among the code tasks (a case in a
  * task column reads as work the factory owes, and it inflates every count a
- * reader takes from the board), and the only control it offers is a verdict
- * — no start button, ever.
+ * reader takes from the board), the only control a case offers is a verdict —
+ * no start button, ever — and the Plan tests action appears exactly where the
+ * factory would act on it.
  */
 
 const step = { who: "the testers", how: "Run it and record what you saw.", startRole: null, startLabel: null, waitsOnPerson: true, automatic: false };
@@ -40,7 +42,15 @@ const pendingCase = { ...runnableCase, id: "case-5", number: 31, title: "test(9)
 const failedCase = { ...runnableCase, id: "case-6", number: 32, title: "test(9): ST-6 Invalid card", caseId: "ST-6", state: "factory:test-failed" };
 const passedCase = { ...runnableCase, id: "case-7", number: 33, title: "test(9): ST-7 Happy path", caseId: "ST-7", state: "factory:test-passed", open: false };
 
-function workspace(tasks: EpicWorkspace["tasks"]): EpicWorkspace {
+const noTests: EpicWorkspace["systemTests"] = {
+  enabled: true,
+  mode: "gate",
+  planned: false,
+  plan: null,
+  planTests: { offered: true, reason: null },
+};
+
+function workspace(tasks: EpicWorkspace["tasks"], systemTests: Partial<EpicWorkspace["systemTests"]> = {}): EpicWorkspace {
   return {
     epic: {
       id: "epic-9", number: 9, repo: "acme/app", title: "Renewals", bodyHtml: "", state: "factory:design-approved",
@@ -54,6 +64,14 @@ function workspace(tasks: EpicWorkspace["tasks"]): EpicWorkspace {
     tasks,
     rollup: { total: 1, ready: 0, inReview: 0, inTest: 0, shipping: 1, done: 0, blocked: 0, waiting: 0, inFlight: 1 },
     blockedSubIssues: [], change: null, artifacts: [], threads: [],
+    systemTests: {
+      ...noTests,
+      // An epic with cases has a plan, and the action is not offered on one.
+      ...(tasks.some((t) => t.kind === "test")
+        ? { planned: true, planTests: { offered: false, reason: "This epic already has a test plan." } }
+        : {}),
+      ...systemTests,
+    },
     freshness: { lastSyncedAt: null, stale: false },
     orchestrator: { engine: "github-actions", githubActionsEnabled: true, canStart: false },
   } as unknown as EpicWorkspace;
@@ -66,14 +84,14 @@ function renderIn(ui: React.ReactElement) {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe("cases are grouped apart from code tasks", () => {
-  it("gives them their own heading with the pass count", () => {
-    renderIn(<TasksTab data={workspace([task, runnableCase, passedCase])} />);
+describe("cases live on their own tab, not among the code tasks", () => {
+  it("lists them with the pass count", () => {
+    renderIn(<TestsTab data={workspace([task, runnableCase, passedCase])} />);
     expect(screen.getByText(/System tests \(1\/2 passed\)/)).toBeTruthy();
   });
 
   it("never offers a start control on a case", () => {
-    renderIn(<TasksTab data={workspace([runnableCase])} />);
+    renderIn(<TestsTab data={workspace([runnableCase])} />);
     // The board's start vocabulary belongs to tasks. A case takes a verdict.
     expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
     expect(screen.getByRole("button", { name: "Pass" })).toBeTruthy();
@@ -81,28 +99,37 @@ describe("cases are grouped apart from code tasks", () => {
   });
 
   it("shows a case that is not runnable yet without buttons", () => {
-    renderIn(<TasksTab data={workspace([pendingCase])} />);
+    renderIn(<TestsTab data={workspace([pendingCase])} />);
     // The banner and the group heading both say it; either is enough.
     expect(screen.getAllByText(/not runnable yet/i).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Pass" })).toBeNull();
   });
 
   it("shows a failed case without offering a second verdict", () => {
-    renderIn(<TasksTab data={workspace([failedCase])} />);
+    renderIn(<TestsTab data={workspace([failedCase])} />);
     expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Pass" })).toBeNull();
   });
 
-  it("renders nothing at all for an epic with no cases", () => {
+  it("keeps the task board free of cases, and says where they went", () => {
+    renderIn(<TasksTab data={workspace([task, runnableCase, passedCase])} />);
+    // No case row, no verdict control — just the count and the way over.
+    expect(screen.queryByText(/ST-4/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pass" })).toBeNull();
+    expect(screen.getByText(/2 system tests on this epic, 1 passed/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /open the Tests tab/ })).toBeTruthy();
+  });
+
+  it("says nothing about tests on the board of an epic that has none", () => {
     renderIn(<TasksTab data={workspace([task])} />);
-    expect(screen.queryByText(/System tests/)).toBeNull();
+    expect(screen.queryByText(/system test/i)).toBeNull();
   });
 });
 
 describe("recording a verdict", () => {
   it("confirms first, then posts the verdict with the evidence", async () => {
     vi.mocked(api.post).mockResolvedValue({ ok: true } as never);
-    renderIn(<TasksTab data={workspace([runnableCase])} />);
+    renderIn(<TestsTab data={workspace([runnableCase])} />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Evidence for ST-4"), "reminder arrived at 09:00");
     await user.click(screen.getByRole("button", { name: "Pass" }));
@@ -119,18 +146,86 @@ describe("recording a verdict", () => {
   });
 
   it("says what a failure will do before it does it", async () => {
-    renderIn(<TasksTab data={workspace([runnableCase])} />);
+    renderIn(<TestsTab data={workspace([runnableCase])} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Fail" }));
     expect(screen.getByText(/files a task to fix it/)).toBeTruthy();
   });
 
   it("can be cancelled without posting", async () => {
-    renderIn(<TasksTab data={workspace([runnableCase])} />);
+    renderIn(<TestsTab data={workspace([runnableCase])} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Pass" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(api.post).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Pass" })).toBeTruthy();
+  });
+});
+
+describe("asking for a plan", () => {
+  it("offers Plan tests on an epic that has none", () => {
+    renderIn(<TestsTab data={workspace([task])} />);
+    expect(screen.getByRole("button", { name: "Plan tests" })).toBeTruthy();
+    expect(screen.getByText(/No test plan on this epic yet/)).toBeTruthy();
+  });
+
+  it("confirms what it will do, then posts", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true } as never);
+    renderIn(<TestsTab data={workspace([task])} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Plan tests" }));
+    // Nothing is posted on the first click: this starts an agent.
+    expect(api.post).not.toHaveBeenCalled();
+    expect(screen.getByText(/Ask the Test Planner for a plan\?/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/epic-9/plan-tests", {}));
+  });
+
+  it("can be cancelled without posting", async () => {
+    renderIn(<TestsTab data={workspace([task])} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Plan tests" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Plan tests" })).toBeTruthy();
+  });
+
+  it("does not offer it beside a plan the epic already has", () => {
+    renderIn(<TestsTab data={workspace([runnableCase])} />);
+    expect(screen.queryByRole("button", { name: "Plan tests" })).toBeNull();
+  });
+
+  it("says why instead, where the factory would refuse", () => {
+    renderIn(
+      <TestsTab
+        data={workspace([task], {
+          planTests: { offered: false, reason: "A test plan needs the task breakdown, which arrives with the Planner." },
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Plan tests" })).toBeNull();
+    expect(screen.getByText(/arrives with the Planner/)).toBeTruthy();
+  });
+
+  it("says the repository runs no system tests, and offers nothing", () => {
+    renderIn(
+      <TestsTab
+        data={workspace([task], {
+          enabled: false,
+          planTests: { offered: false, reason: "System tests are off in this repository." },
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Plan tests" })).toBeNull();
+    expect(screen.getByText(/System tests are off in/)).toBeTruthy();
+  });
+
+  it("says an unmerged plan is why the cases are not runnable", () => {
+    renderIn(
+      <TestsTab
+        data={workspace([pendingCase], { plan: { path: "openspec/changes/9-x/system-tests/test-plan.md", merged: false } })}
+      />,
+    );
+    expect(screen.getByText(/written but not merged yet/)).toBeTruthy();
   });
 });

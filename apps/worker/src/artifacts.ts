@@ -1,4 +1,17 @@
-import { encryptSecret, parseApproverFile, parseChangePath, repoHasFactoryEngine, type GhComment, type GhIssue, type GhPull, type GhWorkflowRun, type RepoReader } from "@console/core";
+import {
+  encryptSecret,
+  parseApproverFile,
+  parseChangePath,
+  parseTestingPolicy,
+  repoHasFactoryEngine,
+  TESTING_POLICY_PATH,
+  type GhComment,
+  type GhIssue,
+  type GhPull,
+  type GhWorkflowRun,
+  type RepoReader,
+  type TestingPolicy,
+} from "@console/core";
 import {
   artifactCache,
   changeArtifacts,
@@ -166,6 +179,43 @@ export async function importGateAssignments(db: Db, repo: RepoRef, reader: RepoR
         .onConflictDoNothing();
     }
   }
+}
+
+/**
+ * Mirror `.github/factory-testing.json` onto the repo row (FACTORY.md §4b).
+ *
+ * The Console has to know whether a repo runs system tests before it offers
+ * anything about them — chiefly the **Plan tests** action, which on a
+ * policy-off repo posts a comment whose only effect is the factory replying
+ * "system tests are not enabled here". The file is the authority, so it is
+ * read on the same trigger as the approver file: the config-file push, and
+ * every reconcile walk.
+ *
+ * An absent file means off, and says so — `system_tests: false` is a real
+ * answer, distinct from the null a repo carries until this first runs. An
+ * unreadable one leaves the mirror at its last good value rather than
+ * inventing "off": the file may be there and GitHub merely unreachable.
+ */
+export async function importTestingPolicy(db: Db, repo: RepoRef, reader: RepoReader): Promise<void> {
+  const [owner, name] = repo.fullName.split("/") as [string, string];
+  let file;
+  try {
+    file = await reader.getFileAtRef(owner, name, TESTING_POLICY_PATH);
+  } catch {
+    return; // GitHub unreachable — keep the last good answer
+  }
+  let policy: TestingPolicy = { systemTests: false, mode: "gate" };
+  if (file) {
+    try {
+      policy = parseTestingPolicy(JSON.parse(file.content));
+    } catch {
+      return; // malformed — the validation suite reports it; the mirror holds
+    }
+  }
+  await db
+    .update(repos)
+    .set({ systemTests: policy.systemTests, testMode: policy.mode })
+    .where(eq(repos.id, repo.id));
 }
 
 /**

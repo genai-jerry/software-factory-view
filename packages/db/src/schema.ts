@@ -192,6 +192,16 @@ export const repos = pgTable(
     defaultBranch: text("default_branch").notNull().default("main"),
     stagingBranch: text("staging_branch"),
     factoryEnabled: boolean("factory_enabled").notNull().default(false),
+    /**
+     * The repo's system-test policy, mirrored from `.github/factory-testing.json`
+     * (FACTORY.md §4b) in the same walk that mirrors the approver file. Null in
+     * both columns means the Console has not read the file yet — distinct from
+     * `false`, which is the file saying system tests are off. Readers must not
+     * collapse the two: "off" hides the test actions, "unread" leaves them to
+     * the factory's own answer.
+     */
+    systemTests: boolean("system_tests"),
+    testMode: text("test_mode"), // gate | advisory
     profileSha: text("profile_sha"),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),

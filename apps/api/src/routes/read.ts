@@ -10,6 +10,7 @@ import {
   TEST_FAILED_STATE,
   TEST_PASSED_STATE,
   PIPELINE_ORDER,
+  planTestsAvailability,
   READY_STATE,
   startStatusTakesApproval,
   tasksInFlight,
@@ -310,6 +311,13 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     // run ends, shown beside the state it belongs to.
     const gateApprovers = await loadGateApprovers(deps, repo.estateId);
 
+    // A test plan exists when either half of it is visible: the plan document
+    // in the change folder, or the cases the Test Planner mirrored out of it.
+    // Either alone is enough — the documents land before the sub-issues on a
+    // fresh epic, and an adopted epic's plan can be merged long after.
+    const plan = artifacts.find((a) => a.kind === "test-plan") ?? null;
+    const hasPlan = Boolean(plan) || taskRows.some((t) => t.kind === "test");
+
     const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
@@ -389,6 +397,38 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         diverged: Boolean(a.latestSha && a.mergedSha && a.latestSha !== a.mergedSha),
       })),
       threads: threadRows,
+      /**
+       * The epic's system-test standing (FACTORY.md §4b), for the Tests tab:
+       * the repo's policy as mirrored from `.github/factory-testing.json`,
+       * whether a plan exists at all, where that plan is, and whether the
+       * Console may offer to write one.
+       *
+       * `enabled: null` is a repo whose policy has not been read yet — not a
+       * repo with tests off. The two must stay distinct here, because the
+       * action's whole point is the epic that has no cases.
+       */
+      systemTests: {
+        enabled: repo.systemTests,
+        mode: (repo.testMode as "gate" | "advisory" | null) ?? null,
+        planned: hasPlan,
+        plan: plan
+          ? {
+              path: plan.path,
+              // The Dispatcher releases a case only once its plan is merged on
+              // the epic's home branch, so an unmerged plan is the reason a
+              // case that looks ready is not runnable yet.
+              merged: Boolean(plan.mergedSha),
+            }
+          : null,
+        planTests: planTestsAvailability({
+          state: epic.factoryState,
+          open: epic.state === "open",
+          kind: epic.kind,
+          labels: epic.labels,
+          systemTests: repo.systemTests,
+          hasPlan,
+        }),
+      },
       freshness: {
         lastSyncedAt: estate?.lastSyncedAt ?? null,
         stale: !estate?.lastSyncedAt || Date.now() - estate.lastSyncedAt.getTime() > staleMs,

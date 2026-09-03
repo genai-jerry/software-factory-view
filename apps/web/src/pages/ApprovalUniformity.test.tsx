@@ -83,6 +83,7 @@ function workspace(overrides: Partial<EpicWorkspace> = {}): EpicWorkspace {
       { id: "thread-1", topicKind: "task", topicRef: "task/198", title: "Task #198", status: "open", entryCount: 1 },
       { id: "thread-2", topicKind: "task", topicRef: "task/199", title: "Task #199", status: "open", entryCount: 1 },
     ],
+    systemTests: { enabled: null, mode: null, planned: false, plan: null, planTests: { offered: false, reason: null } },
     freshness: { lastSyncedAt: null, stale: false },
     orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: false },
     ...overrides,

@@ -4,6 +4,7 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { projectComment, projectIssue, projectPull, projectRun, type RepoRef } from "./project.js";
 import {
   importGateAssignments,
+  importTestingPolicy,
   refreshEpicArtifacts,
   refreshRepoProfile,
   repairDependencies,
@@ -99,6 +100,7 @@ export async function reconcileEstate(db: Db, cfg: ConsoleConfig, auth: AppAuth,
       await repairDependencies(db, repoRef, client);
       await refreshRepoProfile(db, repoRef, client);
       await importGateAssignments(db, repoRef, client);
+      await importTestingPolicy(db, repoRef, client);
 
       // Artifacts for every epic currently at (or past) a document gate.
       if (cfg.CONSOLE_MASTER_KEY) {
