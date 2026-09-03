@@ -182,6 +182,22 @@ const TABLE: Record<string, Entry> = {
     who: "the rest of the epic",
     how: "Merged onto the epic branch and green there. It waits until every task is, then the Release Manager assembles the epic and puts it at gate GS.",
   },
+  // System test cases (FACTORY.md §4b). These sit on a `test(<epic>)`
+  // sub-issue and move on a human's verdict, never on a role — which is why
+  // none of them carries a `startRole`.
+  "factory:manual-test": {
+    who: "the testers — {approvers}",
+    how: "The code this case exercises is assembled, so it can be run. Its steps, data and expected result are in the epic's system test plan. Run it, then comment exactly `Test Passed` or exactly `Test Failed` with what you saw.",
+    waitsOnPerson: true,
+  },
+  "factory:test-failed": {
+    who: "the fix task, then the testers again",
+    how: "This case failed and the factory filed a task to fix it. When that task is implemented, reviewed, tested and assembled, the Dispatcher returns this case for a re-run.",
+  },
+  "factory:test-passed": {
+    who: "nobody — this case is done",
+    how: "It passed and is closed. The epic reaches gate GS once its remaining cases and tasks are done too.",
+  },
   "factory:epic-ready": {
     who: "gate GS — {approvers}",
     how: "The epic is assembled and green on its own branch. Read the assembly report, then Approve — that releases it to the integration branch, not to production; G3 still holds before anything ships.",

@@ -5,6 +5,8 @@ export * from "./phases.js";
 export * from "./start-gate.js";
 export * from "./next-step.js";
 export * from "./epic-status.js";
+export * from "./test-verdict.js";
+export * from "./testing-policy.js";
 export * from "./crypto.js";
 export * from "./config.js";
 export * from "./github.js";

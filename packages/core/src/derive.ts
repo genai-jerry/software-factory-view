@@ -5,7 +5,13 @@ import { EXPEDITE_LABEL, isFactoryState, RELEASE_KIND_LABEL, type FactoryState }
  * GitHub facts — the Console computes classifications, never state.
  */
 
-export type IssueKind = "epic" | "task" | "plain";
+/**
+ * `test` is a system test case sub-issue (FACTORY.md §4b) — a unit of human
+ * verification, not of implementation. It is its own kind because everything
+ * downstream treats it differently: it is excluded from code-task counts,
+ * offers a verdict rather than a start, and never routes to a role.
+ */
+export type IssueKind = "epic" | "task" | "test" | "plain";
 export type PrKind = "spec" | "design" | "task" | "promotion" | "other";
 
 export function deriveFactoryState(labels: string[]): FactoryState | null {
@@ -35,6 +41,11 @@ export function deriveIssueKind(input: {
   // Release trackers carry a factory:release-* state, but they are milestone
   // badges, not epics — the kind marker keeps them off the board and tree.
   if (input.labels.includes(RELEASE_KIND_LABEL)) return "plain";
+  // A system test case (FACTORY.md §4b): `test(<epic>): ST-<n> <title>`. Kept
+  // apart from `task` deliberately — a case is never dispatched to an
+  // implementer, never counts among an epic's code tasks, and offers a
+  // tester's verdict where a task offers a start.
+  if (/^test\(\d+\)/i.test(input.title)) return "test";
   const state = deriveFactoryState(input.labels);
   if (input.hasParent) return state || /^task\(/i.test(input.title) ? "task" : "plain";
   if (/^task\(/i.test(input.title)) return "task";

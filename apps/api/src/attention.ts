@@ -1,4 +1,4 @@
-import { EPIC_READY_STATE, GATE_STATES, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
+import { EPIC_READY_STATE, GATE_STATES, MANUAL_TEST_STATE, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
@@ -20,8 +20,9 @@ import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
  * own history event, not ghUpdatedAt (which any comment resets).
  *
  * An epic carrying `factory:expedite` surfaces only for the decisions expedite
- * keeps: gate GS at `factory:epic-ready`, gate G3 at `factory:in-staging`, and
- * `factory:blocked` at any stage. Its G1/G2 approvals and its tasks' start
+ * keeps: gate GS at `factory:epic-ready`, gate G3 at `factory:in-staging`,
+ * a runnable system test case (FACTORY.md §4b — expedite waives starts, and
+ * running a case is not one), and `factory:blocked` at any stage. Its G1/G2 approvals and its tasks' start
  * approvals are the factory's own now, and a queue that goes on asking for
  * them is asking for work nobody owes — the one thing this queue must never do.
  */
@@ -222,6 +223,18 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
         ...base,
         link: `/epics/${issue.id}?tab=gate`,
       });
+    } else if (issue.kind === "test" && state === MANUAL_TEST_STATE) {
+      // A runnable system test case (FACTORY.md §4b). It is not a gate — no
+      // approval is being given — but it is a decision only a person can make,
+      // and it is the one item expedite never suppresses: the factory can
+      // assemble an epic by itself and it still cannot run its cases.
+      entries.push({
+        kind: "task-start",
+        rank: 3,
+        whyYou: `system test ${caseIdOf(issue.title) ?? "case"} is ready to run — ${whyBase}`,
+        ...base,
+        link: `/epics/${epicId}?tab=tasks`,
+      });
     } else if (issue.kind === "task" && state === READY_STATE) {
       // `startStatusOf` answers `auto` for an expedited task, which takes no
       // approval — the per-task suppression rule falls straight out of it.
@@ -234,6 +247,11 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
 
   entries.sort((a, b) => a.rank - b.rank || b.ageDays - a.ageDays);
   return entries;
+}
+
+/** `test(9): ST-4 Renewal fires` -> `ST-4`, for the queue's one-line reason. */
+function caseIdOf(title: string): string | null {
+  return /^test\(\d+\):\s*(ST-\d+)/i.exec(title)?.[1] ?? null;
 }
 
 interface BlockedMeta {

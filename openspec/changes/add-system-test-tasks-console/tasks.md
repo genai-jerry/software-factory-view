@@ -6,21 +6,21 @@ key and the `.github/factory-testing.json` shape.
 
 ## 1. Core catalog
 
-- [ ] 1.1 Add `factory:manual-test`, `factory:test-passed` and
+- [x] 1.1 Add `factory:manual-test`, `factory:test-passed` and
       `factory:test-failed` to `packages/core/src/factory.ts` (colours and
       descriptions copied from `setup-labels.sh`), the `TEST_PASSED_BODY` /
       `TEST_FAILED_BODY` constants, `MANUAL_TEST_STATE`, and `testers` in
       `ApproverFile` with a `testers → implementation` entry in
       `GATE_FALLBACK`; verify onboarding's labels step provisions 28 labels
       and the state-exclusivity helpers accept the three.
-- [ ] 1.2 Derive the `test` issue kind from `test(<epic>)` in `derive.ts`,
+- [x] 1.2 Derive the `test` issue kind from `test(<epic>)` in `derive.ts`,
       map the three states in `phases.ts` (`building`), add
       `STATE_SENTENCE` / `NEXT_MOVER` and `next-step.ts` wording mirroring
       `handbook/next-step.json`, and split `EpicProgress` into code and
       test counts in `epic-status.ts` ("Building a/b · Testing c/d",
       "Assembled · waiting on N tests"); verify with unit tests for an epic
       with and without test sub-issues.
-- [ ] 1.3 Add a `test-verdict.ts` helper (awaiting / pending verdict /
+- [x] 1.3 Add a `test-verdict.ts` helper (awaiting / pending verdict /
       passed / failed, with the same grace window as `start-gate.ts`) and a
       reader for `.github/factory-testing.json` beside the other factory
       config files (absent ⇒ off, `mode` default `gate`); verify parsing of
@@ -56,7 +56,7 @@ key and the `.github/factory-testing.json` shape.
 
 ## 3. Attention queue
 
-- [ ] 3.1 Add the tester needs-you item for `factory:manual-test` (targeted
+- [x] 3.1 Add the tester needs-you item for `factory:manual-test` (targeted
       by the `testers` fallback chain, ranked with task starts) and the
       "waiting on N tests" chip on epic rows; keep the GS item at
       `factory:epic-ready` only; verify with queue unit tests for tester and

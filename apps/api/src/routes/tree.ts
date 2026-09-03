@@ -7,6 +7,9 @@ import {
   IN_REVIEW_STATE,
   READY_STATE,
   REVIEW_DONE_BODY,
+  MANUAL_TEST_STATE,
+  TEST_PASSED_BODY,
+  TEST_FAILED_BODY,
   startStatusIsAutomatic,
   startStatusTakesApproval,
 } from "@console/core";
@@ -296,4 +299,60 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     });
     return { ok: true, commentUrl: comment.html_url };
   });
+
+  /**
+   * Record a system test verdict (FACTORY.md §4b): post the literal
+   * `Test Passed` or `Test Failed` on a `factory:manual-test` case as the
+   * acting user, and let the router do everything else — close the case, or
+   * file the fix task and park it.
+   *
+   * Evidence goes first, as an ordinary comment, so the strict-match verdict
+   * is the newest comment on the thread. The router matches the body exactly;
+   * a verdict with a paragraph of observations appended would simply not be
+   * one, and the tester's report would vanish into a comment nobody acts on.
+   *
+   * Authorisation is the factory's, not ours: `Test Passed` is checked
+   * against the `testers` list (falling back to `implementation`) by the
+   * router when it reads the comment. What this endpoint enforces is only
+   * that the case is in a state where a verdict means anything — the same
+   * discipline as the start gate and `Review Done` above.
+   */
+  app.post<{ Params: { id: string }; Body: { verdict?: string; evidence?: string } }>(
+    "/api/issues/:id/test-verdict",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const verdict = req.body?.verdict;
+      if (verdict !== "passed" && verdict !== "failed") {
+        return reply.code(400).send({ error: "verdict must be \"passed\" or \"failed\"" });
+      }
+      const found = await loadIssue(deps, ctx, req.params.id);
+      if (!found) return reply.code(404).send({ error: "issue not found" });
+      const { issue, repo } = found;
+      if (issue.state !== "open" || issue.factoryState !== MANUAL_TEST_STATE) {
+        return reply
+          .code(409)
+          .send({ error: "only an open system test case at factory:manual-test can take a verdict" });
+      }
+      const [owner, name] = repo.fullName.split("/") as [string, string];
+      // The evidence first, so the verdict is the newest comment and the
+      // router's strict match sees it.
+      const evidence = (req.body?.evidence ?? "").trim();
+      if (evidence) {
+        const note = await postComment(deps, ctx, reply, owner, name, issue.number, evidence);
+        if (!note) return;
+      }
+      const body = verdict === "passed" ? TEST_PASSED_BODY : TEST_FAILED_BODY;
+      const comment = await postComment(deps, ctx, reply, owner, name, issue.number, body);
+      if (!comment) return;
+      await db.insert(auditLog).values({
+        orgId: issue.orgId,
+        actorUserId: ctx.userId,
+        action: `test.${verdict}`,
+        target: `${repo.fullName}#${issue.number}`,
+        payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url, hadEvidence: Boolean(evidence) },
+      });
+      return { ok: true, commentUrl: comment.html_url };
+    },
+  );
 }
