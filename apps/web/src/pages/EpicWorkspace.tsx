@@ -74,6 +74,9 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   const cases = data.tasks.filter((t) => t.kind === "test");
   const casesPassed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
   const runnableCases = cases.filter((c) => c.state === "factory:manual-test");
+  // Bugs (FACTORY.md §4c) live on the same tab and are counted for its label:
+  // open means raised and not yet confirmed repaired.
+  const openBugs = data.bugs.rows.filter((b) => b.open && b.state !== "factory:bug-verified");
   const showHalt = gateOpen && data.gate!.amApprover && tab !== "gate";
   const tabItems: Array<{ id: Tab; label: string }> = (
     ["overview", "artifacts", ...(gateOpen ? (["gate"] as const) : []), "tree", "tasks", "tests", "threads", "decisions"] as Tab[]
@@ -88,8 +91,18 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
             // glance at this tab is how much of the manual testing is done.
             // Bare "Tests" on an epic with no cases is the honest label — a
             // "(0/0)" would read as work outstanding.
-            t === "tests" && cases.length > 0
-            ? `Tests (${casesPassed.length}/${cases.length})`
+            t === "tests" && (cases.length > 0 || openBugs.length > 0)
+            ? `Tests (${[
+                cases.length > 0 ? `${casesPassed.length}/${cases.length}` : null,
+                // Open bugs belong in the label for the same reason the pass
+                // count does: they are the other thing on this tab that is
+                // waiting for a person, and an epic whose only outstanding
+                // work is a defect somebody found should say so from the tab
+                // bar rather than from inside it.
+                openBugs.length > 0 ? `${openBugs.length} bug${openBugs.length === 1 ? "" : "s"}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")})`
             : TAB_LABELS[t],
   }));
 
@@ -793,6 +806,52 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               </table>
             </>
           )}
+          {/* Bugs (FACTORY.md §4c). Same reasoning as the matrix above, one
+              step stronger: under `mode: gate` with an epic branch the factory
+              refuses the release while a report is open, so an epic that
+              reaches this panel with one is an advisory repo, or one with no
+              epic branch — and there the approver is the one deciding a known
+              defect may go to staging. They cannot decide it without seeing
+              it. */}
+          {g.assembly.bugs.length > 0 && (
+            <>
+              <div className="spread" style={{ marginTop: "1rem" }}>
+                <h4 style={{ margin: 0 }}>Bugs raised in testing</h4>
+                <span className={`badge ${g.assembly.bugsOpen === 0 ? "merge" : "blocked"}`}>
+                  {g.assembly.bugs.length - g.assembly.bugsOpen}/{g.assembly.bugs.length} verified
+                </span>
+              </div>
+              {g.assembly.bugsOpen > 0 && (
+                <div className="banner warn">
+                  {g.assembly.bugsOpen} bug{g.assembly.bugsOpen === 1 ? "" : "s"} still open. Approving releases this
+                  epic to staging with {g.assembly.bugsOpen === 1 ? "that defect" : "those defects"} unrepaired.
+                </div>
+              )}
+              <ul>
+                {g.assembly.bugs.map((b) => (
+                  <li key={b.number}>
+                    #{b.number} {b.title.replace(/^bug\([^)]*\):?\s*/i, "")}{" "}
+                    <span
+                      className={`badge ${
+                        b.state === "factory:bug-verified" || !b.open
+                          ? "merge"
+                          : b.state === "factory:bug-retest"
+                            ? "test-run"
+                            : "blocked"
+                      }`}
+                    >
+                      {b.state === "factory:bug-verified" || !b.open
+                        ? "Verified"
+                        : b.state === "factory:bug-retest"
+                          ? "Awaiting re-test"
+                          : "Being fixed"}
+                    </span>{" "}
+                    <GitHubLink href={b.htmlUrl} />
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {g.assembly.prs.length > 0 && (
             <p className="muted">
               Open against this epic:{" "}
@@ -971,6 +1030,10 @@ export function TasksTab({ data, onOpenTests }: { data: EpicWorkspace; onOpenTes
   // column here — a case in "Waiting" would read as work the factory owes.
   const cases = data.tasks.filter((t) => t.kind === "test");
   const casesPassed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
+  // Reports (§4c) are not on this board either — the API keeps them out of
+  // `tasks` — but an epic whose tasks are all done is not finished while one
+  // is open, and this list is where that reading would otherwise be taken.
+  const openBugs = data.bugs.rows.filter((b) => b.open && b.state !== "factory:bug-verified");
   const codeTasks = data.tasks.filter((t) => t.kind !== "test");
   const approvable = codeTasks.filter((t) => t.approvable);
   const started = codeTasks.filter((t) => t.startStatus === "approved" || t.startStatus === "running");
@@ -1067,10 +1130,18 @@ export function TasksTab({ data, onOpenTests }: { data: EpicWorkspace; onOpenTes
           here all the same: an epic whose tasks are all done is not finished
           while its tests are outstanding, and this list is where that reading
           would otherwise be taken. */}
-      {cases.length > 0 && (
+      {(cases.length > 0 || openBugs.length > 0) && (
         <p className="muted">
-          {cases.length} system test{cases.length === 1 ? "" : "s"} on this epic
-          {casesPassed.length > 0 ? `, ${casesPassed.length} passed` : ""} —{" "}
+          {cases.length > 0
+            ? `${cases.length} system test${cases.length === 1 ? "" : "s"} on this epic${
+                casesPassed.length > 0 ? `, ${casesPassed.length} passed` : ""
+              }`
+            : ""}
+          {cases.length > 0 && openBugs.length > 0 ? "; " : ""}
+          {openBugs.length > 0
+            ? `${openBugs.length} bug${openBugs.length === 1 ? "" : "s"} open against it`
+            : ""}{" "}
+          —{" "}
           <a
             onClick={(e) => {
               e.preventDefault();

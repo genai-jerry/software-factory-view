@@ -1,4 +1,7 @@
 import {
+  BUG_RETEST_STATE,
+  BUG_VERIFIED_STATE,
+  bugReportAvailability,
   decryptSecret,
   deriveExpedited,
   epicStatus,
@@ -244,6 +247,13 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       deps,
       taskRows.map((t) => t.id),
     );
+    // Bug reports (FACTORY.md §4c) are children of the epic like tasks and
+    // cases, and belong on neither the board nor the case list: the board
+    // would offer a start on somebody's evidence, and the case list would
+    // read a report as a case that was never planned. They get their own
+    // section, so they are split out here once.
+    const bugRows = taskRows.filter((t) => t.kind === "bug");
+    const codeAndCaseRows = taskRows.filter((t) => t.kind !== "bug");
 
     const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epic.id)).limit(1))[0];
     const artifacts = change
@@ -303,7 +313,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     // The state label alone cannot tell those apart (see core/start-gate.ts).
     const startFacts = await loadTaskStartFacts(
       deps,
-      taskRows.filter((t) => t.state === "open" && t.factoryState === READY_STATE).map((t) => t.id),
+      codeAndCaseRows.filter((t) => t.state === "open" && t.factoryState === READY_STATE).map((t) => t.id),
     );
 
     // "What now?" for the epic and for every task, with each gate's approver
@@ -318,7 +328,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const plan = artifacts.find((a) => a.kind === "test-plan") ?? null;
     const hasPlan = Boolean(plan) || taskRows.some((t) => t.kind === "test");
 
-    const blockedSubs = taskRows.filter((t) => t.factoryState === "factory:blocked");
+    const blockedSubs = codeAndCaseRows.filter((t) => t.factoryState === "factory:blocked");
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
@@ -357,7 +367,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       pipeline: PIPELINE_ORDER,
       gate: myGate,
       startGate,
-      tasks: taskRows.map((t) => {
+      tasks: codeAndCaseRows.map((t) => {
         // A task inherits its epic's marker — the factory never copies the
         // label down, so the epic's answer is the task's answer.
         const startStatus = startStatusOf(t, startFacts.get(t.id), expedited);
@@ -407,6 +417,35 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
        * repo with tests off. The two must stay distinct here, because the
        * action's whole point is the epic that has no cases.
        */
+      /**
+       * The epic's bug reports (FACTORY.md §4c) and the one action that
+       * raises another: the Tests tab renders both beside the cases, because
+       * a bug is what the same tester found while running them.
+       *
+       * `enabled: null` is an unread policy, not bugs being off — the same
+       * distinction `systemTests` makes, for the same reason.
+       */
+      bugs: {
+        enabled: repo.bugReports,
+        rows: bugRows.map((b) => ({
+          id: b.id,
+          number: b.number,
+          title: b.title,
+          state: b.factoryState,
+          open: b.state === "open",
+          htmlUrl: b.htmlUrl,
+          /** The task(s) filed to fix it, as projected dependencies. */
+          fixes: deps_.get(b.id)?.blockedBy ?? [],
+          nextStep: nextStepFor(b.state === "open" ? b.factoryState : null, gateApprovers, {}),
+        })),
+        report: bugReportAvailability({
+          state: epic.factoryState,
+          open: epic.state === "open",
+          kind: epic.kind,
+          labels: epic.labels,
+          bugReports: repo.bugReports,
+        }),
+      },
       systemTests: {
         enabled: repo.systemTests,
         mode: (repo.testMode as "gate" | "advisory" | null) ?? null,
@@ -816,6 +855,23 @@ export interface TestRollup {
   outstanding: number;
 }
 
+/**
+ * An epic's bug reports (FACTORY.md §4c), rolled up the same way and for the
+ * same reason: a report is a child of the epic that is neither a code task nor
+ * a case. `open` is what holds gate GS under `mode: gate` — a defect somebody
+ * found that nobody has confirmed repaired.
+ */
+export interface BugRollup {
+  total: number;
+  /** Raised; the task fixing it is in flight. */
+  fixing: number;
+  /** The fix is assembled; a tester has to confirm it. */
+  retest: number;
+  verified: number;
+  /** `fixing + retest` — what the epic still waits on. */
+  open: number;
+}
+
 export interface TaskRollup {
   total: number;
   ready: number;
@@ -833,6 +889,8 @@ export interface TaskRollup {
   inFlight: number;
   /** Absent where the repo runs no system tests, or the epic has no cases. */
   tests?: TestRollup;
+  /** Absent where the repo runs no bug reports, or the epic has none. */
+  bugs?: BugRollup;
 }
 
 export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<TaskRollup> {
@@ -841,9 +899,12 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     .select({ id: issues.id, kind: issues.kind, factoryState: issues.factoryState, state: issues.state })
     .from(issues)
     .where(eq(issues.parentIssueId, epicIssueId));
-  // Cases are counted apart from code tasks — see TestRollup.
-  const tasks = children.filter((c) => c.kind !== "test");
+  // Cases and bug reports are counted apart from code tasks — see TestRollup
+  // and BugRollup. The task that FIXES a bug is an ordinary task and is
+  // counted with the others, which is right: it is code the epic assembles.
+  const tasks = children.filter((c) => c.kind !== "test" && c.kind !== "bug");
   const cases = children.filter((c) => c.kind === "test");
+  const bugRows = children.filter((c) => c.kind === "bug");
   const tests: TestRollup = { total: cases.length, passed: 0, runnable: 0, failed: 0, outstanding: 0 };
   for (const c of cases) {
     if (c.factoryState === TEST_PASSED_STATE || (c.state === "closed" && c.factoryState !== TEST_FAILED_STATE)) {
@@ -852,6 +913,15 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     else if (c.factoryState === MANUAL_TEST_STATE) tests.runnable++;
   }
   tests.outstanding = tests.total - tests.passed;
+  const bugs: BugRollup = { total: bugRows.length, fixing: 0, retest: 0, verified: 0, open: 0 };
+  for (const b of bugRows) {
+    // A report closed by hand — "not a defect", a duplicate — holds nothing,
+    // exactly as a verified one does. Only an OPEN report is a hold.
+    if (b.factoryState === BUG_VERIFIED_STATE || b.state === "closed") bugs.verified++;
+    else if (b.factoryState === BUG_RETEST_STATE) bugs.retest++;
+    else bugs.fixing++;
+  }
+  bugs.open = bugs.fixing + bugs.retest;
   const rollup = {
     total: tasks.length,
     ready: 0,
@@ -863,6 +933,7 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     waiting: 0,
     inFlight: 0,
     ...(cases.length > 0 ? { tests } : {}),
+    ...(bugRows.length > 0 ? { bugs } : {}),
   };
   const openIds: string[] = [];
   for (const t of tasks) {

@@ -50,7 +50,35 @@ const noTests: EpicWorkspace["systemTests"] = {
   planTests: { offered: true, reason: null },
 };
 
-function workspace(tasks: EpicWorkspace["tasks"], systemTests: Partial<EpicWorkspace["systemTests"]> = {}): EpicWorkspace {
+const noBugs: EpicWorkspace["bugs"] = {
+  enabled: true,
+  rows: [],
+  report: { offered: true, reason: null },
+};
+
+const bugStep = {
+  who: "the testers",
+  how: "Re-run what you did when you found this.",
+  startRole: null,
+  startLabel: null,
+  waitsOnPerson: true,
+  automatic: false,
+};
+
+const retestBug = {
+  id: "bug-41", number: 41, title: "bug(9): discount ignored at checkout",
+  state: "factory:bug-retest", open: true, htmlUrl: "https://gh/41",
+  fixes: [{ id: "task-42", number: 42, title: "task(9): fix bug #41", state: "factory:on-epic", open: false, htmlUrl: "https://gh/42" }],
+  nextStep: bugStep,
+};
+const fixingBug = { ...retestBug, id: "bug-43", number: 43, title: "bug(9): totals off by a cent", state: "factory:bug-open" };
+const verifiedBug = { ...retestBug, id: "bug-44", number: 44, state: "factory:bug-verified", open: false };
+
+function workspace(
+  tasks: EpicWorkspace["tasks"],
+  systemTests: Partial<EpicWorkspace["systemTests"]> = {},
+  bugs: Partial<EpicWorkspace["bugs"]> = {},
+): EpicWorkspace {
   return {
     epic: {
       id: "epic-9", number: 9, repo: "acme/app", title: "Renewals", bodyHtml: "", state: "factory:design-approved",
@@ -72,6 +100,7 @@ function workspace(tasks: EpicWorkspace["tasks"], systemTests: Partial<EpicWorks
         : {}),
       ...systemTests,
     },
+    bugs: { ...noBugs, ...bugs },
     freshness: { lastSyncedAt: null, stale: false },
     orchestrator: { engine: "github-actions", githubActionsEnabled: true, canStart: false },
   } as unknown as EpicWorkspace;
@@ -227,5 +256,63 @@ describe("asking for a plan", () => {
       />,
     );
     expect(screen.getByText(/written but not merged yet/)).toBeTruthy();
+  });
+});
+
+/**
+ * Bugs (FACTORY.md §4c). A report is not a case and not a task: it never
+ * offers a start, it appears on neither the board nor the case list, and the
+ * only control it ever offers is the re-test verdict — and only once the fix
+ * the factory filed for it is assembled.
+ */
+describe("bugs raised in testing", () => {
+  it("groups reports by what they are waiting for", () => {
+    renderIn(<TestsTab data={workspace([task], {}, { rows: [retestBug, fixingBug, verifiedBug] })} />);
+    expect(screen.getByText(/Bugs \(1\/3 verified\)/)).toBeTruthy();
+    expect(screen.getByText(/Ready to re-test \(1\)/)).toBeTruthy();
+    expect(screen.getByText(/Being fixed \(1\)/)).toBeTruthy();
+    expect(screen.getByText(/Verified \(1\)/)).toBeTruthy();
+  });
+
+  it("offers the verdict only on a bug whose fix is assembled", () => {
+    renderIn(<TestsTab data={workspace([task], {}, { rows: [fixingBug] })} />);
+    expect(screen.queryByRole("button", { name: "Pass" })).toBeNull();
+    renderIn(<TestsTab data={workspace([task], {}, { rows: [retestBug] })} />);
+    expect(screen.getByRole("button", { name: "Pass" })).toBeTruthy();
+  });
+
+  it("never offers a start control on a report", () => {
+    renderIn(<TestsTab data={workspace([task], {}, { rows: [fixingBug] })} />);
+    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+  });
+
+  it("posts the title and the report as one comment", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderIn(<TestsTab data={workspace([task])} />);
+    await userEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+    await userEvent.type(screen.getByLabelText("Bug title"), "discount ignored");
+    await userEvent.type(screen.getByLabelText("Bug report"), "Saw 100.00, expected 90.00");
+    await userEvent.click(screen.getByRole("button", { name: "Raise it" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/epics/epic-9/bugs", {
+        title: "discount ignored",
+        report: "Saw 100.00, expected 90.00",
+      }),
+    );
+  });
+
+  it("will not raise a bug with no report in it", async () => {
+    renderIn(<TestsTab data={workspace([task])} />);
+    await userEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+    await userEvent.type(screen.getByLabelText("Bug title"), "something is wrong");
+    // The control that reads past its first line is the only reason a bug can
+    // carry its evidence at all — an empty report would file a fix quoting
+    // nothing, so the button stays disabled until there is one.
+    expect(screen.getByRole("button", { name: "Raise it" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("says why when the repo has bug reports off", () => {
+    renderIn(<TestsTab data={workspace([task], {}, { enabled: false, rows: [], report: { offered: false, reason: "off" } })} />);
+    expect(screen.getByText(/Bug reports are off in this repository/)).toBeTruthy();
   });
 });

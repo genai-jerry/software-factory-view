@@ -1,7 +1,15 @@
-import { MANUAL_TEST_STATE, TEST_FAILED_STATE, TEST_PASSED_STATE } from "./factory.js";
+import {
+  BUG_OPEN_STATE,
+  BUG_RETEST_STATE,
+  BUG_VERIFIED_STATE,
+  MANUAL_TEST_STATE,
+  TEST_FAILED_STATE,
+  TEST_PASSED_STATE,
+} from "./factory.js";
 
 /**
- * What a system test case is actually waiting for (FACTORY.md §4b).
+ * What a system test case — or a bug report at re-test (§4c) — is actually
+ * waiting for (FACTORY.md §4b).
  *
  * `factory:manual-test` is not one moment either — the same problem
  * `start-gate.ts` solves for `factory:ready`. The state label stays put from
@@ -28,7 +36,7 @@ export type TestVerdictStatus =
   | "stalled"
   /** Passed and closed. */
   | "passed"
-  /** Failed; the fix task named on the case is in flight. */
+  /** Failed; the fix task named on the case (or on the bug) is in flight. */
   | "failed";
 
 export interface TestVerdictInput {
@@ -36,7 +44,10 @@ export interface TestVerdictInput {
   state: string | null;
   /** Newest `Test Passed`/`Test Failed` comment on the case, or null. */
   verdictAt: Date | null;
-  /** When the case last entered `factory:manual-test`; null when unknown. */
+  /**
+   * When the case last entered `factory:manual-test` — or the bug
+   * `factory:bug-retest`; null when unknown.
+   */
   runnableSince: Date | null;
   now?: Date;
 }
@@ -47,9 +58,12 @@ export interface TestVerdictInput {
  * it back. That old comment must not read as a decision on this round.
  */
 export function testVerdictStatus(input: TestVerdictInput): TestVerdictStatus {
-  if (input.state === TEST_PASSED_STATE) return "passed";
-  if (input.state === TEST_FAILED_STATE) return "failed";
-  if (input.state !== MANUAL_TEST_STATE) return "none";
+  if (input.state === TEST_PASSED_STATE || input.state === BUG_VERIFIED_STATE) return "passed";
+  if (input.state === TEST_FAILED_STATE || input.state === BUG_OPEN_STATE) return "failed";
+  // A bug at re-test takes the same two verdicts, from the same list, with the
+  // same "a verdict is posted but not yet routed" problem — so it takes the
+  // same reading. `runnableSince` is when the Dispatcher moved it here.
+  if (input.state !== MANUAL_TEST_STATE && input.state !== BUG_RETEST_STATE) return "none";
   const { verdictAt, runnableSince } = input;
   if (!verdictAt) return "awaiting";
   if (runnableSince && verdictAt < runnableSince) return "awaiting";

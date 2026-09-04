@@ -10,8 +10,14 @@ import { EXPEDITE_LABEL, isFactoryState, RELEASE_KIND_LABEL, type FactoryState }
  * verification, not of implementation. It is its own kind because everything
  * downstream treats it differently: it is excluded from code-task counts,
  * offers a verdict rather than a start, and never routes to a role.
+ *
+ * `bug` is a report a tester raised against an epic under test (§4c). Same
+ * reasoning, one step further: the report is the record of a defect and the
+ * work is the separate `task(<epic>): fix bug #<n>` the factory filed for it,
+ * so counting a report among the epic's code tasks would double-count the
+ * work and put a start control on somebody's evidence.
  */
-export type IssueKind = "epic" | "task" | "test" | "plain";
+export type IssueKind = "epic" | "task" | "test" | "bug" | "plain";
 export type PrKind = "spec" | "design" | "task" | "promotion" | "other";
 
 export function deriveFactoryState(labels: string[]): FactoryState | null {
@@ -46,6 +52,8 @@ export function deriveIssueKind(input: {
   // implementer, never counts among an epic's code tasks, and offers a
   // tester's verdict where a task offers a start.
   if (/^test\(\d+\)/i.test(input.title)) return "test";
+  // A bug report (FACTORY.md §4c): `bug(<epic>): <title>`.
+  if (/^bug\(\d+\)/i.test(input.title)) return "bug";
   const state = deriveFactoryState(input.labels);
   if (input.hasParent) return state || /^task\(/i.test(input.title) ? "task" : "plain";
   if (/^task\(/i.test(input.title)) return "task";

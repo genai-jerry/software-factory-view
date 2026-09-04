@@ -359,6 +359,7 @@ const expeditedWorkspace: EpicWorkspace = {
   change: null,
   artifacts: [],
   threads: [],
+  bugs: { enabled: true, rows: [], report: { offered: true, reason: null } },
   systemTests: {
     enabled: true,
     mode: "gate",
@@ -555,6 +556,7 @@ function SystemTestsScreen() {
 const untestedWorkspace: EpicWorkspace = {
   ...expeditedWorkspace,
   expedite: { ...expediteState, on: false },
+  bugs: { enabled: true, rows: [], report: { offered: true, reason: null } },
   systemTests: {
     enabled: true,
     mode: "gate",

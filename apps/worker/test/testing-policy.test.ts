@@ -52,6 +52,30 @@ describe("importTestingPolicy", () => {
     const row = await read();
     expect(row.systemTests).toBe(true);
     expect(row.testMode).toBe("gate");
+    // Bug reports (FACTORY.md §4c) ride on the same file and follow the cases
+    // unless the file says otherwise — so a repo that enabled system tests
+    // before §4c existed can raise bugs without editing anything.
+    expect(row.bugReports).toBe(true);
+  });
+
+  it("mirrors bug reports turned off, and on without a test plan", async () => {
+    const off = await seed();
+    await importTestingPolicy(
+      off.db,
+      off.repoRef,
+      reader({ [POLICY]: { content: '{"system_tests": true, "bug_reports": false}', sha: "a" } }),
+    );
+    expect((await off.read()).bugReports).toBe(false);
+
+    const noPlan = await seed();
+    await importTestingPolicy(
+      noPlan.db,
+      noPlan.repoRef,
+      reader({ [POLICY]: { content: '{"system_tests": false, "bug_reports": true}', sha: "a" } }),
+    );
+    const row = await noPlan.read();
+    expect(row.systemTests).toBe(false);
+    expect(row.bugReports).toBe(true);
   });
 
   it("mirrors advisory mode", async () => {

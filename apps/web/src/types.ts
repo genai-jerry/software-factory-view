@@ -290,6 +290,19 @@ export interface TaskRollup {
   /** In review, in test or on a branch — the work the done count cannot see. */
   inFlight: number;
   tests?: TestRollup;
+  bugs?: BugRollup;
+}
+
+/** An epic's bug reports (FACTORY.md §4c), counted apart from its code tasks. */
+export interface BugRollup {
+  total: number;
+  /** Raised; the task fixing it is in flight. */
+  fixing: number;
+  /** The fix is assembled; a tester has to confirm it. */
+  retest: number;
+  verified: number;
+  /** `fixing + retest` — what the epic still waits on. */
+  open: number;
 }
 
 export interface EpicWorkspace {
@@ -354,6 +367,26 @@ export interface EpicWorkspace {
    * means the Console has not read the file, which is not the same as tests
    * being off and must not render as it.
    */
+  /**
+   * The epic's bug reports (FACTORY.md §4c) and whether another may be
+   * raised here — the Tests tab's second half. `enabled: null` is an unread
+   * policy, not bugs being off.
+   */
+  bugs: {
+    enabled: boolean | null;
+    rows: Array<{
+      id: string;
+      number: number;
+      title: string;
+      state: string | null;
+      open: boolean;
+      htmlUrl: string;
+      /** The task(s) filed to fix it. */
+      fixes: DepNode[];
+      nextStep: NextStep;
+    }>;
+    report: { offered: boolean; reason: string | null };
+  };
   systemTests: {
     enabled: boolean | null;
     mode: "gate" | "advisory" | null;
@@ -430,6 +463,9 @@ export interface GatePanelData {
       verdictAt: string | null;
     }>;
     testsOutstanding: number;
+    /** Bug reports raised against this epic (FACTORY.md §4c). */
+    bugs: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
+    bugsOpen: number;
     tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
     allGreen: boolean;
     report: { author: string | null; at: string; html: string; htmlUrl: string | null } | null;

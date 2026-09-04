@@ -1,4 +1,4 @@
-import { EPIC_READY_STATE, GATE_STATES, MANUAL_TEST_STATE, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
+import { BUG_RETEST_STATE, EPIC_READY_STATE, GATE_STATES, MANUAL_TEST_STATE, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
@@ -234,6 +234,17 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
         whyYou: `system test ${caseIdOf(issue.title) ?? "case"} is ready to run — ${whyBase}`,
         ...base,
         // The Tests tab, not the task board: the verdict controls live there.
+        link: `/epics/${epicId}?tab=tests`,
+      });
+    } else if (issue.kind === "bug" && state === BUG_RETEST_STATE) {
+      // A bug whose fix is assembled (FACTORY.md §4c). Same shape as a
+      // runnable case, and the same reason it survives expedite: the factory
+      // can build the repair and it still cannot tell you the defect is gone.
+      entries.push({
+        kind: "task-start",
+        rank: 3,
+        whyYou: `a bug fix is ready to re-test — ${whyBase}`,
+        ...base,
         link: `/epics/${epicId}?tab=tests`,
       });
     } else if (issue.kind === "task" && state === READY_STATE) {

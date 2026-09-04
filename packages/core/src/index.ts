@@ -8,6 +8,7 @@ export * from "./epic-status.js";
 export * from "./test-verdict.js";
 export * from "./testing-policy.js";
 export * from "./plan-tests.js";
+export * from "./bug-report.js";
 export * from "./crypto.js";
 export * from "./config.js";
 export * from "./github.js";

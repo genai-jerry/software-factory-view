@@ -1,5 +1,8 @@
 import {
   APPROVED_BODY,
+  BUG_RETEST_STATE,
+  bugCommentBody,
+  bugReportAvailability,
   deriveExpedited,
   epicStatus,
   GATE_STATES,
@@ -331,10 +334,15 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const found = await loadIssue(deps, ctx, req.params.id);
       if (!found) return reply.code(404).send({ error: "issue not found" });
       const { issue, repo } = found;
-      if (issue.state !== "open" || issue.factoryState !== MANUAL_TEST_STATE) {
-        return reply
-          .code(409)
-          .send({ error: "only an open system test case at factory:manual-test can take a verdict" });
+      // The same two words answer a bug's re-test (FACTORY.md §4c), from the
+      // same list, so one endpoint carries both: `factory:bug-retest` is where
+      // a report is waiting for exactly this.
+      const verdictable = issue.factoryState === MANUAL_TEST_STATE || issue.factoryState === BUG_RETEST_STATE;
+      if (issue.state !== "open" || !verdictable) {
+        return reply.code(409).send({
+          error:
+            "only an open system test case at factory:manual-test, or a bug report at factory:bug-retest, can take a verdict",
+        });
       }
       const [owner, name] = repo.fullName.split("/") as [string, string];
       // The evidence first, so the verdict is the newest comment and the
@@ -350,7 +358,7 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       await db.insert(auditLog).values({
         orgId: issue.orgId,
         actorUserId: ctx.userId,
-        action: `test.${verdict}`,
+        action: issue.factoryState === BUG_RETEST_STATE ? `bug.retest-${verdict}` : `test.${verdict}`,
         target: `${repo.fullName}#${issue.number}`,
         payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url, hadEvidence: Boolean(evidence) },
       });
@@ -416,4 +424,61 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
     });
     return { ok: true, commentUrl: comment.html_url };
   });
+
+  /**
+   * Raise a bug against an epic under test (FACTORY.md §4c): post the `Bug`
+   * comment on the epic as the acting user, and let the router do the rest —
+   * open the `bug(<epic>)` report, file the task that fixes it, and link the
+   * two.
+   *
+   * The title and the report go in **one** comment, because this is the one
+   * factory control that reads past its first line. Splitting them the way the
+   * verdict endpoint splits evidence from the verdict would put the tester's
+   * observation in a comment nothing routes, and file a fix quoting nothing.
+   *
+   * The guard is `bugReportAvailability`, the same function the payload uses
+   * to decide whether to draw the control, so a click the screen offered
+   * cannot be refused here and a click on a stale screen is refused with the
+   * reason the screen would have shown. Authorisation stays the factory's: it
+   * checks the commenter's access itself, and the comment is posted under
+   * their own GitHub identity.
+   */
+  app.post<{ Params: { id: string }; Body: { title?: string; report?: string } }>(
+    "/api/epics/:id/bugs",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const title = (req.body?.title ?? "").trim();
+      const report = (req.body?.report ?? "").trim();
+      if (!title) return reply.code(400).send({ error: "a bug needs a one-line title" });
+      if (!report) {
+        return reply.code(400).send({
+          error: "a bug needs the report: what you saw, what you did and what you expected",
+        });
+      }
+      const found = await loadEpic(deps, ctx, req.params.id);
+      if (!found) return reply.code(404).send({ error: "epic not found" });
+      const { epic, repo } = found;
+      const availability = bugReportAvailability({
+        state: epic.factoryState,
+        open: epic.state === "open",
+        kind: epic.kind,
+        labels: epic.labels,
+        bugReports: repo.bugReports,
+      });
+      if (!availability.offered) return reply.code(409).send({ error: availability.reason });
+
+      const [owner, name] = repo.fullName.split("/") as [string, string];
+      const comment = await postComment(deps, ctx, reply, owner, name, epic.number, bugCommentBody(title, report));
+      if (!comment) return;
+      await db.insert(auditLog).values({
+        orgId: epic.orgId,
+        actorUserId: ctx.userId,
+        action: "epic.report-bug",
+        target: `${repo.fullName}#${epic.number}`,
+        payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url, title },
+      });
+      return { ok: true, commentUrl: comment.html_url };
+    },
+  );
 }
