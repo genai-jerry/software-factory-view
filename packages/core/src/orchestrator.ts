@@ -60,9 +60,25 @@ export function factoryStartLabel(labels: readonly string[]): (typeof FACTORY_AU
   return null;
 }
 
-export function factoryRunIsPending(opts: { open: boolean; labels: readonly string[] }): boolean {
+export function factoryRunIsPending(opts: {
+  open: boolean;
+  labels: readonly string[];
+  /**
+   * Whether the run this label would start has visibly already happened.
+   *
+   * `factory:design-approved` is not a moment but a whole stage: it sits on
+   * an epic from gate G2 until the day it ships. Without this the epic reads
+   * as "the orchestrator has not started the factory yet" for that entire
+   * build — under a task board showing eight of them in flight — and the
+   * button offers to start a run that has long since run. The caller
+   * supplies the fact that settles it (for an epic: the Dispatcher has
+   * released tasks), because the label alone cannot.
+   */
+  started?: boolean;
+}): boolean {
   if (!opts.open) return false;
   if (opts.labels.includes("factory:in-progress")) return false;
+  if (opts.started) return false;
   if (factoryStartLabel(opts.labels)) return true;
   return opts.labels.includes("factory:intake");
 }

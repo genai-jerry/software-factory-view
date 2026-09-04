@@ -2,6 +2,7 @@ import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -19,6 +20,7 @@ const PKCS8 = generateKeyPairSync("rsa", {
 const cookie = "console_session=sess-1";
 
 let app: Awaited<ReturnType<typeof buildApp>>;
+let deps: AppDeps;
 let epicId: string;
 
 beforeEach(async () => {
@@ -36,7 +38,7 @@ beforeEach(async () => {
     ORCHESTRATOR_URL: "http://127.0.0.1:8080",
     ORCHESTRATOR_DISPATCH_TOKEN: "op-token",
   } as never);
-  const deps: AppDeps = {
+  deps = {
     cfg,
     dbh: { db: db as never, sql: null as never, close: async () => undefined },
     credentials: new CredentialStore({
@@ -166,5 +168,39 @@ describe("POST /api/epics/:id/factory-run", () => {
     expect(res.json()).toMatchObject({
       orchestrator: { engine: "software-factory", githubActionsEnabled: false, canStart: true },
     });
+  });
+
+  it("withdraws canStart once a design-approved epic's tasks are moving", async () => {
+    // factory:design-approved stays on the epic for its whole build, so the
+    // label alone read as "the orchestrator has not started the factory yet"
+    // right through an epic with tasks in flight — sending anyone looking at
+    // the workspace to a Start button for a run that ran hours ago.
+    const { db } = deps.dbh;
+    const [epicRow] = await db.select().from(issues).where(eq(issues.id, epicId)).limit(1);
+    await db
+      .update(issues)
+      .set({ factoryState: "factory:design-approved", labels: ["factory:design-approved"] })
+      .where(eq(issues.id, epicId));
+
+    const idle = await app.inject({ method: "GET", url: `/api/epics/${epicId}`, headers: { cookie } });
+    expect(idle.json()).toMatchObject({ orchestrator: { canStart: true } });
+
+    await db.insert(issues).values({
+      orgId: epicRow!.orgId,
+      repoId: epicRow!.repoId,
+      parentIssueId: epicId,
+      ghNodeId: "I103",
+      number: 103,
+      title: "task(102) do the thing",
+      state: "open",
+      kind: "task",
+      factoryState: "factory:ready",
+      labels: ["factory:ready"],
+      ghUpdatedAt: new Date(),
+      htmlUrl: "https://github.com/acme/insurance-app-base/issues/103",
+    });
+
+    const building = await app.inject({ method: "GET", url: `/api/epics/${epicId}`, headers: { cookie } });
+    expect(building.json()).toMatchObject({ orchestrator: { canStart: false } });
   });
 });

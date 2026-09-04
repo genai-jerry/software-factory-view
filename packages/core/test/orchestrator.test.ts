@@ -65,4 +65,14 @@ describe("repo factory-orchestrator.json", () => {
     expect(factoryRunIsPending({ open: false, labels: ["factory:fast-track"] })).toBe(false);
     expect(factoryStartLabel(["factory:intake", "factory:fast-track"])).toBe("factory:fast-track");
   });
+
+  it("stops calling a design-approved epic un-started once its tasks are moving", () => {
+    // The Dispatcher leaves factory:design-approved exactly where it is, so
+    // the label says "waiting" for the epic's whole build. An epic with eight
+    // tasks in flight is not waiting on the orchestrator to begin.
+    const building = ["factory:design-approved"];
+    expect(factoryRunIsPending({ open: true, labels: building })).toBe(true);
+    expect(factoryRunIsPending({ open: true, labels: building, started: false })).toBe(true);
+    expect(factoryRunIsPending({ open: true, labels: building, started: true })).toBe(false);
+  });
 });
