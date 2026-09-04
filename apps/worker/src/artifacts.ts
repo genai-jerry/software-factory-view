@@ -204,7 +204,7 @@ export async function importTestingPolicy(db: Db, repo: RepoRef, reader: RepoRea
   } catch {
     return; // GitHub unreachable — keep the last good answer
   }
-  let policy: TestingPolicy = { systemTests: false, mode: "gate" };
+  let policy: TestingPolicy = { systemTests: false, bugReports: false, mode: "gate" };
   if (file) {
     try {
       policy = parseTestingPolicy(JSON.parse(file.content));
@@ -214,7 +214,7 @@ export async function importTestingPolicy(db: Db, repo: RepoRef, reader: RepoRea
   }
   await db
     .update(repos)
-    .set({ systemTests: policy.systemTests, testMode: policy.mode })
+    .set({ systemTests: policy.systemTests, bugReports: policy.bugReports, testMode: policy.mode })
     .where(eq(repos.id, repo.id));
 }
 

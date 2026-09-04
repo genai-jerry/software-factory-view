@@ -33,6 +33,13 @@ export const FACTORY_LABELS = [
   { name: "factory:manual-test", color: "D96C1F", description: "System test case ready for a human to run (test sub-issue)" },
   { name: "factory:test-passed", color: "1F7A4D", description: "System test case passed (test sub-issue; terminal)" },
   { name: "factory:test-failed", color: "C0392B", description: "System test case failed; a fix task is in flight (test sub-issue)" },
+  // Bug reports (FACTORY.md §4c). The same shape as the case states above and
+  // for the same reason: a human found something, the factory filed an
+  // ordinary task to fix it, and the same human confirms the repair. They sit
+  // only on a `bug(<epic>)` sub-issue, and no role ever runs on one.
+  { name: "factory:bug-open", color: "C0392B", description: "Bug raised; its fix task is in flight (bug sub-issue)" },
+  { name: "factory:bug-retest", color: "D96C1F", description: "Bug fix assembled; a human confirms the repair (bug sub-issue)" },
+  { name: "factory:bug-verified", color: "1F7A4D", description: "Bug repair confirmed by a tester (bug sub-issue; terminal)" },
   { name: "factory:in-staging", color: "3D9970", description: "Merged to staging and verified there; awaiting gate G3 promotion to the default branch" },
   { name: "factory:deployed", color: "0B8043", description: "In production; soak in progress" },
   { name: "factory:fast-track", color: "8C8C8C", description: "Small fix bypassing OpenSpec ceremony" },
@@ -67,6 +74,14 @@ export const IN_PROGRESS_LABEL = "factory:in-progress";
  * and gate G3 (`factory:in-staging`) stay human.
  */
 export const EXPEDITE_LABEL = "factory:expedite";
+
+/**
+ * The bug kind marker (FACTORY.md §4c): this issue is a defect a tester raised
+ * against an epic under test. Orthogonal like the markers above — it stays on
+ * the report for life, alongside one of the three `factory:bug-*` states, and
+ * must never win state derivation.
+ */
+export const BUG_KIND_LABEL = "factory:bug";
 
 /**
  * The epic's own assembled-but-not-released state, between `factory:on-epic`
@@ -110,6 +125,43 @@ export const TEST_FAILED_BODY = "Test Failed";
 /** Exact comment body that asks the Test Planner to write a plan for an epic. */
 export const PLAN_TESTS_BODY = "Plan tests";
 
+/**
+ * The three states of a bug report (FACTORY.md §4c).
+ *
+ * A report is raised at `BUG_OPEN_STATE` with an ordinary `task(<epic>)` filed
+ * to fix it; the Dispatcher moves it to `BUG_RETEST_STATE` once that task is
+ * assembled onto the epic branch, and a tester answers with the same two
+ * verdicts a case takes — because a re-test is a test. `Test Passed` closes it
+ * at `BUG_VERIFIED_STATE`; `Test Failed` files another fix and returns it to
+ * `BUG_OPEN_STATE`, still one report with one history.
+ */
+export const BUG_OPEN_STATE = "factory:bug-open";
+export const BUG_RETEST_STATE = "factory:bug-retest";
+export const BUG_VERIFIED_STATE = "factory:bug-verified";
+
+/**
+ * The epic states a bug may be raised against (§4c): from the first task
+ * landing through the staging window. Earlier nothing has been built to be
+ * wrong — that is a requirement; later the change has left the factory.
+ */
+export const BUG_ACCEPT_STATES: readonly string[] = [
+  DESIGN_APPROVED_STATE,
+  EPIC_READY_STATE,
+  "factory:in-staging",
+];
+
+/**
+ * The exact comment the factory reads as a bug report. The first line is the
+ * control and everything under it is the report — the one factory control that
+ * reads past its own line, so the Console posts both in one comment rather
+ * than splitting the observation into a second one nothing routes.
+ */
+export function bugCommentBody(title: string, report: string): string {
+  const head = title.trim();
+  const body = report.trim();
+  return body ? `Bug: ${head}\n\n${body}` : `Bug: ${head}`;
+}
+
 /** The epic states from which a system test plan may still be adopted (§4b). */
 export const PLAN_TESTS_STATES: readonly string[] = [
   "factory:planned",
@@ -121,6 +173,7 @@ export const PLAN_TESTS_STATES: readonly string[] = [
 
 export const FACTORY_KIND_LABELS = [
   { name: RELEASE_KIND_LABEL, color: "24597A", description: "Tracker issue for a release milestone (kind, not a state)" },
+  { name: BUG_KIND_LABEL, color: "B33A3A", description: "Bug report raised against an epic during testing (kind, not a state)" },
   { name: IN_PROGRESS_LABEL, color: "1F6FEB", description: "A factory agent run is live on this issue right now" },
   { name: EXPEDITE_LABEL, color: "D93F87", description: "Auto-advance every stage after the spec, up to the staging gate (kind, not a state)" },
 ] as const;
@@ -174,6 +227,21 @@ export function isTestState(label: string | null | undefined): boolean {
   return Boolean(label && TEST_STATE_ORDER.includes(label));
 }
 
+/**
+ * The bug report states, in the order a report moves through them. Out of
+ * `PIPELINE_ORDER` for the same reason the case states are: a report is a
+ * parallel track hanging off one point of a change's path, not a step on it.
+ */
+export const BUG_STATE_ORDER: readonly string[] = [
+  BUG_OPEN_STATE,
+  BUG_RETEST_STATE,
+  BUG_VERIFIED_STATE,
+];
+
+export function isBugState(label: string | null | undefined): boolean {
+  return Boolean(label && BUG_STATE_ORDER.includes(label));
+}
+
 export type Gate = "spec" | "design" | "implementation" | "testers" | "staging" | "release";
 
 /** States at which a gate holds, and which approver list owns it. */
@@ -192,6 +260,10 @@ export const GATE_STATES: Record<string, { gate: Gate; label: string }> = {
   // same shape: a state that holds until a named group of humans acts, whose
   // list the Console has to resolve to show the case to the right people.
   [MANUAL_TEST_STATE]: { gate: "testers", label: "system test" },
+  // The same shape again, one step later (§4c): the fix for a bug is
+  // assembled, and the person who reported it is the one who can say whether
+  // it is actually gone.
+  [BUG_RETEST_STATE]: { gate: "testers", label: "bug re-test" },
   // G3 holds at in-staging, not ready-to-ship or on-epic: the merges onto the
   // epic branch (FACTORY.md §6b) and the integration branch (§6a) are the
   // Release Manager's steps, and only once the change is proved on staging

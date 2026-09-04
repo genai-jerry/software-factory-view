@@ -6,8 +6,8 @@ import { GitHubLink } from "../components/GitHubLink.js";
 import { NextStepLine } from "../components/NextStep.js";
 
 /**
- * The Tests tab: an epic's system test cases (FACTORY.md §4b) and the one
- * action that brings them into being.
+ * The Tests tab: an epic's system test cases (FACTORY.md §4b), the bugs a
+ * tester raised against it (§4c), and the two actions that create each.
  *
  * A tab of their own rather than a group at the foot of the task board. A case
  * is not a task — no agent runs on one, none of the board's columns describes
@@ -50,6 +50,177 @@ export function TestsTab({ data }: { data: EpicWorkspace }) {
         </p>
       )}
       <SystemTestCases cases={cases} />
+      {/* Bugs sit under the cases, on the same tab, because they come from
+          the same hour of somebody's work: a tester runs the cases and finds
+          things the cases did not predict. Splitting them onto a tab of their
+          own would mean the person doing the testing has two places to look
+          and two places to write. */}
+      <Bugs epicId={data.epic.id} bugs={data.bugs} />
+    </div>
+  );
+}
+
+/**
+ * The epic's bug reports (FACTORY.md §4c) and the control that raises another.
+ *
+ * A bug is not a case: nobody planned it, it has no steps, and its whole
+ * content is what one person saw. So it renders as a report with a state and
+ * the task that fixes it — and, when the fix is assembled, the same Pass/Fail
+ * control a case gets, because a re-test is a test.
+ */
+export function Bugs({ epicId, bugs }: { epicId: string; bugs: EpicWorkspace["bugs"] }) {
+  const open = bugs.rows.filter((b) => b.open && b.state !== "factory:bug-verified");
+  const retest = open.filter((b) => b.state === "factory:bug-retest");
+  const fixing = open.filter((b) => b.state !== "factory:bug-retest");
+  const closed = bugs.rows.filter((b) => !b.open || b.state === "factory:bug-verified");
+  return (
+    <div className="bugs">
+      <h4 className="phase-head">
+        Bugs {bugs.rows.length > 0 ? `(${closed.length}/${bugs.rows.length} verified)` : ""}
+      </h4>
+      {bugs.enabled === false && bugs.rows.length === 0 ? (
+        <div className="banner info">
+          Bug reports are off in this repository. Turning them on is a change to{" "}
+          <code>.github/factory-testing.json</code> — add <code>"bug_reports": true</code>.
+        </div>
+      ) : (
+        <ReportBug epicId={epicId} report={bugs.report} hasBugs={bugs.rows.length > 0} />
+      )}
+      {retest.length > 0 && (
+        <div className="banner info">
+          {retest.length} fix{retest.length === 1 ? "" : "es"} ready to re-test. Run what you did when you found it —
+          a pass closes the report, a failure files another fix.
+        </div>
+      )}
+      {[
+        { title: "Ready to re-test", items: retest },
+        { title: "Being fixed", items: fixing },
+        { title: "Verified", items: closed },
+      ].map((g) =>
+        g.items.length === 0 ? null : (
+          <div key={g.title}>
+            <h5 className="phase-head">
+              {g.title} ({g.items.length})
+            </h5>
+            {g.items.map((b) => (
+              <div className={`board-card${b.state === "factory:bug-open" ? " blocked" : ""}`} key={b.id}>
+                #{b.number} {b.title.replace(/^bug\([^)]*\):?\s*/i, "")}
+                <div className="meta">
+                  <span
+                    className={`badge ${
+                      b.state === "factory:bug-retest" ? "test-run" : b.state === "factory:bug-open" ? "blocked" : "state"
+                    }`}
+                  >
+                    {b.state === "factory:bug-retest"
+                      ? "Ready to re-test"
+                      : b.state === "factory:bug-verified" || !b.open
+                        ? "Verified"
+                        : "Being fixed"}
+                  </span>
+                  {b.fixes.filter((f) => f.open).length > 0 && (
+                    <span title={b.fixes.filter((f) => f.open).map((f) => `#${f.number} ${f.title}`).join("\n")}>
+                      fix {b.fixes.filter((f) => f.open).map((f) => `#${f.number}`).join(", ")}
+                    </span>
+                  )}
+                  <GitHubLink href={b.htmlUrl} />
+                </div>
+                <NextStepLine step={b.nextStep} />
+                {b.state === "factory:bug-retest" && <TestVerdict caseId={b.id} label={`#${b.number}`} bug />}
+              </div>
+            ))}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+/**
+ * Raise a bug against this epic.
+ *
+ * The title and the report go up as one comment, because `Bug` is the one
+ * factory control that reads past its own line — and that is exactly why the
+ * report field is required here rather than optional: a bug that arrives
+ * without what the tester saw is a round trip through somebody's memory.
+ *
+ * Whether it may be pressed is the server's answer, computed by the same
+ * function that guards the endpoint, so the form is never offered where the
+ * factory would refuse it.
+ */
+export function ReportBug({
+  epicId,
+  report,
+  hasBugs,
+}: {
+  epicId: string;
+  report: EpicWorkspace["bugs"]["report"];
+  hasBugs: boolean;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [detail, setDetail] = useState("");
+  const raise = useMutation({
+    mutationFn: () => api.post<{ ok: boolean }>(`/api/epics/${epicId}/bugs`, { title, report: detail }),
+    onSuccess: () => {
+      setTitle("");
+      setDetail("");
+      setOpen(false);
+      void qc.invalidateQueries();
+    },
+  });
+
+  if (!report.offered) {
+    // With bugs already on the epic the list says everything; a greyed-out
+    // button beside it would only ask to be pressed. With none, the refusal
+    // is the answer to "why can't I report one?".
+    return hasBugs ? null : <p className="muted">No bugs on this epic. {report.reason}</p>;
+  }
+
+  if (!open) {
+    return (
+      <div className="dep-actions">
+        <button type="button" onClick={() => setOpen(true)}>
+          Report a bug
+        </button>
+        <span className="muted">
+          Found something the cases did not predict? The factory raises it against this epic and builds the repair
+          onto the epic branch, like any other task.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="banner info">
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="One line: what is wrong"
+          aria-label="Bug title"
+        />
+        <textarea
+          value={detail}
+          onChange={(e) => setDetail(e.target.value)}
+          placeholder={"What you saw, what you did, what you expected.\nSteps: …\nSaw: … — expected: …"}
+          rows={5}
+          aria-label="Bug report"
+        />
+        <div className="dep-actions">
+          <span className="muted">
+            Posted as you, as a <code>Bug</code> comment on the epic. The factory opens the report and raises the
+            work that repairs it.
+          </span>
+          <button type="button" onClick={() => raise.mutate()} disabled={raise.isPending || !title.trim() || !detail.trim()}>
+            {raise.isPending ? "Raising…" : "Raise it"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setOpen(false)} disabled={raise.isPending}>
+            Cancel
+          </button>
+        </div>
+      </div>
+      {raise.isError && <div className="banner error">{(raise.error as ApiError).message}</div>}
     </div>
   );
 }
@@ -210,15 +381,17 @@ export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
 }
 
 /**
- * Pass / Fail on a runnable case. Posts the literal `Test Passed` or
- * `Test Failed` as the acting member, exactly as the gate buttons post
- * `Approved` — the router does everything that follows.
+ * Pass / Fail on a runnable case — or on a bug whose fix is assembled (§4c),
+ * which takes the same two words from the same list, because a re-test is a
+ * test. Posts the literal `Test Passed` or `Test Failed` as the acting member,
+ * exactly as the gate buttons post `Approved` — the router does everything
+ * that follows.
  *
  * The evidence box is optional and is posted first, as an ordinary comment,
  * so the verdict is the newest comment on the thread: the router matches the
  * body exactly, and a verdict with observations appended would not be one.
  */
-export function TestVerdict({ caseId, label }: { caseId: string; label: string }) {
+export function TestVerdict({ caseId, label, bug }: { caseId: string; label: string; bug?: boolean }) {
   const qc = useQueryClient();
   const [evidence, setEvidence] = useState("");
   const [confirming, setConfirming] = useState<null | "passed" | "failed">(null);
@@ -253,8 +426,12 @@ export function TestVerdict({ caseId, label }: { caseId: string; label: string }
         <div className="dep-actions">
           <span className="muted">
             {confirming === "passed"
-              ? `Record ${label} as passed? It closes the case.`
-              : `Record ${label} as failed? The factory files a task to fix it and brings this case back when that lands.`}
+              ? bug
+                ? `Confirm ${label} is repaired? It closes the report.`
+                : `Record ${label} as passed? It closes the case.`
+              : bug
+                ? `Report ${label} as still open? The factory files another fix and brings it back when that lands.`
+                : `Record ${label} as failed? The factory files a task to fix it and brings this case back when that lands.`}
           </span>
           <button type="button" onClick={() => post.mutate(confirming)} disabled={post.isPending}>
             {post.isPending ? "Posting…" : "Confirm"}

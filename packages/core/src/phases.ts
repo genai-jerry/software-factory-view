@@ -39,6 +39,12 @@ const PHASE_MAP: Record<string, Phase> = {
   "factory:manual-test": "building",
   "factory:test-failed": "building",
   "factory:test-passed": "shipping",
+  // A bug report (FACTORY.md §4c) is work still to be done on the change, the
+  // same as an unrun case: somebody has to fix it and somebody has to confirm
+  // the fix. Verified is the one that has stopped asking for anything.
+  "factory:bug-open": "building",
+  "factory:bug-retest": "building",
+  "factory:bug-verified": "shipping",
   "factory:epic-ready": "shipping",
   "factory:in-staging": "shipping",
   "factory:deployed": "shipping",
@@ -76,6 +82,9 @@ export const STATE_SENTENCE: Record<string, string> = {
   "factory:manual-test": "A system test case ready for a human to run — testers: {approvers}.",
   "factory:test-failed": "A system test case that failed; the fix task named on it is in flight.",
   "factory:test-passed": "A system test case that passed.",
+  "factory:bug-open": "A bug raised in testing; the task fixing it is in flight.",
+  "factory:bug-retest": "A bug whose fix is assembled, waiting for a tester to confirm the repair — testers: {approvers}.",
+  "factory:bug-verified": "A bug whose repair a tester confirmed.",
   "factory:epic-ready":
     "Assembled and green on its epic branch, awaiting gate GS — the release to staging, not to production. Approvers: {approvers}.",
   "factory:in-staging": "On staging and verified there, awaiting gate G3 — the promotion to the default branch. Approvers: {approvers}.",
@@ -105,6 +114,9 @@ export const NEXT_MOVER: Record<string, string> = {
   "factory:manual-test": "A tester runs the case and comments Test Passed or Test Failed on it.",
   "factory:test-failed": "The fix task lands; the Dispatcher then returns the case to manual-test for a re-run.",
   "factory:test-passed": "Nothing — the case is done. The epic waits on its remaining cases and tasks.",
+  "factory:bug-open": "The task fixing it lands; the Dispatcher then asks a tester to confirm the repair.",
+  "factory:bug-retest": "A tester re-runs it and comments Test Passed or Test Failed on the report.",
+  "factory:bug-verified": "Nothing — the repair is confirmed. The epic waits on its remaining bugs, cases and tasks.",
   "factory:epic-ready": "A staging approver comments Approved on the epic (GS); the Release Manager then merges it onto the integration branch.",
   "factory:in-staging": "A human merges the promotion PR(s) via the GitHub UI (G3).",
   "factory:deployed": "Ops verifies health, archives the change, and closes the issue.",

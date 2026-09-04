@@ -1,5 +1,6 @@
 import {
   APPROVED_BODY,
+  BUG_VERIFIED_STATE,
   GATE_STATES,
   GitHubHttpError,
   MANUAL_TEST_STATE,
@@ -327,6 +328,9 @@ async function loadAssemblyEvidence(
     verdictAt: Date | null;
   }>;
   testsOutstanding: number;
+  /** The epic's bug reports (§4c) — the other half of the evidence at GS. */
+  bugs: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
+  bugsOpen: number;
   tasks: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
   allGreen: boolean;
   report: { author: string | null; at: Date; html: string; htmlUrl: string | null } | null;
@@ -341,7 +345,7 @@ async function loadAssemblyEvidence(
     open: t.state === "open",
     htmlUrl: t.htmlUrl,
   });
-  const tasks = childRows.filter((t) => t.kind !== "test").map(dto);
+  const tasks = childRows.filter((t) => t.kind !== "test" && t.kind !== "bug").map(dto);
   // The test matrix (FACTORY.md §4b): every case with its verdict and who
   // gave it. This is the evidence gate GS is actually weighed on where a repo
   // runs system tests — the assembly report proves the code built, and the
@@ -376,6 +380,10 @@ async function loadAssemblyEvidence(
     verdictAt: verdictOf.get(c.id)?.at ?? null,
   }));
 
+  // Bug reports (§4c) are children of the epic like cases, and like cases
+  // they are neither tasks nor part of the assembly check above.
+  const bugs = childRows.filter((t) => t.kind === "bug").map(dto);
+
   const report = (
     await db
       .select({ author: comments.author, body: comments.body, at: comments.ghCreatedAt, htmlUrl: comments.htmlUrl })
@@ -404,6 +412,16 @@ async function loadAssemblyEvidence(
      * button would strand it.
      */
     testsOutstanding: cases.filter((c) => c.verdict !== "passed").length,
+    bugs,
+    /**
+     * Open bug reports (FACTORY.md §4c). Under `mode: gate` with an epic
+     * branch the factory refuses `Approved` while any is open, so this is
+     * usually zero here — but an advisory repo, or one with no epic branch,
+     * reaches this gate with bugs outstanding, and then the approver is the
+     * one deciding that is acceptable. Shown for the same reason the case
+     * matrix is: it is what they are being asked to weigh.
+     */
+    bugsOpen: bugs.filter((b) => b.open && b.state !== BUG_VERIFIED_STATE).length,
     // Green at GS means every task has landed: closed, or on the epic branch
     // and beyond. Anything else and the assembly is not what the label claims.
     allGreen: tasks.length > 0 && tasks.every((t) => !t.open || ASSEMBLED_TASK_STATES.has(t.state ?? "")),

@@ -202,6 +202,12 @@ export const repos = pgTable(
      */
     systemTests: boolean("system_tests"),
     testMode: text("test_mode"), // gate | advisory
+    /**
+     * Bug reports (FACTORY.md §4c), from the same file. Null is "unread", the
+     * same as the two above; the parsed value already resolves the follows-
+     * `system_tests` default, so a false here is the file saying no.
+     */
+    bugReports: boolean("bug_reports"),
     profileSha: text("profile_sha"),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),

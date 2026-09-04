@@ -198,6 +198,21 @@ const TABLE: Record<string, Entry> = {
     who: "nobody — this case is done",
     how: "It passed and is closed. The epic reaches gate GS once its remaining cases and tasks are done too.",
   },
+  // Bug reports (FACTORY.md §4c). Same shape as the case states above: the
+  // report is the record, the fix is an ordinary task, and a human closes it.
+  "factory:bug-open": {
+    who: "the fix task, then the testers",
+    how: "The factory filed a task to fix this. When it is implemented, reviewed, tested and assembled onto the epic branch, the Dispatcher brings this report back for a re-test.",
+  },
+  "factory:bug-retest": {
+    who: "the testers — {approvers}",
+    how: "The fix is assembled and green. Re-run what you did when you found this, then comment exactly `Test Passed` to close it, or exactly `Test Failed` if it is still there.",
+    waitsOnPerson: true,
+  },
+  "factory:bug-verified": {
+    who: "nobody — this bug is done",
+    how: "A tester confirmed the repair and the report is closed. The epic reaches gate GS once its remaining bugs, cases and tasks are done too.",
+  },
   "factory:epic-ready": {
     who: "gate GS — {approvers}",
     how: "The epic is assembled and green on its own branch. Read the assembly report, then Approve — that releases it to the integration branch, not to production; G3 still holds before anything ships.",

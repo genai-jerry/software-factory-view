@@ -11,6 +11,13 @@ export type TestMode = "gate" | "advisory";
 export interface TestingPolicy {
   systemTests: boolean;
   /**
+   * Bug reports (FACTORY.md §4c) ride on this file too. Absent, the key
+   * follows `system_tests`: a repo that turned the cases on gets the bugs with
+   * them. An explicit value wins either way — the cases without the bugs, or
+   * exploratory testing with bugs and no written plan.
+   */
+  bugReports: boolean;
+  /**
    * `gate` holds an epic short of `factory:epic-ready` until every open case
    * has passed; `advisory` flips it and reports the open cases instead.
    *
@@ -26,8 +33,10 @@ export const TESTING_POLICY_PATH = ".github/factory-testing.json";
 
 export function parseTestingPolicy(json: unknown): TestingPolicy {
   const obj = (json ?? {}) as Record<string, unknown>;
+  const systemTests = obj.system_tests === true;
   return {
-    systemTests: obj.system_tests === true,
+    systemTests,
+    bugReports: typeof obj.bug_reports === "boolean" ? obj.bug_reports : systemTests,
     mode: obj.mode === "advisory" ? "advisory" : "gate",
   };
 }
@@ -39,4 +48,14 @@ export function parseTestingPolicy(json: unknown): TestingPolicy {
  */
 export function testsHoldTheGate(policy: TestingPolicy, hasEpicBranch: boolean): boolean {
   return policy.systemTests && policy.mode === "gate" && hasEpicBranch;
+}
+
+/**
+ * Whether an open bug report holds this epic short of gate GS (§4c). The same
+ * three conditions, on the other key: an open bug is a defect nobody has
+ * confirmed repaired, and under `gate` with an epic branch the factory refuses
+ * the staging release while one exists.
+ */
+export function bugsHoldTheGate(policy: TestingPolicy, hasEpicBranch: boolean): boolean {
+  return policy.bugReports && policy.mode === "gate" && hasEpicBranch;
 }

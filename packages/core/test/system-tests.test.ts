@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bugsHoldTheGate,
   deriveIssueKind,
   epicStatus,
   parseChangePath,
@@ -80,8 +81,33 @@ describe("the testing policy", () => {
   });
 
   it("defaults an enabled repo to gate mode", () => {
-    expect(parseTestingPolicy({ system_tests: true })).toEqual({ systemTests: true, mode: "gate" });
+    expect(parseTestingPolicy({ system_tests: true })).toEqual({
+      systemTests: true,
+      bugReports: true,
+      mode: "gate",
+    });
     expect(parseTestingPolicy({ system_tests: true, mode: "advisory" }).mode).toBe("advisory");
+  });
+
+  it("follows system_tests for bug reports, and takes an explicit answer either way", () => {
+    // FACTORY.md §4c: turning the cases on turns the bugs on with them.
+    expect(parseTestingPolicy({ system_tests: true }).bugReports).toBe(true);
+    expect(parseTestingPolicy({}).bugReports).toBe(false);
+    // The cases without the bugs...
+    expect(parseTestingPolicy({ system_tests: true, bug_reports: false }).bugReports).toBe(false);
+    // ...and exploratory testing with no written plan.
+    const noPlan = parseTestingPolicy({ system_tests: false, bug_reports: true });
+    expect(noPlan.systemTests).toBe(false);
+    expect(noPlan.bugReports).toBe(true);
+  });
+
+  it("holds the gate on open bugs under the same three conditions as cases", () => {
+    const on = parseTestingPolicy({ system_tests: true });
+    expect(bugsHoldTheGate(on, true)).toBe(true);
+    // No epic branch: nothing to hold the epic on — the bugs are evidence.
+    expect(bugsHoldTheGate(on, false)).toBe(false);
+    expect(bugsHoldTheGate(parseTestingPolicy({ system_tests: true, mode: "advisory" }), true)).toBe(false);
+    expect(bugsHoldTheGate(parseTestingPolicy({ system_tests: true, bug_reports: false }), true)).toBe(false);
   });
 
   it("only holds the gate with an epic branch and gate mode", () => {
