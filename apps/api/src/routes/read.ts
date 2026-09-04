@@ -333,7 +333,16 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
     const actions = githubActionsEnabled(org?.orchestrator);
-    const pending = factoryRunIsPending({ open: epic.state === "open", labels: epic.labels });
+    // The Dispatcher's output is on the tasks, never on the epic — it releases
+    // them and leaves `factory:design-approved` where it is. So "has the
+    // factory started?" is answered by whether any task has moved, not by the
+    // epic's own label, which would answer "no" for the whole build.
+    const dispatched = rollup.ready + rollup.inFlight + rollup.done > 0;
+    const pending = factoryRunIsPending({
+      open: epic.state === "open",
+      labels: epic.labels,
+      started: dispatched,
+    });
 
     return {
       epic: {
