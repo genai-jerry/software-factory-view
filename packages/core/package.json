@@ -25,7 +25,7 @@
   "devDependencies": {
     "@types/libsodium-wrappers": "^0.8.2",
     "@types/node": "^22.20.1",
-    "typescript": "^5.6.3",
+    "typescript": "^7.0.2",
     "vitest": "^2.1.9"
   }
 }
