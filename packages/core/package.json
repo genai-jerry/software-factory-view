@@ -20,7 +20,7 @@
   "dependencies": {
     "jose": "^5.9.6",
     "libsodium-wrappers": "^0.8.4",
-    "zod": "^3.23.8"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/libsodium-wrappers": "^0.8.2",
