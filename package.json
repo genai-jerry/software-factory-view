@@ -3,6 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "description": "Factory Console — a lens and control panel over the Claude Software Factory",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/genai-jerry/software-factory-view.git"
+  },
+  "homepage": "https://github.com/genai-jerry/software-factory-view#readme",
+  "bugs": {
+    "url": "https://github.com/genai-jerry/software-factory-view/issues"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
