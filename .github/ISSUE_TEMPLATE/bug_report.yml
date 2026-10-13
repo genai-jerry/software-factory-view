@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in the Console is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security issues go to [SECURITY.md](https://github.com/genai-jerry/software-factory-view/blob/main/SECURITY.md), not here.**
+        Please remove tokens, private keys, hostnames and personal data from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How are you running it?
+      options:
+        - Dev mode (scripts/dev.sh)
+        - Docker stack (scripts/start.sh)
+        - Self-hosted deploy
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: Output of `git rev-parse --short HEAD`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Output of `./scripts/logs.sh` or the browser console. Redact secrets.
+      render: shell
