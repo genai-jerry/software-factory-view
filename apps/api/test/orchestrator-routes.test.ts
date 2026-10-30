@@ -145,3 +145,31 @@ describe("POST /api/orchestrator/github-token", () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+describe("GET /api/orchestrator/usage", () => {
+  it("requires a session", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/orchestrator/usage" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("passes the orchestrator's usage summary through", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      seen.push(url);
+      return new Response(JSON.stringify({ runs: 3, total_tokens: 1200, limit: { reached: false } }), { status: 200 });
+    });
+    const res = await app.inject({ method: "GET", url: "/api/orchestrator/usage", headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ usage: { runs: 3, total_tokens: 1200, limit: { reached: false } } });
+    expect(seen).toEqual(["http://127.0.0.1:8080/usage"]);
+  });
+
+  it("shows nothing, not an error, when the orchestrator cannot say", async () => {
+    for (const reply of [new Response("", { status: 404 }), new Response("", { status: 500 })]) {
+      vi.stubGlobal("fetch", async () => reply);
+      const res = await app.inject({ method: "GET", url: "/api/orchestrator/usage", headers: { cookie } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ usage: null });
+    }
+  });
+});

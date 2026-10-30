@@ -9,6 +9,7 @@ import type { BlockedIssue, Me, ProjectsData, SetupStatus } from "../types.js";
 import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
+import { UsageBadge } from "./UsageBadge.js";
 
 export interface HaltState {
   title: string;
@@ -60,6 +61,7 @@ export function Shell({
           </NavLink>
           <FocusControls />
           <span className="topbar-who">
+            <UsageBadge />
             {me.avatarUrl && <img src={me.avatarUrl} alt="" width={28} height={28} />}
             <span className="muted">@{me.login}</span>
           </span>

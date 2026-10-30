@@ -668,3 +668,17 @@ export interface ValidationResult {
   ok: boolean;
   checks: Array<{ check: string; ok: boolean | null; detail: string }>;
 }
+
+/** GET /api/orchestrator/usage — the orchestrator's GET /usage. */
+export interface FactoryUsage {
+  as_of: string;
+  window_hours: number;
+  runs: number;
+  measured_runs: number;
+  active_runs: number;
+  total_tokens: number;
+  cost_usd: number;
+  limit: { reached: boolean; resets_at: string | null; waiting_issues: string[]; message: string | null };
+  /** Rate-limit detail a run reported, if any (e.g. five_hour.used_percentage). */
+  rate_limit: Record<string, unknown> | null;
+}
