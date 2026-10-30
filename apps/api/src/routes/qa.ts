@@ -111,6 +111,8 @@ async function resolveInsight(
         model: org.insightModel || deps.cfg.INSIGHT_DEEP_MODEL,
       };
     } catch {
+      // Sealed under another CONSOLE_MASTER_KEY. Settings → Ask the Factory
+      // says so when the models are loaded; here the answer falls back.
       /* fall through to env / factory-run key */
     }
   }
