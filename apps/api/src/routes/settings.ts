@@ -240,7 +240,18 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: AppDeps): voi
       if (!apiKey && found.org.encryptedInsightApiKey && deps.cfg.CONSOLE_MASTER_KEY) {
         // Only reuse the stored key for the provider it was saved for.
         if ((found.org.insightProvider ?? "anthropic") === provider) {
-          apiKey = decryptSecret(found.org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY);
+          // A key sealed under a different CONSOLE_MASTER_KEY (rotated, or a
+          // restored database) cannot be opened. That threw past the handler
+          // and showed as a bare "internal error"; say what it is instead.
+          try {
+            apiKey = decryptSecret(found.org.encryptedInsightApiKey, deps.cfg.CONSOLE_MASTER_KEY);
+          } catch {
+            req.log.warn({ org: found.org.id }, "stored insight API key could not be decrypted");
+            return reply.code(409).send({
+              error:
+                "The saved API key can't be read: it was encrypted with a different Console master key. Enter the key again, then Save.",
+            });
+          }
         }
       }
       if (!apiKey && provider === "anthropic") apiKey = deps.cfg.ANTHROPIC_API_KEY;

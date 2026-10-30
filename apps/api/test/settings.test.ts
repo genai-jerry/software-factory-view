@@ -279,6 +279,29 @@ describe("model listing (key-first configuration)", () => {
     expect((res.json() as { error: string }).error).toContain("openai 401");
   });
 
+  it("says so when the stored key was sealed under another master key", async () => {
+    const other = randomBytes(32).toString("base64");
+    await deps.dbh.db
+      .update(orgs)
+      .set({ insightProvider: "openai", encryptedInsightApiKey: encryptSecret("sk-old", other) })
+      .where(eq(orgs.id, id.org));
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/orgs/${id.org}/settings/insight/models`,
+      headers: { cookie: ownerCookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: { provider: "openai" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: string }).error).toContain("Enter the key again");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await deps.dbh.db
+      .update(orgs)
+      .set({ insightProvider: "anthropic", encryptedInsightApiKey: null })
+      .where(eq(orgs.id, id.org));
+  });
+
   it("falls back to the stored org key for the matching provider", async () => {
     // Store an OpenRouter key first.
     await app.inject({
