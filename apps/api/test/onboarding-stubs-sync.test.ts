@@ -198,6 +198,34 @@ describe("stub step re-run on an enabled repo", () => {
     expect((row?.detail as { synced?: string[] }).synced).toContain(".github/factory-branches.json");
   });
 
+  it("turns on issue workspaces for a repo onboarded before the key, keeping its own runner values", async () => {
+    reply(
+      "GET /repos/acme/api/contents/.github/factory-orchestrator.json",
+      fileBody("s0", `${JSON.stringify({ engine: "langgraph", endpoint: "", runners: { max_parallel: 2 } }, null, 2)}\n`),
+    );
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    const body = putBodies.find((b) => b.path.includes("factory-orchestrator.json"));
+    expect(body, "the orchestrator config should be in the sync PR").toBeTruthy();
+    const merged = JSON.parse(Buffer.from(body!.content, "base64").toString("utf8")) as {
+      runners: Record<string, unknown>;
+    };
+    expect(merged.runners).toEqual({ max_parallel: 2, workspace: "issue" });
+  });
+
+  it("leaves a repo that chose per-run workspaces on them", async () => {
+    reply(
+      "GET /repos/acme/api/contents/.github/factory-orchestrator.json",
+      fileBody(
+        "s0",
+        `${JSON.stringify({ engine: "langgraph", endpoint: "", runners: { max_parallel: 4, workspace: "run" } }, null, 2)}\n`,
+      ),
+    );
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    expect(putBodies.some((b) => b.path.includes("factory-orchestrator.json"))).toBe(false);
+  });
+
   it("reports in-sync and opens nothing when the repo already has every key", async () => {
     reply(
       "GET /repos/acme/api/contents/.github/factory-branches.json",

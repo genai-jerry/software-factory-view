@@ -1219,7 +1219,11 @@ body:
     {
       engine: repoEngineName(consoleEngine),
       endpoint: "",
-      runners: { max_parallel: 4 },
+      // "issue": each issue keeps one copy of the repo on the orchestrator,
+      // reset to GitHub before every run, so installed dependencies stay
+      // warm across its roles. Added to existing repos by the additive
+      // stub sync; a repo that set "run" keeps it (FACTORY.md §2e).
+      runners: { max_parallel: 4, workspace: "issue" },
     },
     null,
     2,
