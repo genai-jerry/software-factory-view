@@ -887,6 +887,10 @@ export interface TaskRollup {
   inReview: number;
   inTest: number;
   shipping: number;
+  /** Of `shipping`: green and waiting for the Release Manager. */
+  readyToShip: number;
+  /** Of `shipping`: merged onto the epic branch. */
+  onEpic: number;
   done: number;
   blocked: number;
   waiting: number;
@@ -937,6 +941,8 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     inReview: 0,
     inTest: 0,
     shipping: 0,
+    readyToShip: 0,
+    onEpic: 0,
     done: 0,
     blocked: 0,
     waiting: 0,
@@ -955,7 +961,11 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     // fall through every bucket and be counted only in `total`, so an epic
     // whose every task was waiting on the Release Manager rolled up as
     // "0 done, 0 ready" — reading as if nothing had happened.
-    else if (SHIPPING_STATES.has(t.factoryState ?? "")) rollup.shipping++;
+    else if (SHIPPING_STATES.has(t.factoryState ?? "")) {
+      rollup.shipping++;
+      if (t.factoryState === "factory:ready-to-ship") rollup.readyToShip++;
+      else if (t.factoryState === "factory:on-epic") rollup.onEpic++;
+    }
     else if (t.factoryState === "factory:blocked") rollup.blocked++;
   }
   if (openIds.length > 0) {

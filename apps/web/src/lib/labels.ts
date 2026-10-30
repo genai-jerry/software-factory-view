@@ -86,7 +86,14 @@ export function attentionReason(kind: string, rank: number, whyYou: string, stat
     if (state === "factory:in-staging") return "Merge to ship";
     return "Approve at this gate";
   }
-  if (kind === "task-start") return "Approve implementation start";
+  if (kind === "task-start") {
+    // The queue files three things under this kind. Only a task at
+    // factory:ready is an implementation start; a system test case and a bug
+    // fix are a tester's to run, and said so rather than all reading alike.
+    if (state === "factory:manual-test") return "Run the test case";
+    if (state === "factory:bug-retest") return "Re-test the bug fix";
+    return "Approve implementation start";
+  }
   if (kind === "merge") return "Merge to ship";
   return whyYou;
 }

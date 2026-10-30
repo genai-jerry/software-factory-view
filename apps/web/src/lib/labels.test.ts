@@ -66,3 +66,11 @@ describe("canReachSettings", () => {
     expect(canReachSettings(me, setup(true))).toBe(true);
   });
 });
+
+describe("attentionReason for tester work", () => {
+  it("names a system test case and a bug re-test, not an implementation start", () => {
+    expect(attentionReason("task-start", 3, "why", "factory:manual-test")).toBe("Run the test case");
+    expect(attentionReason("task-start", 3, "why", "factory:bug-retest")).toBe("Re-test the bug fix");
+    expect(attentionReason("task-start", 3, "why", "factory:ready")).toBe("Approve implementation start");
+  });
+});
