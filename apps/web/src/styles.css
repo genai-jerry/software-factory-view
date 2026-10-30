@@ -279,6 +279,23 @@ textarea { min-height: 5rem; resize: vertical; }
 }
 .board-card .meta { color: var(--text-dim); font-size: 0.78rem; margin-top: 0.3rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .board-card.blocked { border-color: var(--red); }
+.board-card .board-stages { margin-top: 0.4rem; font-size: 0.8rem; font-weight: 600; }
+/* Where an epic's tasks are, in the stage columns its own card is not in. */
+.board-chip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  background: transparent;
+  color: var(--text);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.board-chip:hover { border-color: var(--accent); }
 
 .stage-rail { display: flex; align-items: center; gap: 0; flex-wrap: wrap; margin: 0.75rem 0 1.25rem; }
 .stage { display: flex; align-items: center; }

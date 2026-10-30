@@ -174,7 +174,7 @@ describe("the epic status counts the tasks agents are on", () => {
 
   it("ships the count on the rollup so the board reads it without re-deriving it", async () => {
     const res = await app.inject({ method: "GET", url: `/api/epics/${id.building}/tree`, headers: { cookie } });
-    expect(res.json().epic.rollup).toMatchObject({ total: 4, done: 0, ready: 1, inReview: 1, inTest: 1, shipping: 1, inFlight: 3 });
+    expect(res.json().epic.rollup).toMatchObject({ total: 4, done: 0, ready: 1, inReview: 1, inTest: 1, shipping: 1, readyToShip: 0, onEpic: 1, inFlight: 3 });
   });
 });
 

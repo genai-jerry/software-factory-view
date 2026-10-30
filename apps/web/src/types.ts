@@ -283,6 +283,10 @@ export interface TaskRollup {
   inTest: number;
   /** Green and merged onto the epic/integration branch, not yet closed. */
   shipping: number;
+  /** Of `shipping`: green and waiting for the Release Manager. */
+  readyToShip?: number;
+  /** Of `shipping`: merged onto the epic branch. */
+  onEpic?: number;
   done: number;
   blocked: number;
   /** Open tasks that have at least one open blocker. */
