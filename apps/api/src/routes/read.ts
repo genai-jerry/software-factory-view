@@ -139,13 +139,16 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     const out = [];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
+    const backedUpSince = await oldestUnprocessedDelivery(db);
     for (const e of estateRows) {
+      const fresh = freshnessOf(e.lastSyncedAt, backedUpSince, staleMs);
       const repoRows = await db.select().from(repos).where(eq(repos.estateId, e.id));
       out.push({
         id: e.id,
         name: e.name,
         lastSyncedAt: e.lastSyncedAt,
-        stale: !e.lastSyncedAt || Date.now() - e.lastSyncedAt.getTime() > staleMs,
+        stale: fresh.stale,
+        staleReason: fresh.reason,
         repos: repoRows.map((r) => ({
           id: r.id,
           fullName: r.fullName,
@@ -332,6 +335,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
+    const backedUpSince = await oldestUnprocessedDelivery(db);
     const actions = githubActionsEnabled(org?.orchestrator);
     // The Dispatcher's output is on the tasks, never on the epic — it releases
     // them and leaves `factory:design-approved` where it is. So "has the
@@ -479,7 +483,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       },
       freshness: {
         lastSyncedAt: estate?.lastSyncedAt ?? null,
-        stale: !estate?.lastSyncedAt || Date.now() - estate.lastSyncedAt.getTime() > staleMs,
+        ...(() => {
+          const f = freshnessOf(estate?.lastSyncedAt, backedUpSince, staleMs);
+          return { stale: f.stale, staleReason: f.reason };
+        })(),
       },
       orchestrator: {
         engine: actions ? "github-actions" : "software-factory",
@@ -978,6 +985,44 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
   }
   rollup.inFlight = tasksInFlight(rollup);
   return rollup;
+}
+
+/** A nightly walk (03:17 UTC) that has not happened in this long was missed. */
+const NIGHTLY_WALK_GRACE_MS = 26 * 3_600_000;
+
+/**
+ * Whether the Console's copy of an estate may be behind GitHub.
+ *
+ * `lastSyncedAt` is stamped only by a full reconcile walk, which runs once a
+ * night. Webhooks keep the projections current in between without touching
+ * it, so testing it against the 15-minute threshold put "this view may be
+ * behind GitHub" on screen for all but the quarter hour after the walk, and
+ * said nothing when the webhooks themselves stopped arriving. Behind means:
+ * the nightly walk was missed, or a webhook has sat unprocessed for longer
+ * than the threshold (the worker or its queue is down).
+ */
+export function freshnessOf(
+  lastSyncedAt: Date | null | undefined,
+  oldestUnprocessedAt: Date | null | undefined,
+  staleMs: number,
+  now = Date.now(),
+): { stale: boolean; reason: "never-synced" | "walk-missed" | "webhooks-backed-up" | null } {
+  if (!lastSyncedAt) return { stale: true, reason: "never-synced" };
+  if (oldestUnprocessedAt && now - oldestUnprocessedAt.getTime() > staleMs) {
+    return { stale: true, reason: "webhooks-backed-up" };
+  }
+  if (now - lastSyncedAt.getTime() > NIGHTLY_WALK_GRACE_MS) return { stale: true, reason: "walk-missed" };
+  return { stale: false, reason: null };
+}
+
+async function oldestUnprocessedDelivery(db: AppDeps["dbh"]["db"]): Promise<Date | null> {
+  const row = (
+    await db
+      .select({ at: dsql<Date | null>`min(${webhookDeliveries.receivedAt})` })
+      .from(webhookDeliveries)
+      .where(dsql`${webhookDeliveries.processedAt} is null`)
+  )[0];
+  return row?.at ? new Date(row.at) : null;
 }
 
 function decisionDto(d: typeof decisions.$inferSelect) {
