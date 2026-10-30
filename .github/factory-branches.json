@@ -1,5 +1,5 @@
 {
-  "_comment": "Staging integration policy (FACTORY.md \u00a76a). Off for this repo: the Console is released from `main` (its deploy workflow runs on every merge there), so changes merge straight to `main` and there is no staging promotion to check. The branch guard still flags a commit that lands on `main` without a PR.",
+  "_comment": "Staging integration policy (FACTORY.md §6a). Off for this repo: the Console is released from `main` (its deploy workflow runs on every merge there), so changes merge straight to `main` and there is no staging promotion to check. The branch guard still flags a commit that lands on `main` without a PR.",
   "staging": "staging",
   "required": false,
   "auto_create": true
