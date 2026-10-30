@@ -353,7 +353,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         id: epic.id,
         number: epic.number,
         title: epic.title,
-        bodyHtml: epic.body ? renderMarkdown(epic.body, { repoId: repo.id }) : "",
+        bodyHtml: epic.body ? renderMarkdown(epic.body, { repoId: repo.id, repoFullName: repo.fullName }) : "",
         state: epic.factoryState,
         open: epic.state === "open",
         author: epic.author,
@@ -600,7 +600,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         ref: wantRef,
         sha,
         markdown: content,
-        html: renderMarkdown(content, { repoId: repo.id }),
+        html: renderMarkdown(content, { repoId: repo.id, repoFullName: repo.fullName }),
         otherSha: wantRef === "approved" ? artifact.latestSha : artifact.mergedSha,
       };
     },
@@ -623,6 +623,9 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         .limit(1)
     )[0];
     const repoId = epicRow?.repoId;
+    const epicRepoName = repoId
+      ? (await db.select({ fullName: repos.fullName }).from(repos).where(eq(repos.id, repoId)).limit(1))[0]?.fullName
+      : undefined;
 
     const entries = await db
       .select({ entry: threadEntries, comment: comments })
@@ -641,7 +644,12 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         id: entry.id,
         source: entry.source,
         author: entry.author ?? comment?.author ?? null,
-        bodyHtml: renderMarkdown(comment?.body ?? entry.body ?? "", repoId ? { repoId } : undefined),
+        // A bare #21 in a comment means the repo the comment was written in,
+        // which for a sub-issue in a sibling repo is not the epic's own.
+        bodyHtml: renderMarkdown(comment?.body ?? entry.body ?? "", {
+          ...(repoId ? { repoId } : {}),
+          repoFullName: /github\.com\/([^/]+\/[^/]+)\//.exec(comment?.htmlUrl ?? "")?.[1] ?? epicRepoName,
+        }),
         isAgent: comment?.isAgent ?? false,
         isApproval: comment?.isApproval ?? false,
         htmlUrl: comment?.htmlUrl ?? null,

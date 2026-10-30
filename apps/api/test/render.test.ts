@@ -77,3 +77,31 @@ describe("fetchGitHubMedia", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("issue and PR references", () => {
+  const link = (n: string, repo = "o/r") =>
+    `<a href="https://github.com/${repo}/issues/${n}" target="_blank" rel="noopener noreferrer">`;
+
+  it("links a bare #21 to the repo the text came from, and owner/repo#21 to its own", () => {
+    const html = renderMarkdown("read the blocking comment on #21, and see acme/api#7.", { repoFullName: "o/r" });
+    expect(html).toContain(`${link("21")}#21</a>`);
+    expect(html).toContain(`${link("7", "acme/api")}acme/api#7</a>`);
+  });
+
+  it("leaves code, existing links, entities, hex colours and unknown repos alone", () => {
+    const html = renderMarkdown(
+      "`#21` and [fix #22](https://example.com/x) and it's #fff, #12abc, a&#39;b",
+      { repoFullName: "o/r" },
+    );
+    expect(html).not.toContain("issues/21");
+    expect(html).not.toContain("issues/22");
+    expect(html).not.toContain("issues/12");
+    expect(renderMarkdown("see #21", {})).not.toContain("<a ");
+  });
+
+  it("links references inside lists and bold text", () => {
+    const html = renderMarkdown("**You need to:** read #21\n\n- merged in #22", { repoFullName: "o/r" });
+    expect(html).toContain(`${link("21")}#21</a>`);
+    expect(html).toContain(`${link("22")}#22</a>`);
+  });
+});
