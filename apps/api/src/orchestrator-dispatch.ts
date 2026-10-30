@@ -216,6 +216,55 @@ export async function fetchOrchestratorTranscript(
 }
 
 /**
+ * A person's question about a thread, answered by the orchestrator's Claude
+ * CLI (POST /ask) — the subscription token works there, not on the API. The
+ * session reads the repo and runs for up to five minutes, so the timeout is
+ * long and the error text is the reason to show the asker.
+ */
+export async function askOrchestrator(
+  cfg: ConsoleConfig,
+  body: {
+    owner: string;
+    repo: string;
+    question: string;
+    context: string;
+    branch?: string;
+    anthropicApiKey?: string;
+    claudeCodeOauthToken?: string;
+  },
+): Promise<{ ok: true; answer: string; model: string } | OrchestratorProxyError> {
+  const dest = orchestratorBase(cfg);
+  if ("error" in dest) return dest;
+  let res: Response;
+  try {
+    res = await fetch(`${dest.base}/ask`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        owner: body.owner,
+        repo: body.repo,
+        question: body.question,
+        context: body.context,
+        ...(body.branch ? { branch: body.branch } : {}),
+        ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
+        ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
+      }),
+      signal: AbortSignal.timeout(330_000),
+    });
+  } catch (err) {
+    return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
+  }
+  const json = (await res.json().catch(() => ({}))) as { answer?: string; model?: string; detail?: string };
+  if (res.status === 404 || res.status === 405 || res.status === 501) {
+    return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
+  }
+  if (!res.ok || !json.answer) {
+    return { error: json.detail || `orchestrator returned ${res.status}`, status: res.status === 429 ? 429 : 502 };
+  }
+  return { ok: true, answer: json.answer, model: json.model ?? "" };
+}
+
+/**
  * The orchestrator's GET /usage: the last five hours of Claude use and any
  * usage limit in force. An orchestrator older than that endpoint answers 404,
  * which reads as "nothing to show" rather than an error.

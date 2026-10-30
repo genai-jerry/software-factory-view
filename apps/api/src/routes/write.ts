@@ -10,6 +10,8 @@ import {
   expediteAvailability,
 } from "../expedite.js";
 import { postComment, writeLabel } from "../gh-write.js";
+import { askOrchestrator } from "../orchestrator-dispatch.js";
+import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadEpic } from "./read.js";
 
 /**
@@ -104,6 +106,81 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       return { ok: true, posted: true, commentUrl: comment.html_url };
     },
   );
+
+  /**
+   * Ask the factory a question about this thread. The orchestrator answers
+   * with its Claude CLI (the subscription token cannot call the API) from a
+   * read-only checkout; the question and the answer are saved in the thread as
+   * Console-only entries — nothing is posted to GitHub.
+   */
+  app.post<{ Params: { id: string }; Body: { question?: string } }>("/api/threads/:id/ask", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const question = req.body?.question?.trim() ?? "";
+    if (!question) return reply.code(400).send({ error: "question required" });
+    if (question.length > 2000) return reply.code(400).send({ error: "the question is over 2000 characters" });
+
+    const thread = (
+      await db.select().from(threads).where(and(eq(threads.id, req.params.id), inArray(threads.orgId, ctx.orgIds))).limit(1)
+    )[0];
+    if (!thread) return reply.code(404).send({ error: "thread not found" });
+    const epic = (await db.select().from(issues).where(eq(issues.id, thread.epicIssueId)).limit(1))[0];
+    if (!epic) return reply.code(404).send({ error: "epic gone" });
+
+    // The repo the question is about: a task thread's own task, which for a
+    // cross-repo epic is not the epic's repo (same lookup as posting a reply).
+    let target = epic;
+    const taskMatch = thread.topicRef.match(/^task\/(\d+)$/);
+    if (taskMatch) {
+      const found = await db
+        .select()
+        .from(issues)
+        .where(and(eq(issues.parentIssueId, epic.id), eq(issues.number, Number(taskMatch[1]))));
+      if (found.length === 1) target = found[0]!;
+    }
+    const repo = (await db.select().from(repos).where(eq(repos.id, target.repoId)).limit(1))[0]!;
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+
+    // The conversation so far, oldest first, newest kept when it is long.
+    const rows = await db
+      .select({ entry: threadEntries, comment: comments })
+      .from(threadEntries)
+      .leftJoin(comments, eq(comments.id, threadEntries.commentId))
+      .where(eq(threadEntries.threadId, thread.id))
+      .orderBy(threadEntries.createdAt);
+    const context = rows
+      .map(({ entry, comment }) => {
+        const who = comment?.isAgent ? "[agent]" : `@${entry.author ?? comment?.author ?? "?"}`;
+        return `${who} ${(comment?.body ?? entry.body ?? "").trim()}`;
+      })
+      .join("\n\n---\n\n")
+      .slice(-24_000);
+
+    const secrets = await readRetainedAgentSecrets(deps, thread.orgId);
+    const got = await askOrchestrator(deps.cfg, {
+      owner,
+      repo: name,
+      question,
+      context,
+      branch: `factory/epic-${epic.number}`,
+      anthropicApiKey: secrets.anthropicApiKey,
+      claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+    });
+    if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
+
+    await db.insert(threadEntries).values([
+      { orgId: thread.orgId, threadId: thread.id, source: "ask_question", body: question, author: ctx.login },
+      { orgId: thread.orgId, threadId: thread.id, source: "ask_answer", body: got.answer, author: "factory" },
+    ]);
+    await db.insert(auditLog).values({
+      orgId: thread.orgId,
+      actorUserId: ctx.userId,
+      action: "thread.ask",
+      target: `${repo.fullName}#${target.number}`,
+      payload: { threadId: thread.id, model: got.model },
+    });
+    return { ok: true };
+  });
 
   app.post<{ Params: { id: string }; Body: { status: "open" | "resolved" } }>("/api/threads/:id/status", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);

@@ -1234,6 +1234,15 @@ function ThreadCard({
   const [body, setBody] = useState("");
   const [privateNote, setPrivateNote] = useState(false);
 
+  // Ask the factory: the box's text is the question, the answer lands in this
+  // thread as a Console-only entry. It can take a minute — Claude reads the code.
+  const ask = useMutation({
+    mutationFn: () => api.post(`/api/threads/${threadId}/ask`, { question: body }),
+    onSuccess: () => {
+      setBody("");
+      void qc.invalidateQueries({ queryKey: ["thread", threadId] });
+    },
+  });
   const post = useMutation({
     mutationFn: () => api.post(`/api/threads/${threadId}/entries`, { body, privateNote }),
     onSuccess: () => {
@@ -1284,6 +1293,12 @@ function ThreadCard({
                 {e.isAgent && <span className="badge">agent</span>}
                 {e.isApproval && <span className="badge merge">Approved</span>}
                 {e.source === "console_note" && <span className="badge">private note</span>}
+                {e.source === "ask_question" && <span className="badge">question to the factory</span>}
+                {e.source === "ask_answer" && (
+                  <span className="badge state" title="Answered by Claude from the code and this thread. Only visible in the Console.">
+                    factory answer
+                  </span>
+                )}
                 <span>{new Date(e.createdAt).toLocaleString()}</span>
                 {e.htmlUrl && <GitHubLink href={e.htmlUrl} />}
               </div>
@@ -1293,9 +1308,17 @@ function ThreadCard({
           <div className="thread-composer" style={{ marginTop: "0.6rem" }}>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Reply — posts to GitHub as you, threaded here." />
             {post.isError && <div className="banner error">{(post.error as Error).message}</div>}
+            {ask.isError && <div className="banner error">{(ask.error as Error).message}</div>}
             <div className="row" style={{ marginTop: "0.4rem" }}>
-              <button className="primary" disabled={!body.trim() || post.isPending} onClick={() => post.mutate()}>
+              <button className="primary" disabled={!body.trim() || post.isPending || ask.isPending} onClick={() => post.mutate()}>
                 {post.isPending ? "Posting…" : privateNote ? "Save private note" : "Post to GitHub"}
+              </button>
+              <button
+                disabled={!body.trim() || post.isPending || ask.isPending}
+                onClick={() => ask.mutate()}
+                title="Claude answers from this thread and the code. The answer is saved here; nothing is posted to GitHub."
+              >
+                {ask.isPending ? "Asking… this can take a minute" : "Ask the factory"}
               </button>
               <label className="muted">
                 <input type="checkbox" style={{ width: "auto", marginRight: 5 }} checked={privateNote} onChange={(e) => setPrivateNote(e.target.checked)} />

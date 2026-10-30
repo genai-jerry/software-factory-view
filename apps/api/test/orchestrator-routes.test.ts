@@ -173,3 +173,72 @@ describe("GET /api/orchestrator/usage", () => {
     }
   });
 });
+
+describe("POST /api/threads/:id/ask", () => {
+  async function seedThread() {
+    const { issues, repos, threads } = await import("@console/db");
+    const estate = (await deps.dbh.db.select().from(estates))[0]!;
+    const repo = (
+      await deps.dbh.db
+        .insert(repos)
+        .values({ orgId: estate.orgId, estateId: estate.id, ghNodeId: "r1", fullName: "acme/api", defaultBranch: "main" } as never)
+        .returning()
+    )[0]!;
+    const epic = (
+      await deps.dbh.db
+        .insert(issues)
+        .values({ orgId: estate.orgId, repoId: repo.id, number: 34, kind: "epic", title: "Epic", state: "open", labels: [], ghNodeId: "n1", ghId: 1, ghCreatedAt: new Date(), ghUpdatedAt: new Date() } as never)
+        .returning()
+    )[0]!;
+    const thread = (
+      await deps.dbh.db
+        .insert(threads)
+        .values({ orgId: estate.orgId, epicIssueId: epic.id, topicKind: "epic", topicRef: "epic", title: "Epic" } as never)
+        .returning()
+    )[0]!;
+    return thread;
+  }
+
+  it("requires a session and a question", async () => {
+    const t = await seedThread();
+    expect((await app.inject({ method: "POST", url: `/api/threads/${t.id}/ask`, payload: { question: "why?" } })).statusCode).toBe(401);
+    const res = await app.inject({
+      method: "POST", url: `/api/threads/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: " " },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("asks the orchestrator and saves the question and answer in the thread", async () => {
+    const t = await seedThread();
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(init.body as string) });
+      return new Response(JSON.stringify({ answer: "It stopped at the rework cap.", model: "claude-sonnet-5-5" }), { status: 200 });
+    });
+    const res = await app.inject({
+      method: "POST", url: `/api/threads/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "Why is it blocked?" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
+    expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "api", question: "Why is it blocked?", branch: "factory/epic-34" });
+    const { threadEntries } = await import("@console/db");
+    const entries = await deps.dbh.db.select().from(threadEntries);
+    expect(entries.map((e) => [e.source, e.author, e.body])).toEqual([
+      ["ask_question", "alice", "Why is it blocked?"],
+      ["ask_answer", "factory", "It stopped at the rework cap."],
+    ]);
+  });
+
+  it("shows the orchestrator's reason and saves nothing when it cannot answer", async () => {
+    const t = await seedThread();
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ detail: "Claude usage limit reached: resets 2:50pm (UTC)." }), { status: 429 }));
+    const res = await app.inject({
+      method: "POST", url: `/api/threads/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "why?" },
+    });
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error).toContain("usage limit");
+    const { threadEntries } = await import("@console/db");
+    expect(await deps.dbh.db.select().from(threadEntries)).toEqual([]);
+  });
+});
