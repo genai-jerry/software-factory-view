@@ -257,6 +257,10 @@ textarea { min-height: 5rem; resize: vertical; }
    floor on the light theme, and this chip is how a tester finds their work. */
 .badge.test-run { border-color: var(--halt); color: var(--halt); }
 .badge.state { border-color: var(--accent); color: var(--accent); }
+/* The header's Claude usage badge. The limit state uses the warn pair rather
+   than bare amber, which is below the contrast floor on the light theme. */
+.badge.usage { font-variant-numeric: tabular-nums; }
+.badge.usage.limit { background: var(--warn-bg); border-color: var(--amber); color: var(--warn-fg); }
 /* The expedite marker and the automatic-next cues it produces. Its own colour
    (the halt orange, which nothing else on a row uses) because it is neither a
    state nor a call to action: it says who is driving. */

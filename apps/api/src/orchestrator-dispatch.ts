@@ -215,6 +215,20 @@ export async function fetchOrchestratorTranscript(
   return { ok: true, transcript: got.text ?? "" };
 }
 
+/**
+ * The orchestrator's GET /usage: the last five hours of Claude use and any
+ * usage limit in force. An orchestrator older than that endpoint answers 404,
+ * which reads as "nothing to show" rather than an error.
+ */
+export async function fetchOrchestratorUsage(
+  cfg: ConsoleConfig,
+): Promise<{ ok: true; usage: Record<string, unknown> | null } | OrchestratorProxyError> {
+  const got = await orchestratorGet(cfg, "/usage");
+  if ("error" in got) return got.status === 404 ? { ok: true, usage: null } : got;
+  const body = got.body;
+  return { ok: true, usage: body && typeof body === "object" ? (body as Record<string, unknown>) : null };
+}
+
 export async function fetchOrchestratorRuns(
   cfg: ConsoleConfig,
   query: { repo: string; issue: number },

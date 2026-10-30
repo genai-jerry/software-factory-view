@@ -19,6 +19,7 @@ import {
   fetchOrchestratorRun,
   fetchOrchestratorRuns,
   fetchOrchestratorTranscript,
+  fetchOrchestratorUsage,
 } from "../orchestrator-dispatch.js";
 import { loadGateApprovers, nextStepFor } from "../start-gate.js";
 import { loadEpic, loadIssue } from "./read.js";
@@ -40,6 +41,16 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     const got = await fetchOrchestratorRuns(deps.cfg, { repo, issue });
     if ("error" in got) return reply.code(got.status).send({ error: got.error });
     return { runs: got.runs };
+  });
+
+  // The header badge: Claude use over the last five hours, and any usage
+  // limit in force. `usage: null` when the orchestrator cannot say.
+  app.get("/api/orchestrator/usage", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const got = await fetchOrchestratorUsage(deps.cfg);
+    if ("error" in got) return { usage: null };
+    return { usage: got.usage };
   });
 
   app.get<{ Params: { runId: string } }>("/api/orchestrator/runs/:runId", async (req, reply) => {
