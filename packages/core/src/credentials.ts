@@ -207,6 +207,9 @@ export function buildAppManifest(publicOrigin: string, name: string): Record<str
       contents: "write",
       actions: "read",
       checks: "read",
+      // The orchestrator posts the `factory/tests` commit status on task PRs
+      // when a repo's CI is the factory (FACTORY.md §6c).
+      statuses: "write",
       workflows: "read",
       secrets: "write",
       members: "read",

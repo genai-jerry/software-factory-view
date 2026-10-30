@@ -220,6 +220,8 @@ describe("App manifest", () => {
       contents: "write",
       actions: "read",
       checks: "read",
+      // The orchestrator posts `factory/tests` where a repo's CI is the factory.
+      statuses: "write",
       workflows: "read",
       secrets: "write",
       members: "read",
