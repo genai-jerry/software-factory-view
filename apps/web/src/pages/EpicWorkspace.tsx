@@ -169,7 +169,10 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           {data.blockedSubIssues.map((b) => (
             <div key={b.id}>
               ⛔ Task #{b.number} is blocked: {b.title} —{" "}
-              <Link to={`/epics/${data.epic.id}?tab=threads`}>answer it from a thread</Link> or{" "}
+              <Link to={`/epics/${data.epic.id}?tab=threads&thread=${encodeURIComponent(`task/${b.number}`)}`}>
+                answer it from a thread
+              </Link>{" "}
+              or{" "}
               <a href={b.htmlUrl} target="_blank" rel="noreferrer">
                 on GitHub
               </a>
@@ -236,7 +239,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           {tab === "tree" && <DependencyTreeTab epicId={data.epic.id} onOpenGate={() => setTab("gate")} />}
           {tab === "tasks" && <TasksTab data={data} onOpenTests={() => setTab("tests")} />}
           {tab === "tests" && <TestsTab data={data} />}
-          {tab === "threads" && <ThreadsTab data={data} />}
+          {tab === "threads" && <ThreadsTab data={data} thread={params.get("thread")} />}
           {tab === "decisions" && <DecisionsTab epicId={data.epic.id} />}
         </div>
         <div className="context-rail">
@@ -1158,8 +1161,16 @@ export function TasksTab({ data, onOpenTests }: { data: EpicWorkspace; onOpenTes
   );
 }
 
-export function ThreadsTab({ data }: { data: EpicWorkspace }) {
-  const [openThread, setOpenThread] = useState<string | null>(null);
+export function ThreadsTab({ data, thread: wanted }: { data: EpicWorkspace; thread?: string | null }) {
+  // `?thread=task/11` opens that thread and scrolls to it — what "answer it
+  // from a thread" links to, rather than a list the reader has to search.
+  const wantedId = wanted ? data.threads.find((t) => t.topicRef === wanted)?.id ?? null : null;
+  const [openThread, setOpenThread] = useState<string | null>(wantedId);
+  useEffect(() => {
+    if (!wantedId) return;
+    setOpenThread(wantedId);
+    document.getElementById(`thread-${wantedId}`)?.scrollIntoView?.({ block: "start" });
+  }, [wantedId]);
   const nonEmpty = data.threads.filter((t) => Number(t.entryCount) > 0 || t.topicKind === "free");
   const empty = data.threads.filter((t) => Number(t.entryCount) === 0 && t.topicKind !== "free");
   /**
@@ -1236,7 +1247,7 @@ function ThreadCard({
   });
 
   return (
-    <div className="card">
+    <div className="card" id={`thread-${threadId}`}>
       <div className="spread" style={{ cursor: "pointer" }} onClick={onToggle}>
         <h3 style={{ margin: 0 }}>
           {summary.status === "resolved" ? "✓ " : ""}

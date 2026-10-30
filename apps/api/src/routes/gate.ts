@@ -116,7 +116,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
             .where(and(eq(artifactCache.repoId, a.repoId), eq(artifactCache.path, a.path), eq(artifactCache.commitSha, sha)))
             .limit(1)
         )[0];
-        if (cached) html = renderMarkdown(decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY), { repoId: repo.id });
+        if (cached) html = renderMarkdown(decryptSecret(cached.encryptedContent, deps.cfg.CONSOLE_MASTER_KEY), { repoId: repo.id, repoFullName: repo.fullName });
       }
       rendered.push({ path: a.path, kind: a.kind, sha, mergedSha: a.mergedSha, html });
     }
@@ -429,7 +429,7 @@ async function loadAssemblyEvidence(
       ? {
           author: report.author,
           at: report.at,
-          html: renderMarkdown(report.body, { repoId: repo.id }),
+          html: renderMarkdown(report.body, { repoId: repo.id, repoFullName: repo.fullName }),
           htmlUrl: report.htmlUrl,
         }
       : null,
