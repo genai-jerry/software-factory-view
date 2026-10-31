@@ -114,9 +114,24 @@ export function designParts(markdown: string): {
   decisions: Array<{ id: string; title: string; why: string[] }>;
   tasks: Array<{ n: number; title: string; issue: number | null; after: number[] }>;
 } {
-  const all = sections(markdown).filter((s) => s.level === 2);
+  const everything = sections(markdown);
   const decisions: Array<{ id: string; title: string; why: string[] }> = [];
   const tasks: Array<{ n: number; title: string; issue: number | null; after: number[] }> = [];
+
+  // The shape the Architect is asked for: `## Decisions` holding `### D1 — …`
+  // subsections, each with a `Why:` line. When it is there, it is the list.
+  const decisionsAt = everything.findIndex((s) => s.level === 2 && /^decisions\b/i.test(s.title));
+  if (decisionsAt >= 0) {
+    for (let i = decisionsAt + 1; i < everything.length && everything[i]!.level > 2; i++) {
+      const s = everything[i]!;
+      const m = /^(D\d+)\s*[—–:-]\s*(.*)$/.exec(s.title);
+      if (!m) continue;
+      const why = paragraphs(s, 2).map((p) => p.replace(/^why:\s*/i, ""));
+      decisions.push({ id: m[1]!, title: m[2]!.trim(), why });
+    }
+  }
+
+  const all = everything.filter((s) => s.level === 2);
   for (const s of all) {
     const t = /^task\s+(\d+)\s*[—–:-]\s*(.*?)(?:\s*\(#(\d+)\))?\s*$/i.exec(s.title);
     if (t) {
@@ -126,6 +141,8 @@ export function designParts(markdown: string): {
       tasks.push({ n: Number(t[1]), title: t[2]!.trim(), issue: t[3] ? Number(t[3]) : null, after });
       continue;
     }
+    if (decisionsAt >= 0) continue;
+    // An older design with no `## Decisions`: its other sections stand in.
     if (/^(what this repo builds|rollout|shared contract|what the system test plan)/i.test(s.title)) continue;
     decisions.push({ id: `D${decisions.length + 1}`, title: s.title, why: paragraphs(s, 2) });
   }

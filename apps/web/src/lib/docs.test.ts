@@ -87,6 +87,34 @@ describe("scenarios", () => {
 });
 
 describe("designParts", () => {
+  it("reads numbered decisions when the design names them", () => {
+    const parts = designParts(`# Design
+
+## Decisions
+
+### D1 — The counts are computed in the API once a minute and cached
+
+Why: the page stays fast for customers with thousands of leads.
+
+### D2 — A day is the customer's local day, not UTC
+
+Why: a 00:30 appointment must not slip to the day before.
+
+## Task 1 — compute counts (#62)
+
+Body.
+
+## Reuse
+
+Not a decision once D-numbers exist.
+`);
+    expect(parts.decisions).toEqual([
+      { id: "D1", title: "The counts are computed in the API once a minute and cached", why: ["the page stays fast for customers with thousands of leads."] },
+      { id: "D2", title: "A day is the customer's local day, not UTC", why: ["a 00:30 appointment must not slip to the day before."] },
+    ]);
+    expect(parts.tasks).toHaveLength(1);
+  });
+
   it("separates decisions from the task order", () => {
     const parts = designParts(DESIGN);
     expect(parts.decisions.map((d) => [d.id, d.title])).toEqual([
