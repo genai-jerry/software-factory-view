@@ -48,6 +48,7 @@ import { EXPEDITE_ACTIONS, expediteAvailability, loadLastExpediteFlip } from "..
 import { loadApproversForGate, loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
+import { fetchActiveRuns } from "../orchestrator-dispatch.js";
 import { renderMarkdown } from "../render.js";
 import { countThreadEntries } from "../threads.js";
 
@@ -332,6 +333,17 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const hasPlan = Boolean(plan) || taskRows.some((t) => t.kind === "test");
 
     const blockedSubs = codeAndCaseRows.filter((t) => t.factoryState === "factory:blocked");
+    // Where each task lives (a cross-repo epic's tasks are in sibling repos),
+    // and which of them has a run live: the run is what "running" links to.
+    const taskRepoIds = [...new Set(codeAndCaseRows.map((t) => t.repoId))];
+    const taskRepoNames = new Map(
+      (taskRepoIds.length
+        ? await db.select({ id: repos.id, fullName: repos.fullName }).from(repos).where(inArray(repos.id, taskRepoIds))
+        : []
+      ).map((r) => [r.id, r.fullName]),
+    );
+    const anyRunning = codeAndCaseRows.some((t) => t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL));
+    const activeRuns = anyRunning ? await fetchActiveRuns(deps.cfg) : new Map();
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
@@ -410,7 +422,18 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           // on it), and which role, read from the stage it is in — what the
           // epic's header says so nobody has to open each task to find out.
           running: t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL),
-          runningRole: t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL) ? runningRoleOf(t.factoryState) : null,
+          ...(() => {
+            const live = t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL);
+            const repoName = taskRepoNames.get(t.repoId) ?? repo.fullName;
+            const run = live ? activeRuns.get(`${repoName}#${t.number}`) : undefined;
+            return {
+              repo: repoName,
+              // The orchestrator's own word for the role when it is running,
+              // else the one the stage implies.
+              runningRole: live ? (agentRoleLabel(run?.role) ?? runningRoleOf(t.factoryState)) : null,
+              runId: run?.id ?? null,
+            };
+          })(),
         };
       }),
       rollup,
@@ -1010,6 +1033,25 @@ const RUNNING_ROLE: Record<string, string> = {
 };
 export function runningRoleOf(state: string | null): string {
   return (state && RUNNING_ROLE[state]) || "Factory";
+}
+
+const ORCHESTRATOR_ROLE_LABEL: Record<string, string> = {
+  intake: "Intake Analyst",
+  planner: "Planner",
+  testplanner: "Test Planner",
+  architect: "Architect",
+  dispatch: "Dispatcher",
+  implementer: "Implementer",
+  reviewer: "Reviewer",
+  qa: "QA",
+  release: "Release Manager",
+  scrum: "Scrum Master",
+  fasttrack: "Fast-Track",
+  profiler: "Profiler",
+};
+/** The role the orchestrator reports for a live run, as a person reads it; null if it names none we know. */
+export function agentRoleLabel(role: string | undefined): string | null {
+  return (role && ORCHESTRATOR_ROLE_LABEL[role]) || null;
 }
 
 /** A nightly walk (03:17 UTC) that has not happened in this long was missed. */

@@ -30,15 +30,18 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("RunningCards", () => {
   it("shows one small card per live run, each linking to its thread or epic", async () => {
-    show([item(), item({ issueId: "i2", number: 34, kind: "epic", role: "Dispatcher", title: "Booker status", repo: "acme/api" })]);
+    show([item({ runId: "run-1" }), item({ issueId: "i2", number: 34, kind: "epic", role: "Dispatcher", title: "Booker status", repo: "acme/api" })]);
     const region = await screen.findByLabelText("Running now");
     expect(region).toHaveTextContent("Running now (2)");
     expect(region).toHaveTextContent("Implementer running");
     expect(region).toHaveTextContent("Dispatcher running");
     expect(region).toHaveTextContent("epic #34"); // the task names its epic; the epic card does not repeat it
+    // A card opens the run's log; its thread is one small link beside it.
+    // With no run known, the card opens the thread (or the epic) itself.
     const links = screen.getAllByRole("link");
-    expect(links[0]!.getAttribute("href")).toBe("/epics/e1?tab=threads&thread=task%2F11");
-    expect(links[1]!.getAttribute("href")).toBe("/epics/e1");
+    expect(links[0]!.getAttribute("href")).toBe("/runs/run-1");
+    expect(links[1]!.getAttribute("href")).toBe("/epics/e1?tab=threads&thread=task%2F11");
+    expect(links[2]!.getAttribute("href")).toBe("/epics/e1");
   });
 
   it("renders nothing when no run is live", async () => {
@@ -47,7 +50,8 @@ describe("RunningCards", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("links a task to its own thread", () => {
+  it("links to the run log when it is known, else to the task's thread", () => {
     expect(runningLink(item({ number: 62 }))).toBe("/epics/e1?tab=threads&thread=task%2F62");
+    expect(runningLink(item({ number: 62, runId: "r9" }))).toBe("/runs/r9");
   });
 });

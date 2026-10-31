@@ -14,15 +14,18 @@ function show(tasks: unknown[]) {
 }
 
 describe("RunningNow", () => {
-  it("names each live run and links it to its task thread", () => {
+  it("names each live run and links it to its run log, with the thread beside it", () => {
     show([
-      task(11, { running: true, runningRole: "Implementer" }),
+      task(11, { running: true, runningRole: "Implementer", runId: "run-abc" }),
       task(62, { running: true, runningRole: "Reviewer" }),
       task(64),
     ]);
     const banner = screen.getByRole("status");
-    expect(banner).toHaveTextContent("Running now — Implementer on #11, Reviewer on #62.");
-    expect(screen.getByRole("link", { name: "#11" }).getAttribute("href")).toBe("/epics/e1?tab=threads&thread=task%2F11");
+    expect(banner).toHaveTextContent("Running now — Implementer on #11 (thread), Reviewer on #62.");
+    expect(screen.getByRole("link", { name: "#11" }).getAttribute("href")).toBe("/runs/run-abc");
+    expect(screen.getAllByRole("link", { name: "thread" })[0]!.getAttribute("href")).toBe("/epics/e1?tab=threads&thread=task%2F11");
+    // No run known: the number opens the thread, as before.
+    expect(screen.getByRole("link", { name: "#62" }).getAttribute("href")).toBe("/epics/e1?tab=threads&thread=task%2F62");
   });
 
   it("shows nothing when no run is live, or the task is closed", () => {

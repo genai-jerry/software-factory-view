@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 
@@ -76,10 +76,12 @@ beforeEach(async () => {
   await mk(api.id, { number: 43, kind: "test", title: "test(34): ST-1 case", factoryState: "factory:manual-test", labels: [RUN], parentIssueId: epic.id });
   id.webTask = (await mk(web.id, { number: 7, title: "task(34): The panel", factoryState: "factory:ready", labels: [RUN], parentIssueId: epic.id })).id;
   id.apiRepo = api.id;
+  id.webRepo = web.id;
   app = await buildApp(deps);
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await app.close();
 });
 
@@ -105,10 +107,34 @@ describe("GET /api/running", () => {
     expect(byNumber["acme/web#7"]).toMatchObject({ role: "Implementer", epicId: id.epic, epicNumber: 34 });
   });
 
-  it("follows the repo filter", async () => {
-    const only = (await get(`?repo=${id.apiRepo}`)).json().running as Array<{ repo: string }>;
-    expect(only.length).toBe(2);
-    expect(only.every((i) => i.repo === "acme/api")).toBe(true);
+  it("follows the repo filter, counting a task in a sibling repo with its epic", async () => {
+    // Focused on acme/api, the epic's task in acme/web still shows: the epic
+    // is waiting on it. Focused on acme/web alone, that task is its own repo's.
+    const apiFocus = (await get(`?repo=${id.apiRepo}`)).json().running as Array<{ repo: string; number: number }>;
+    expect(apiFocus.map((i) => `${i.repo}#${i.number}`).sort()).toEqual(["acme/api#34", "acme/api#40", "acme/web#7"]);
+    const webFocus = (await get(`?repo=${id.webRepo}`)).json().running as Array<{ repo: string }>;
+    expect(webFocus.map((i) => i.repo)).toEqual(["acme/web"]);
     expect((await get("?repo=00000000-0000-0000-0000-000000000000")).json()).toEqual({ running: [] });
+  });
+
+  it("names the live run and the role the orchestrator reports", async () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async (url: string) => {
+      expect(url).toBe("http://127.0.0.1:8080/runs?active=true");
+      return new Response(
+        JSON.stringify([
+          { id: "old", repo: "acme/web", issue: 7, role: "implementer", started_at: "2026-10-30 10:00:00" },
+          { id: "new", repo: "acme/web", issue: 7, role: "reviewer", started_at: "2026-10-30 11:00:00" },
+          { id: "r40", repo: "acme/api", issue: 40, role: "qa", started_at: "2026-10-30 11:30:00" },
+        ]),
+        { status: 200 },
+      );
+    });
+    const items = (await get()).json().running as Array<{ repo: string; number: number; role: string; runId: string | null }>;
+    const by = Object.fromEntries(items.map((i) => [`${i.repo}#${i.number}`, i]));
+    expect(by["acme/web#7"]).toMatchObject({ runId: "new", role: "Reviewer" }); // the newest run, in the orchestrator's word
+    expect(by["acme/api#40"]).toMatchObject({ runId: "r40", role: "QA" });
+    expect(by["acme/api#34"]).toMatchObject({ runId: null, role: "Dispatcher" }); // no run listed: the stage's guess
   });
 });
