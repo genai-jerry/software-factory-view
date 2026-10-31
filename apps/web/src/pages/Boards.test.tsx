@@ -110,6 +110,19 @@ describe("ReleaseBoard at production", () => {
     expect(api.post).toHaveBeenCalledTimes(2);
   });
 
+  it("warns before shipping when cases have not been run", async () => {
+    const cases = [
+      task({ id: "c1", number: 50, title: "test(40): ST-1 Preview shows", kind: "test", caseId: "ST-1", state: "factory:manual-test" }),
+      task({ id: "c2", number: 51, title: "test(40): ST-2 No preview for a bare link", kind: "test", caseId: "ST-2", state: "factory:test-skipped", open: false }),
+      task({ id: "c3", number: 52, title: "test(40): ST-3 Preview on a long link", kind: "test", caseId: "ST-3", state: "factory:test-passed", open: false }),
+    ];
+    renderIn(<ReleaseBoard data={epic({ state: "factory:in-staging" }, cases)} />);
+    await screen.findByRole("heading", { name: "Your decision" });
+    expect(screen.getByText("1 test case has not been run. Shipping now ships untested.")).toBeInTheDocument();
+    // Skipped is said apart from passed, never folded into it.
+    expect(screen.getByText("3 tasks, 1 of 3 tests passed, 1 skipped")).toBeInTheDocument();
+  });
+
   it("offers Release to staging at GS", async () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path.endsWith("/gate")) return { ...gate, gate: "staging", state: "factory:epic-ready", releasePrs: [] };

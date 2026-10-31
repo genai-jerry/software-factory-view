@@ -311,7 +311,8 @@ export function PlanTests({
 export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
   if (cases.length === 0) return null;
   const runnable = cases.filter((c) => c.state === "factory:manual-test");
-  const passed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
+  const skipped = cases.filter((c) => c.state === "factory:test-skipped");
+  const passed = cases.filter((c) => c.state !== "factory:test-skipped" && (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")));
   const failed = cases.filter((c) => c.state === "factory:test-failed");
   const pending = cases.filter(
     (c) => c.open && c.state !== "factory:manual-test" && c.state !== "factory:test-failed" && c.state !== "factory:test-passed",
@@ -319,7 +320,7 @@ export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
   return (
     <div>
       <h4 className="phase-head">
-        System tests ({passed.length}/{cases.length} passed)
+        System tests ({passed.length}/{cases.length} passed{skipped.length > 0 ? `, ${skipped.length} skipped` : ""})
       </h4>
       {runnable.length > 0 && (
         <div className="banner info">
@@ -356,11 +357,13 @@ export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
                   >
                     {c.state === "factory:manual-test"
                       ? "Ready to run"
-                      : c.state === "factory:test-passed" || !c.open
-                        ? "Passed"
-                        : c.state === "factory:test-failed"
-                          ? "Failed"
-                          : "Waiting"}
+                      : c.state === "factory:test-skipped"
+                        ? "Skipped"
+                        : c.state === "factory:test-passed" || !c.open
+                          ? "Passed"
+                          : c.state === "factory:test-failed"
+                            ? "Failed"
+                            : "Waiting"}
                   </span>
                   {c.blockedBy.filter((d) => d.open).length > 0 && (
                     <span title={c.blockedBy.filter((d) => d.open).map((d) => `#${d.number} ${d.title}`).join("\n")}>

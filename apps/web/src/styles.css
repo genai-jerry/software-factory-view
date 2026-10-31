@@ -216,6 +216,7 @@ textarea { min-height: 5rem; resize: vertical; }
 .banner.stale { background: var(--warn-bg); border: 1px solid var(--amber); color: var(--warn-fg); }
 .banner.error { background: var(--error-bg); border: 1px solid var(--red); color: var(--error-fg); }
 .banner.info { background: var(--info-bg); border: 1px solid var(--accent); color: var(--info-fg); }
+.banner.warn { background: var(--warn-bg); border: 1px solid var(--amber); color: var(--warn-fg); }
 .banner.success { background: var(--ok-bg); border: 1px solid var(--green); color: var(--ok-fg); }
 
 .card {
@@ -1263,6 +1264,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .tc-steps ol { margin: 0.3rem 0; padding-left: 1.3rem; }
 .tc-steps p { margin: 0.3rem 0; }
 .tc-passed { padding-top: 0.6rem; }
+.tc-skip { padding-top: 0.6rem; border-top: 1px solid var(--border); margin-top: 0.6rem; }
 .tc-env { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.3rem 1rem; margin: 0.5rem 0 0; }
 .tc-env > div { display: contents; }
 .tc-env dt { font-weight: 600; }

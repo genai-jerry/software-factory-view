@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
@@ -130,7 +130,9 @@ function StageRail({ current, state }: { current: Stage | null; state: string | 
 
 type CaseRow = EpicWorkspace["tasks"][number];
 
-function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" {
+function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" | "skipped" {
+  // Skipped is done, not passed: it never counts as proof.
+  if (c.state === "factory:test-skipped") return "skipped";
   if (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")) return "passed";
   if (c.state === "factory:test-failed") return "failed";
   if (c.state === "factory:manual-test") return "runnable";
@@ -149,20 +151,25 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
   const plan: TestPlan | null = planDoc.data ? parseTestPlan(planDoc.data.markdown) : null;
   const [showPassed, setShowPassed] = useState(false);
 
-  const byVerdict = { runnable: [] as CaseRow[], failed: [] as CaseRow[], pending: [] as CaseRow[], passed: [] as CaseRow[] };
+  const byVerdict = { runnable: [] as CaseRow[], failed: [] as CaseRow[], pending: [] as CaseRow[], passed: [] as CaseRow[], skipped: [] as CaseRow[] };
   for (const c of cases) byVerdict[verdictOf(c)].push(c);
   const total = cases.length;
   const passed = byVerdict.passed.length;
+  const skipped = byVerdict.skipped.length;
+  const done = passed + skipped;
   const toRun = byVerdict.runnable.length;
   const failed = byVerdict.failed.length;
+  const openCases = toRun + failed + byVerdict.pending.length;
   const retests = data.bugs.rows.filter((b) => b.open && b.state === "factory:bug-retest");
+  const skippable =
+    openCases > 0 && ["factory:design-approved", "factory:epic-ready", "factory:in-staging"].includes(data.epic.state ?? "");
 
   return (
     <>
       <section className="card" aria-labelledby="cases">
         <div className="spread">
           <h2 id="cases">
-            Test cases <span className="muted">{total > 0 ? `${passed} of ${total} passed` : ""}</span>
+            Test cases <span className="muted">{total > 0 ? `${passed} of ${total} passed${skipped > 0 ? ` · ${skipped} skipped` : ""}` : ""}</span>
           </h2>
           <span className="muted">
             {[failed > 0 && `${failed} failed`, toRun > 0 && `${toRun} to run`, byVerdict.pending.length > 0 && `${byVerdict.pending.length} not ready`]
@@ -180,14 +187,15 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
         {byVerdict.pending.map((c) => (
           <TestCase key={c.id} c={c} plan={plan} />
         ))}
-        {passed > 0 && (
+        {done > 0 && (
           <div className="tc-passed">
             <button type="button" className="link" onClick={() => setShowPassed((v) => !v)}>
-              {showPassed ? "Hide" : "Show"} the {passed} passed test{passed === 1 ? "" : "s"}
+              {showPassed ? "Hide" : "Show"} the {done} {skipped > 0 && passed > 0 ? "passed and skipped" : skipped > 0 ? "skipped" : "passed"} test{done === 1 ? "" : "s"}
             </button>
-            {showPassed && byVerdict.passed.map((c) => <TestCase key={c.id} c={c} plan={plan} />)}
+            {showPassed && [...byVerdict.passed, ...byVerdict.skipped].map((c) => <TestCase key={c.id} c={c} plan={plan} />)}
           </div>
         )}
+        {skippable && <SkipTests epicId={data.epic.id} count={openCases} />}
       </section>
 
       {retests.length > 0 && (
@@ -231,7 +239,7 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
       </section>
 
       <section className="card">
-        <h2>{toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : "All tests passed"}</h2>
+        <h2>{toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : skipped > 0 ? "Tests done" : "All tests passed"}</h2>
         <p className="need">
           {toRun > 0
             ? `A tester needs to: run ${toRun === 1 ? "the remaining case" : `the ${toRun} remaining cases`}.`
@@ -255,6 +263,48 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
   );
 }
 
+/**
+ * Skip the tests: close every open case as skipped so the release goes ahead
+ * without them. The factory takes it as the comment `Skip tests` on the epic
+ * (authorised against the staging approvers); bugs already raised stay open.
+ */
+function SkipTests({ epicId, count }: { epicId: string; count: number }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const skip = useMutation({
+    mutationFn: () => api.post(`/api/issues/${epicId}/reply`, { body: "Skip tests" }),
+    onSuccess: () => {
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: ["epic", epicId] });
+    },
+  });
+  const failure = skip.error instanceof ApiError ? skip.error.message : skip.isError ? "That did not go through. Try again." : null;
+  return (
+    <div className="tc-skip">
+      {skip.isSuccess ? (
+        <p className="muted">Skipping. The factory is closing the open cases as skipped.</p>
+      ) : !confirming ? (
+        <button type="button" className="link" onClick={() => setConfirming(true)}>
+          Skip the tests
+        </button>
+      ) : (
+        <div className="decision-actions">
+          <span className="muted">
+            Close {count === 1 ? "the open case" : `every open case (${count})`} as skipped. Bugs already raised stay open. The release goes ahead without these tests.
+          </span>
+          <button type="button" onClick={() => skip.mutate()} disabled={skip.isPending}>
+            {skip.isPending ? "Posting…" : "Skip them"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(false)} disabled={skip.isPending}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {failure && <p className="decision-failure">{failure}</p>}
+    </div>
+  );
+}
+
 function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
   const verdict = verdictOf(c);
   const id = caseIdOf(c.title, c.caseId);
@@ -268,7 +318,7 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
         <span className="tc-id">{id ?? `#${c.number}`}</span>
         <span className="tc-title">{title}</span>
         <span className={`stage-chip ${verdict === "runnable" ? "decide" : verdict === "failed" ? "halt" : verdict === "passed" ? "done" : ""}`}>
-          {verdict === "runnable" ? "Run it" : verdict === "failed" ? "Failed · fix being built" : verdict === "passed" ? "Passed" : "Not ready"}
+          {verdict === "runnable" ? "Run it" : verdict === "failed" ? "Failed · fix being built" : verdict === "passed" ? "Passed" : verdict === "skipped" ? "Skipped · not run" : "Not ready"}
         </span>
       </div>
       {verdict === "pending" && after.length > 0 && (

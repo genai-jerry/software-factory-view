@@ -73,7 +73,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   // System test cases (FACTORY.md §4b) live on the Tests tab; the counts are
   // needed here for its label and for the banner that points at it.
   const cases = data.tasks.filter((t) => t.kind === "test");
-  const casesPassed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
+  const casesPassed = cases.filter((c) => c.state !== "factory:test-skipped" && (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")));
   const runnableCases = cases.filter((c) => c.state === "factory:manual-test");
   // Bugs (FACTORY.md §4c) live on the same tab and are counted for its label:
   // open means raised and not yet confirmed repaired.
@@ -1034,7 +1034,7 @@ export function TasksTab({ data, onOpenTests }: { data: EpicWorkspace; onOpenTes
   // a human's verdict. They are listed on the Tests tab and kept out of every
   // column here — a case in "Waiting" would read as work the factory owes.
   const cases = data.tasks.filter((t) => t.kind === "test");
-  const casesPassed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"));
+  const casesPassed = cases.filter((c) => c.state !== "factory:test-skipped" && (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")));
   // Reports (§4c) are not on this board either — the API keeps them out of
   // `tasks` — but an epic whose tasks are all done is not finished while one
   // is open, and this list is where that reading would otherwise be taken.
