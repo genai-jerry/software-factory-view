@@ -20,7 +20,7 @@ export function OrchestratorRunPage() {
   const past = recent.data?.runs.find((r) => r.runId === runId);
   const title = live?.title ?? past?.title ?? null;
   const epicId = live?.epicId ?? past?.epicId ?? null;
-  const epicTitle = live?.epicTitle ?? null;
+  const epicTitle = live?.epicTitle ?? (past?.epicNumber ? `#${past.epicNumber}` : null);
   const story = run.data ? storyOf(run.data) : null;
 
   return (
@@ -30,7 +30,7 @@ export function OrchestratorRunPage() {
         {epicId && (
           <>
             {" › "}
-            <Link to={`/work/${epicId}`}>{epicTitle ?? "the item"}</Link>
+            <Link to={`/work/${epicId}`}>{epicTitle ?? "its item"}</Link>
           </>
         )}
       </p>

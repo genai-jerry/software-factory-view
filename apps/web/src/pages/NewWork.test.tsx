@@ -47,7 +47,7 @@ beforeEach(() => {
         ],
       };
     if (path.startsWith("/api/running")) return { running: [] };
-    if (path.startsWith("/api/orchestrator/usage")) return { runs: 3, window_hours: 5, active_runs: 0, limit: { reached: false, resets_at: null } };
+    if (path.startsWith("/api/orchestrator/usage")) return { usage: { runs: 3, window_hours: 5, active_runs: 0, limit: { reached: false, resets_at: null } } };
     return {};
   });
 });
