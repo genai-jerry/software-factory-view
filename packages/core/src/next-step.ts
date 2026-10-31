@@ -362,6 +362,24 @@ function buildingEntry(tasks: NextStepProgress | undefined, expedited: boolean |
       waitsOnPerson: true,
     };
   }
+  // Every task is built and merged onto the epic branch (they stay open until
+  // the epic is promoted, so "done" cannot see them). What the epic waits on
+  // now is people: its system test cases, which only a tester can pass.
+  const assembled = tasks.done + tasks.shipping === tasks.total;
+  const testsOpen = tasks.tests ? tasks.tests.total - tasks.tests.passed : 0;
+  if (assembled && testsOpen > 0) {
+    return {
+      who: "you — the testers",
+      how: `All ${tasks.total} tasks are assembled on the epic branch. ${testsOpen} system test${testsOpen === 1 ? "" : "s"} still need a verdict before the epic can go to staging (GS). Record each one in the Tests tab.`,
+      waitsOnPerson: true,
+    };
+  }
+  if (assembled && tasks.done !== tasks.total) {
+    return {
+      who: "the Release Manager",
+      how: `All ${tasks.total} tasks are assembled on the epic branch. The Release Manager checks them and moves the epic to release to staging (GS).`,
+    };
+  }
   if (tasks.done === tasks.total) {
     if (expedited) {
       return {

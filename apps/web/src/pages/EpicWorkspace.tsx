@@ -138,7 +138,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
         </p>
       )}
 
-      <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
+      <StageRail pipeline={data.pipeline} current={data.epic.stage ?? data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
 
       <FactoryRunStatus data={data} />
       <RunningNow data={data} />

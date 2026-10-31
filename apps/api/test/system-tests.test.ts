@@ -136,6 +136,11 @@ describe("an epic's cases are counted apart from its tasks", () => {
     // them here is exactly the drift this split exists to prevent.
     expect(rollup.total).toBe(2);
     expect(rollup.shipping).toBe(2);
+    // Both tasks are assembled, so the stage rail and the next step say so
+    // rather than leaving the epic at design-approved.
+    const { epic } = await get(id.epic!);
+    expect(epic.stage).toBe("factory:on-epic");
+    expect(epic.nextStep.how).toMatch(/assembled on the epic branch/);
     // The closed, passed case must not read as a task done.
     expect(rollup.done).toBe(0);
   });
