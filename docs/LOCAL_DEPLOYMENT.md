@@ -1,6 +1,6 @@
 # Local Packaging & Deployment (no GitHub Actions)
 
-`scripts/local-deploy.sh` packages and deploys Factory Console from your
+`scripts/local-deploy.sh` packages and deploys Compass from your
 machine, the same way [`lighthouse-backend/scripts/local-deploy.sh`](https://github.com/genai-jerry/lighthouse-backend/blob/main/scripts/local-deploy.sh)
 deploys the CRM. It replicates `.github/workflows/deploy.yml` so no GitHub
 Actions minutes are spent:

@@ -7,7 +7,7 @@ unblock — but each should be confirmed.
 
 | ID | Decision | Recommendation | Blocks |
 |---|---|---|---|
-| **D-1** | Product and repo name. The spec's working name is `factory-console`; this repo is `software-factory-view` | Keep `software-factory-view` as the repo, use **Factory Console** as the product name. It affects only branding strings and the GitHub App slug | Nothing (App slug by E0.1) |
+| **D-1** | Product and repo name. The spec's working name is `factory-console`; this repo is `software-factory-view` | Keep `software-factory-view` as the repo, use **Compass** as the product name. It affects only branding strings and the GitHub App slug | Nothing (App slug by E0.1) |
 | **D-2** | GitHub App ownership: personal account vs a GitHub organisation | Register under an **org**, even for the dogfood. Moving an App between owners later invalidates installations | E0.1 |
 | **D-3** | Hosted-first or self-host-first | **Hosted-first.** Self-host is Phase 4 and runs the identical images, so nothing is thrown away | E-B1 (deploy target) |
 | **D-4** | Does the Console's own development run through the factory? | **Yes** — the spec calls for it, and it is the fastest way to find `F-O*` requirements. E-B2 exists for this | E-B2 |

@@ -1,10 +1,10 @@
-# Factory Console
+# Compass
 
 [![CI](https://github.com/genai-jerry/software-factory-view/actions/workflows/ci.yml/badge.svg)](https://github.com/genai-jerry/software-factory-view/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/genai-jerry/software-factory-view/actions/workflows/codeql.yml/badge.svg)](https://github.com/genai-jerry/software-factory-view/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Factory Console is the web app for the
+Compass is the web app for the
 [Claude Software Factory](https://github.com/genai-jerry/claude-software-factory).
 It gives the people who work with the factory one place to set it up, see where
 every piece of work is, and approve or reject it at each gate.

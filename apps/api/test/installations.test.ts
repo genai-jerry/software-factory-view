@@ -76,7 +76,7 @@ beforeEach(async () => {
 
   calls = [];
   github = {
-    "/app": { body: { id: 1, slug: "factory-console", name: "Factory Console", html_url: "https://github.com/apps/factory-console", client_id: "Iv1.x" } },
+    "/app": { body: { id: 1, slug: "factory-console", name: "Compass", html_url: "https://github.com/apps/factory-console", client_id: "Iv1.x" } },
     "/user/installations": { body: { installations: [] } },
     "/user": { body: { id: 42, login: "alice", name: "Alice", avatar_url: "https://example/a.png" } },
     "/user/repos": { body: [] },

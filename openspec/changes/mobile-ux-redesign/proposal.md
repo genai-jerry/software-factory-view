@@ -1,6 +1,6 @@
 ## Why
 
-The Factory Console exists so humans can review, decide, and unblock agents without drowning in GitHub. Today that promise holds only on a wide desktop: the shell is a fixed 220px sidebar plus a dense main pane, the epic workspace is a two-column grid, the pipeline board is thirteen fixed-width columns, and almost every control is below a 44px touch target. ISO 9241-11 defines usability as specified users achieving specified goals with effectiveness, efficiency, and satisfaction in a specified context of use — and the specified contexts now include a phone at a gate, a tablet in a standup, and a laptop. Until every primary job works in a 360px viewport, the Console is not usable for the people it was built for.
+The Compass exists so humans can review, decide, and unblock agents without drowning in GitHub. Today that promise holds only on a wide desktop: the shell is a fixed 220px sidebar plus a dense main pane, the epic workspace is a two-column grid, the pipeline board is thirteen fixed-width columns, and almost every control is below a 44px touch target. ISO 9241-11 defines usability as specified users achieving specified goals with effectiveness, efficiency, and satisfaction in a specified context of use — and the specified contexts now include a phone at a gate, a tablet in a standup, and a laptop. Until every primary job works in a 360px viewport, the Console is not usable for the people it was built for.
 
 ## What Changes
 

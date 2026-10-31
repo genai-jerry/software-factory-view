@@ -2,7 +2,7 @@
   "name": "software-factory-view",
   "private": true,
   "version": "0.1.0",
-  "description": "Factory Console — a lens and control panel over the Claude Software Factory",
+  "description": "Compass — a lens and control panel over the Claude Software Factory",
   "license": "MIT",
   "repository": {
     "type": "git",

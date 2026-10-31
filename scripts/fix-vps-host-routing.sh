@@ -83,4 +83,4 @@ if [[ "$HEALTH" != *'"service":"console-api"'* ]]; then
   exit 1
 fi
 
-log "OK — https://${CONSOLE_HOST}/ serves Factory Console"
+log "OK — https://${CONSOLE_HOST}/ serves Compass"

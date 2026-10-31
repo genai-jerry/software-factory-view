@@ -1,4 +1,4 @@
-# Deploy Factory Console the same way Sales OS does: build images in CI,
+# Deploy Compass the same way Sales OS does: build images in CI,
 # scp tarballs to the VPS, docker load, docker compose up.
 #
 # GitHub Environment "production"

@@ -29,7 +29,7 @@ export function HomePage({
   return (
     <div className="home">
       <header className="home-bar">
-        <span className="home-mark">Factory Console</span>
+        <span className="home-mark">Compass</span>
         {me ? (
           <span className="home-who">
             {me.avatarUrl && <img src={me.avatarUrl} alt="" width={22} height={22} />}

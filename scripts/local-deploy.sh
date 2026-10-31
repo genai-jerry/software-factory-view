@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local packaging + deployment for Factory Console.
+# Local packaging + deployment for Compass.
 #
 # Replicates .github/workflows/deploy.yml from a local machine the same way
 # lighthouse-backend/scripts/local-deploy.sh does, so deploys cost no GitHub
@@ -22,7 +22,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/local-deploy.sh [production|staging] [options]
 
-Builds Factory Console images locally and deploys them to the Hostinger VPS
+Builds Compass images locally and deploys them to the Hostinger VPS
 with docker compose, replicating .github/workflows/deploy.yml without Actions.
 
 Options:
@@ -131,7 +131,7 @@ if $INIT_SECRETS; then
   mkdir -p "$(dirname "$SECRETS_FILE")"
   umask 077
   {
-    echo "# Secret values for Factory Console '${TARGET_ENV}' local deploys."
+    echo "# Secret values for Compass '${TARGET_ENV}' local deploys."
     echo "# GitHub never returns secret values, so mirror them here by hand."
     echo "# Keep this file OUT of git. chmod 600 is applied automatically."
     echo "# Same SSH trio as lighthouse-backend / lighthouse-sales."
@@ -423,4 +423,4 @@ if [[ -n "${PUBLIC_ORIGIN:-}" ]]; then
   ./scripts/verify-public-origin.sh
 fi
 
-log "Done — Factory Console (${TARGET_ENV}) deployed from local machine."
+log "Done — Compass (${TARGET_ENV}) deployed from local machine."

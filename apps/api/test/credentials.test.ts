@@ -200,7 +200,7 @@ interface StoredRow {
 
 describe("App manifest", () => {
   it("points every URL at the configured public origin", () => {
-    const m = buildAppManifest("https://console.example.com", "Factory Console") as Record<string, never>;
+    const m = buildAppManifest("https://console.example.com", "Compass") as Record<string, never>;
     expect((m["hook_attributes"] as unknown as { url: string }).url).toBe("https://console.example.com/webhooks/github");
     expect(m["redirect_url"]).toBe("https://console.example.com/setup/github-app/callback");
     expect(m["callback_urls"]).toEqual(["https://console.example.com/auth/github/callback"]);

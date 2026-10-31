@@ -1,6 +1,6 @@
 # 00 · Overview
 
-Derived from **Factory Console — Product Specification v1.0 draft** (31 pages,
+Derived from **Compass — Product Specification v1.0 draft** (31 pages,
 August 2026, GenAI People), read against the live factory in
 `genai-jerry/claude-software-factory` (`FACTORY.md`, `templates/`,
 `.github/workflows/factory-pipeline.yml`) and the live test estate
@@ -65,7 +65,7 @@ that is not in the inventory.
 The spec's working repository name is `factory-console`; this repository is
 `software-factory-view`. This plan uses:
 
-- **Factory Console** (or "the Console") — the product.
+- **Compass** (or "the Console") — the product.
 - **software-factory-view** — this repository, per the instruction to use it as
   the codebase.
 

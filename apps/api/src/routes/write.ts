@@ -324,7 +324,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       ...(req.body.options?.length ? ["**Options considered**", ...req.body.options.map((o) => `- ${o}`), ""] : []),
       ...(req.body.chosen ? ["**Chosen**", req.body.chosen, ""] : []),
       ...(req.body.consequences ? ["**Consequences**", req.body.consequences, ""] : []),
-      `Decided by @${ctx.login} via Factory Console.`,
+      `Decided by @${ctx.login} via Compass.`,
       ...(req.body.supersedesId ? [`Supersedes decision \`${req.body.supersedesId}\`.`] : []),
       "",
       decisionMarker(row.id),

@@ -93,7 +93,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     const state = randomToken(16);
     manifestStates.set(state, Date.now() + 15 * 60_000);
-    const name = req.query.name?.trim() || "Factory Console";
+    const name = req.query.name?.trim() || "Compass";
     const manifest = buildAppManifest(deps.cfg.PUBLIC_ORIGIN, name);
     const action = req.query.org
       ? `${deps.cfg.GITHUB_WEB_URL}/organizations/${encodeURIComponent(req.query.org)}/settings/apps/new?state=${state}`
