@@ -51,7 +51,7 @@ export function DecisionCard({ item: w }: { item: WorkItem }) {
     <article className="card decision-card" aria-label={`${stage}: ${w.card.title}`}>
       <header className="decision-head">
         <span className={`stage-chip ${w.ask === "answer" ? "halt" : w.ask === "run" ? "wait" : "decide"}`}>{stage}</span>
-        <Link to={`/epics/${w.card.epicId}`} className="work-row-title">
+        <Link to={`/work/${w.card.epicId}`} className="work-row-title">
           {w.card.title}
         </Link>
         <span className="muted">
@@ -85,7 +85,7 @@ function DecisionBody({ item: w }: { item: WorkItem }) {
             <Link to={w.link} className="button primary">
               Ship to production
             </Link>
-            <Link to={`/epics/${w.card.epicId}`} className="button">
+            <Link to={`/work/${w.card.epicId}`} className="button">
               Open the item
             </Link>
           </div>
@@ -256,7 +256,7 @@ function RunDecision({ item: w }: { item: WorkItem }) {
         <Link to={w.link} className="button primary">
           Run them
         </Link>
-        <Link to={`/epics/${w.card.epicId}`} className="button">
+        <Link to={`/work/${w.card.epicId}`} className="button">
           Open the item
         </Link>
       </div>

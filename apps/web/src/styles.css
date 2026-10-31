@@ -1237,3 +1237,39 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
   .work-row { grid-template-columns: 1fr; gap: 0.3rem; }
   .work-row-who { text-align: left; }
 }
+
+/* ---- Redesign: one work item, stage by stage ---- */
+.work-item .crumb { color: var(--text-dim); font-size: 0.9rem; margin: 0 0 0.25rem; }
+.wi-head h1 { margin: 0 0 0.25rem; }
+.wi-meta { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; margin: 0; }
+.wi-rail { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; margin: 1rem 0 1.25rem; }
+.wi-stage { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; color: var(--text-dim); font-size: 0.9rem; }
+.wi-stage .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border); background: var(--bg-panel); box-sizing: border-box; }
+.wi-stage.done { color: var(--green); }
+.wi-stage.done .dot { background: var(--green); border-color: var(--green); }
+.wi-stage.now { color: var(--text); }
+.wi-stage.now .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.wi-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 1rem; align-items: start; }
+.wi-side { position: sticky; top: 0.5rem; }
+.work-item .need { font-weight: 600; margin: 0 0 0.4rem; }
+
+.tc { padding: 0.8rem 0; border-top: 1px solid var(--border); }
+.tc:first-of-type { border-top: 0; }
+.tc-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.tc-id { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tc-title { flex: 1; font-weight: 600; min-width: 12rem; }
+.tc.pending .tc-title, .tc.passed .tc-title { font-weight: 500; color: var(--text-dim); }
+.tc-steps { margin-top: 0.3rem; }
+.tc-steps ol { margin: 0.3rem 0; padding-left: 1.3rem; }
+.tc-steps p { margin: 0.3rem 0; }
+.tc-passed { padding-top: 0.6rem; }
+.tc-env { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.3rem 1rem; margin: 0.5rem 0 0; }
+.tc-env > div { display: contents; }
+.tc-env dt { font-weight: 600; }
+.tc-env dd { margin: 0; }
+.stage-chip.done { background: var(--ok-bg); border-color: var(--green); color: var(--ok-fg); }
+
+@media (max-width: 900px) {
+  .wi-body { grid-template-columns: 1fr; }
+  .wi-side { position: static; }
+}
