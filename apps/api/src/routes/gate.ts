@@ -28,7 +28,7 @@ import { and, desc, eq, inArray, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { githubMessage, postComment } from "../gh-write.js";
-import { loadApproversForGate } from "../start-gate.js";
+import { loadApproversForGate, repoApprovers } from "../start-gate.js";
 import { countThreadEntries } from "../threads.js";
 import { renderMarkdown } from "../render.js";
 import { loadEpic } from "./read.js";
@@ -271,6 +271,25 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
         .limit(1)
     )[0];
     if (!pr) return reply.code(404).send({ error: "PR not found" });
+    // A merge onto the default or the integration branch is the approval
+    // itself (G3, or a fast-track change reaching staging), so it is held to
+    // that gate's list. Document PRs have their gates; epic branches have none.
+    const repoRow = (await db.select().from(repos).where(eq(repos.id, pr.pr.repoId)).limit(1))[0];
+    const gate =
+      pr.pr.kind === "spec" || pr.pr.kind === "design"
+        ? null
+        : pr.pr.baseRef === repoRow?.defaultBranch
+          ? ("release" as const)
+          : pr.pr.baseRef === (repoRow?.stagingBranch ?? "staging")
+            ? ("staging" as const)
+            : null;
+    if (gate) {
+      const approvers = await repoApprovers(deps, pr.pr.repoId, gate);
+      if (approvers.length > 0 && !approvers.includes(ctx.login)) {
+        const what = gate === "release" ? "production" : "staging";
+        return reply.code(403).send({ error: `merging to ${what} needs: ${approvers.map((a) => `@${a}`).join(", ")}` });
+      }
+    }
     const [owner, name] = pr.repoFullName.split("/") as [string, string];
     const gh = userClient(deps, ctx);
     try {

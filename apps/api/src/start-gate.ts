@@ -120,6 +120,21 @@ export async function loadGateApprovers(deps: AppDeps, estateId: string): Promis
  * `gate` in the answer is the list the logins came from, which is what the
  * panel shows when it has to explain where they came from.
  */
+/**
+ * Who may approve a gate on one repo. `loadApproversForGate` unions the whole
+ * estate, which is right for the queue but not for a merge: two projects in
+ * one estate can have different people on production, so a merge asks about
+ * the repo it lands in. `staging` falls back to `release`, as the router does.
+ */
+export async function repoApprovers(deps: AppDeps, repoId: string, gate: "release" | "staging"): Promise<string[]> {
+  const rows = await deps.dbh.db
+    .select({ gate: gateAssignments.gate, login: gateAssignments.login })
+    .from(gateAssignments)
+    .where(eq(gateAssignments.repoId, repoId));
+  const of = (g: string) => rows.filter((r) => r.gate === g).map((r) => r.login);
+  return gate === "staging" && of("staging").length === 0 ? of("release") : of(gate);
+}
+
 export async function loadApproversForGate(
   deps: AppDeps,
   estateId: string,

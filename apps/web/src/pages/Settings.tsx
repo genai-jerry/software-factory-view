@@ -273,6 +273,9 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
 
   return (
     <div style={{ marginBottom: "1.25rem" }}>
+      {projects.map((p) => (
+        <ReleasePermissions key={p.id} projectId={p.id} name={p.name} canEdit={canEdit} />
+      ))}
       <h3>Projects</h3>
       <p className="muted">
         Group the repos that ship together. Every view — My work, the board, Flow, Blocked — can then be focused to one
@@ -326,6 +329,86 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/** Who may release a project: to staging, and to production. */
+export function ReleasePermissions({ projectId, name, canEdit }: { projectId: string; name: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const key = ["project-permissions", projectId];
+  const q = useQuery({
+    queryKey: key,
+    queryFn: () =>
+      api.get<{ repos: string[]; production: string[]; staging: string[]; mixed: boolean; members: string[] }>(
+        `/api/projects/${projectId}/permissions`,
+      ),
+  });
+  const [draft, setDraft] = useState<{ production: string[]; staging: string[] } | null>(null);
+  const save = useMutation({
+    mutationFn: (v: { production: string[]; staging: string[] }) =>
+      api.post<{ ok: boolean; results: Array<{ repo: string; ok: boolean; error?: string }> }>(
+        `/api/projects/${projectId}/permissions`,
+        v,
+      ),
+    onSuccess: () => {
+      setDraft(null);
+      void qc.invalidateQueries({ queryKey: key });
+    },
+  });
+  if (!q.data) return null;
+  const value = draft ?? { production: q.data.production, staging: q.data.staging };
+  const people = [...new Set([...q.data.members, ...value.production, ...value.staging])].sort();
+  const toggle = (list: "production" | "staging", login: string) =>
+    setDraft({
+      ...value,
+      [list]: value[list].includes(login) ? value[list].filter((l) => l !== login) : [...value[list], login],
+    });
+  const column = (list: "production" | "staging", label: string, hint: string) => (
+    <fieldset style={{ border: 0, padding: 0, margin: 0, flex: "1 1 14rem" }}>
+      <legend style={{ fontWeight: 600, padding: 0 }}>{label}</legend>
+      <p className="muted" style={{ margin: "0 0 0.3rem" }}>{hint}</p>
+      {people.map((login) => (
+        <label key={login} style={{ display: "block" }}>
+          <input
+            type="checkbox"
+            style={{ width: "auto", marginRight: 6 }}
+            disabled={!canEdit}
+            checked={value[list].includes(login)}
+            onChange={() => toggle(list, login)}
+          />
+          @{login}
+        </label>
+      ))}
+    </fieldset>
+  );
+  const failed = save.data?.results.filter((r) => !r.ok) ?? [];
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      <h3>Who can release {name}</h3>
+      {q.data.mixed && (
+        <div className="banner stale">This project's repos have different lists. Saving makes them the same.</div>
+      )}
+      <div className="row" style={{ alignItems: "flex-start", gap: "1.5rem", flexWrap: "wrap" }}>
+        {column("production", "Production", "Ship to customers. At least one person.")}
+        {column("staging", "Staging", "Leave empty to use the production list.")}
+      </div>
+      {canEdit && (
+        <div className="row" style={{ marginTop: "0.5rem" }}>
+          <button
+            className="primary"
+            disabled={!draft || value.production.length === 0 || save.isPending}
+            onClick={() => save.mutate(value)}
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </button>
+          {value.production.length === 0 && <span className="muted">Choose someone for production.</span>}
+        </div>
+      )}
+      {save.isError && <div className="banner error">{(save.error as ApiError).message}</div>}
+      {failed.length > 0 && (
+        <div className="banner error">Not saved on: {failed.map((r) => `${r.repo} (${r.error})`).join("; ")}</div>
       )}
     </div>
   );
