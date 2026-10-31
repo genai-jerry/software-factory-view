@@ -18,14 +18,29 @@
 
 name: Deploy
 
+# The check runs on every pull request so a failure shows before the merge,
+# and again on the push to main as the final gate; only the push deploys.
+# Changes that touch no code (workflows, docs) neither check nor deploy.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/**"
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - ".github/**"
+      - "**/*.md"
+      - "docs/**"
   workflow_dispatch:
 
+# Deploys queue one behind another and never cancel. A pull request's check
+# has its own group per branch, so it neither waits for a deploy nor holds one
+# up, and a newer push to the same branch supersedes the older check.
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('check-{0}', github.head_ref) || 'deploy-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -49,6 +64,7 @@ jobs:
   deploy:
     name: vps
     needs: check
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
     steps:
