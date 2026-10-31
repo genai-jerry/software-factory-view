@@ -1172,3 +1172,68 @@ ol.run-events time {
 .next-step.waits { color: var(--text); border-left: 3px solid var(--amber); padding-left: 0.5rem; }
 .dep-composer { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .dep-composer textarea { width: 100%; resize: vertical; }
+
+/* ---- Redesign: Work list and Decisions queue ---- */
+.work-counters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.work-counter {
+  display: grid; gap: 0.1rem; padding: 0.9rem 1rem;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  color: inherit; text-decoration: none;
+}
+.work-counter:hover { text-decoration: none; border-color: var(--accent); }
+.work-counter .n { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+.work-counter.you .n { color: var(--accent); }
+.work-counter.working .n { color: var(--green); }
+.work-counter .l { font-weight: 600; }
+
+.work-row {
+  display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) 10rem; gap: 1rem;
+  align-items: start; padding: 0.8rem 0; border-top: 1px solid var(--border);
+  color: inherit; text-decoration: none; min-height: var(--target);
+}
+.work-row:first-of-type { border-top: 0; }
+.work-row:hover { text-decoration: none; }
+.work-row:hover .work-row-title { color: var(--accent); }
+.work-row .work-row-title { display: block; font-size: 1.02rem; }
+.work-pointer { display: block; margin-top: 0.15rem; }
+.work-pointer strong { color: var(--accent); }
+.work-row .work-row-meta { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.3rem; flex-wrap: wrap; }
+.work-row-who { color: var(--text-dim); font-size: 0.85rem; text-align: right; }
+
+.stage-chip {
+  display: inline-block; padding: 0.1rem 0.6rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+  border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-dim); white-space: nowrap;
+}
+.stage-chip.decide { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.stage-chip.wait { background: var(--warn-bg); border-color: var(--amber); color: var(--warn-fg); }
+.stage-chip.halt { background: var(--halt-bg); border-color: var(--halt); color: var(--halt-fg); }
+.stage-dots { display: flex; gap: 4px; margin-top: 0.4rem; }
+.stage-dots i { display: block; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--border); box-sizing: border-box; }
+.stage-dots i.d { background: var(--green); border-color: var(--green); }
+.stage-dots i.c { background: var(--accent); border-color: var(--accent); }
+
+.decision-card .decision-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.decision-card h3 { margin: 0.4rem 0 0.2rem; font-size: 1.05rem; }
+.decision-card .need { margin: 0 0 0.5rem; font-weight: 600; }
+.decision-card .facts { margin: 0 0 0.75rem; padding-left: 1.2rem; }
+.decision-card .facts li { margin: 0.15rem 0; }
+.decision-card .facts .question { font-style: italic; }
+.decision-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.decision-reply { display: grid; gap: 0.4rem; }
+.decision-reply textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.decision-failure { color: var(--error-fg); background: var(--error-bg); border: 1px solid var(--red); border-radius: 6px; padding: 0.4rem 0.6rem; margin: 0.5rem 0 0; }
+a.button {
+  display: inline-flex; align-items: center; justify-content: center; min-height: var(--target); padding: 0 0.9rem;
+  border: 1px solid var(--border); border-radius: 6px; color: var(--text); text-decoration: none; font-weight: 600; background: var(--bg-raised);
+}
+a.button:hover { border-color: var(--accent); text-decoration: none; }
+a.button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.sidenav-group { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); display: grid; gap: 2px; }
+.sidenav-group .sidenav-group-title { color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.2rem 0.6rem; }
+
+@media (max-width: 720px) {
+  .work-counters { grid-template-columns: 1fr; }
+  .work-row { grid-template-columns: 1fr; gap: 0.3rem; }
+  .work-row-who { text-align: left; }
+}

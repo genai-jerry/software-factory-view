@@ -7,6 +7,8 @@ import { useReauthNeeded } from "./lib/reauth.js";
 import { Shell, canReachSettings } from "./components/Shell.js";
 import { HomePage } from "./pages/Home.js";
 import { MissionControl } from "./pages/MissionControl.js";
+import { WorkPage } from "./pages/Work.js";
+import { DecisionsQueuePage } from "./pages/DecisionsQueue.js";
 import { FlowPage } from "./pages/Flow.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
@@ -114,11 +116,13 @@ export function App() {
         </Banner>
       ) : null}
       <Routes>
-        <Route path="/" element={<MissionControl />} />
+        <Route path="/" element={<WorkPage />} />
+        <Route path="/pipeline" element={<MissionControl />} />
         <Route path="/flow" element={<FlowPage />} />
         <Route path="/epics/:id" element={<EpicWorkspacePage me={user!} />} />
         <Route path="/blocked" element={<BlockedPage />} />
-        <Route path="/decisions" element={<DecisionsPage />} />
+        <Route path="/decisions" element={<DecisionsQueuePage />} />
+        <Route path="/decision-log" element={<DecisionsPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/runs/:runId" element={<OrchestratorRunPage />} />
         <Route
