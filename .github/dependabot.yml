@@ -1,18 +1,24 @@
 version: 2
+# Monthly and grouped: weekly bumps opened a dozen pull requests at a time,
+# and the major ones (TypeScript, zod, node, nginx) are upgrades to plan, not
+# to merge as they arrive.
 updates:
   - package-ecosystem: npm   # covers the pnpm workspace
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       actions:
         patterns: ["*"]
@@ -20,4 +26,7 @@ updates:
   - package-ecosystem: docker
     directory: /infra
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
