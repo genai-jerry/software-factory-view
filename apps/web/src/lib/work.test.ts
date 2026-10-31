@@ -82,6 +82,12 @@ describe("stageOf", () => {
     expect(stageOf("factory:design-approved", { ...assembled, blocked: 1 })).toBe("build");
   });
 
+  it("ignores tasks counted as waiting on a blocker that is itself assembled", () => {
+    // Beacon #35 on 31 Oct: five tasks on the epic branch, two still "waiting"
+    // because their blockers stay open until the epic closes.
+    expect(stageOf("factory:design-approved", { ...assembled, waiting: 2 })).toBe("test");
+  });
+
   it("has no stage for states off the rail", () => {
     expect(stageOf("factory:fast-track")).toBeNull();
     expect(stageOf("factory:blocked")).toBeNull();
@@ -129,6 +135,35 @@ describe("buildWork", () => {
     const lists = buildWork([card({ state: "factory:spec-ready" })], [], []);
     expect(lists.working[0]!.who).toBe("Someone else decides");
     expect(lists.counts).toEqual({ you: 0, others: 1, working: 0 });
+  });
+
+  it("says how many of the remaining tests can run now", () => {
+    const partly = { ...assembled, tests: { total: 14, passed: 0, runnable: 6, failed: 0, outstanding: 14 } };
+    const lists = buildWork([card({ tasks: partly })], [entry()], []);
+    expect(lists.needsDecision[0]!.pointer).toBe("Run: 14 of 14 tests are left. 6 can run now.");
+  });
+
+  it("files a test case with no parent link under the epic its title names", () => {
+    // Beacon #34's cases arrived without the sub-issue relation, so each
+    // carries its own id as epicId. The row must not vanish.
+    const orphan = entry({ epicId: "case-55", issueId: "case-55", title: "test(34): ST-12 A status moved by a human" });
+    const epic34 = card({ epicId: "e34", number: 34, title: "Booker status synced from the sheet", tasks: rollup({ total: 7, shipping: 7, inFlight: 7, waiting: 6 }) });
+    const lists = buildWork([epic34], [orphan], []);
+    expect(lists.needsDecision).toHaveLength(1);
+    expect(lists.needsDecision[0]!.card.title).toBe("Booker status synced from the sheet");
+    expect(lists.needsDecision[0]!.pointer).toBe("Run: 1 test to run.");
+  });
+
+  it("keeps an entry with no epic at all as its own row", () => {
+    const lone = entry({ epicId: "x", issueId: "x", title: "Something odd", repo: "genai-jerry/other" });
+    const lists = buildWork([], [lone], []);
+    expect(lists.needsDecision.map((w) => w.card.title)).toEqual(["Something odd"]);
+  });
+
+  it("hides the factory's repo-profile housekeeping", () => {
+    const lists = buildWork([card({ epicId: "p", title: "Factory: repo profile", state: "factory:blocked" })], [], []);
+    expect(lists.working).toHaveLength(0);
+    expect(lists.needsDecision).toHaveLength(0);
   });
 
   it("keeps closed items apart", () => {
