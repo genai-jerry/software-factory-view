@@ -35,9 +35,9 @@ jobs:
     name: typecheck-test-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Require deploy credentials
         env:
@@ -134,7 +134,7 @@ jobs:
         run: cp infra/docker-compose.deploy.yml docker-compose.yml
 
       - name: Prepare deploy directory
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -144,7 +144,7 @@ jobs:
             mkdir -p "$HOME/factory-console"
 
       - name: Transfer image tarballs
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -155,7 +155,7 @@ jobs:
           target: "/tmp/"
 
       - name: Transfer compose
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -164,7 +164,7 @@ jobs:
           target: "~/factory-console/"
 
       - name: Deploy on host
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         env:
           CONSOLE_HOST: ${{ steps.host.outputs.console_host }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
