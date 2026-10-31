@@ -1,6 +1,6 @@
 # Security Policy
 
-Factory Console stores GitHub OAuth tokens and a GitHub App private key, and it
+Compass stores GitHub OAuth tokens and a GitHub App private key, and it
 acts on GitHub as the signed-in user. We take security reports seriously.
 
 ## Supported versions

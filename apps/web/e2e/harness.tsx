@@ -591,7 +591,7 @@ function ApiDownScreen() {
   return (
     <div className="home">
       <header className="home-bar">
-        <span className="home-mark">Factory Console</span>
+        <span className="home-mark">Compass</span>
       </header>
       <div className="home-body">
         <Banner tone="error" technical="connect ECONNREFUSED 127.0.0.1:8787">

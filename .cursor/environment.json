@@ -1,5 +1,5 @@
 {
-  "name": "Factory Console",
+  "name": "Compass",
   "install": "bash .cursor/install.sh",
   "start": "bash .cursor/start.sh",
   "terminals": [

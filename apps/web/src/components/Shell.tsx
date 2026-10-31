@@ -57,7 +57,7 @@ export function Shell({
       <div className="shell">
         <header className="topbar" role="banner">
           <NavLink to="/" className="brand" end>
-            Factory Console
+            Compass
           </NavLink>
           <FocusControls />
           <span className="topbar-who">

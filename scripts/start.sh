@@ -55,7 +55,7 @@ compose up -d ${build_args[@]+"${build_args[@]}"} || die "docker compose failed"
 wait_for_port "$web_port" web 90 || warn "web has not opened :$web_port yet — check ./scripts/logs.sh web"
 
 echo
-ok "Factory Console is up."
+ok "Compass is up."
 cat <<EOF
 
    UI       http://localhost:$web_port

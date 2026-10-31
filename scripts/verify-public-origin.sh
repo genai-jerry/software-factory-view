@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Smoke-test that PUBLIC_ORIGIN serves the Factory Console (nginx + api), not the
+# Smoke-test that PUBLIC_ORIGIN serves the Compass (nginx + api), not the
 # LangGraph orchestrator. Run after deploy from CI or local-deploy.
 #
 # Usage: PUBLIC_ORIGIN=https://sf.genaipeople.com ./scripts/verify-public-origin.sh
@@ -52,4 +52,4 @@ EOF
   exit 1
 fi
 
-echo "verify-public-origin: OK — $ORIGIN serves Factory Console"
+echo "verify-public-origin: OK — $ORIGIN serves Compass"

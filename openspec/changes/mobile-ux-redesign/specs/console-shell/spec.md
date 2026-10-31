@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the Factory Console application chrome, navigation information architecture, visual language, and accessibility floor so every signed-in surface is usable from a 360px phone to a wide desktop.
+Defines the Compass application chrome, navigation information architecture, visual language, and accessibility floor so every signed-in surface is usable from a 360px phone to a wide desktop.
 
 ## ADDED Requirements
 

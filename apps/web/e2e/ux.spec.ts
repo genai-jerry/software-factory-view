@@ -59,7 +59,7 @@ for (const vp of VIEWPORTS) {
 
     test("signed-in shell does not pan", async ({ page }) => {
       await page.goto("/e2e.html?screen=shell");
-      await expect(page.getByRole("link", { name: "Factory Console" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Compass" })).toBeVisible();
       if (vp.width < 1024) {
         await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
         await expect(page.getByRole("link", { name: "My work" })).toBeVisible();

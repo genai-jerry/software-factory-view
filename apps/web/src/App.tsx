@@ -29,7 +29,7 @@ export function App() {
     return (
       <div className="home">
         <header className="home-bar">
-          <span className="home-mark">Factory Console</span>
+          <span className="home-mark">Compass</span>
         </header>
         <div className="home-body">
           <Banner tone="error" technical={(setup.error as ApiError).message}>
@@ -48,7 +48,7 @@ export function App() {
     return (
       <div className="home">
         <header className="home-bar">
-          <span className="home-mark">Factory Console</span>
+          <span className="home-mark">Compass</span>
         </header>
         <div className="home-body">
           <Banner tone="error" technical={me.error.message}>
@@ -73,7 +73,7 @@ export function App() {
     return (
       <div className="home">
         <header className="home-bar">
-          <span className="home-mark">Factory Console</span>
+          <span className="home-mark">Compass</span>
         </header>
         <div className="home-body">
           <h1>Orchestrator run</h1>

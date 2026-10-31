@@ -77,7 +77,7 @@ export const ANSWER_STYLE = `Writing standard (every answer):
 - Write an issue or PR as #21, or owner/repo#21 in another repo, so it is a link.
 - If the sources do not answer the question, say what is missing in one sentence.`;
 
-export const SYSTEM_PROMPT = `You are "Ask the Factory", the insight panel of the Factory Console — a review
+export const SYSTEM_PROMPT = `You are "Ask the Factory", the insight panel of the Compass — a review
 surface over a GitHub-based agentic software pipeline ("the factory").
 
 Rules, in priority order:

@@ -85,7 +85,7 @@ if wants web; then
 fi
 
 echo
-say "Factory Console (dev)"
+say "Compass (dev)"
 wants web && echo "   UI       http://localhost:5173"
 wants api && echo "   API      http://localhost:$API_PORT/api/health"
 echo "   Setup    http://localhost:5173/setup"

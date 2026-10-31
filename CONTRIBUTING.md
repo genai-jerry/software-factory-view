@@ -1,6 +1,6 @@
-# Contributing to Factory Console
+# Contributing to Compass
 
-Thanks for helping. Factory Console is the web UI over the
+Thanks for helping. Compass is the web UI over the
 [Claude Software Factory](https://github.com/genai-jerry/claude-software-factory).
 Bug reports, fixes, docs and well-scoped features are all welcome.
 

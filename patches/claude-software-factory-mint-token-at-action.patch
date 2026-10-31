@@ -28,7 +28,7 @@ index 26ab90e..5e93ad7 100644
  
  # --- Operations
  DISPATCH_TOKEN=dev-dispatch-token
-+# Factory Console origin — the orchestrator POSTs /api/orchestrator/github-token
++# Compass origin — the orchestrator POSTs /api/orchestrator/github-token
 +# here immediately before a GitHub action, so a 45-minute Profiler run is not
 +# stuck with the token captured at /dispatch.
 +CONSOLE_URL=
@@ -43,7 +43,7 @@ index b0e90e9..71c693e 100644
      public_base_url: str = "http://localhost:8080"
      # Operator dispatch bearer token (manual "Run workflow" equivalent).
      dispatch_token: Secret = field(default_factory=lambda: Secret(""))
-+    # Optional Factory Console origin. When set, a 401 from GitHub refreshes
++    # Optional Compass origin. When set, a 401 from GitHub refreshes
 +    # the installation token via POST /api/orchestrator/github-token.
 +    console_url: str = ""
      # Optional cross-repo PAT for multi-repo estates (same role as in Actions).
