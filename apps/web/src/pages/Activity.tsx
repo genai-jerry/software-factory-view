@@ -30,7 +30,7 @@ export function ActivityPage() {
   const focus = useFocus();
   const [who, setWho] = useState<Who>("everyone");
   const activity = useQuery({ queryKey: ["activity", focus.key], queryFn: () => api.get<{ lines: Line[] }>(`/api/activity${focus.qs}`), refetchInterval: 60_000 });
-  const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ items: RunningItem[] }>("/api/running"), refetchInterval: 30_000 });
+  const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"), refetchInterval: 30_000 });
   const usage = useQuery({ queryKey: ["usage"], queryFn: () => api.get<FactoryUsage>("/api/orchestrator/usage"), retry: false });
 
   const lines = (activity.data?.lines ?? []).filter((l) => (who === "everyone" ? true : who === "people" ? l.person : !l.person));
@@ -76,10 +76,10 @@ export function ActivityPage() {
         </div>
         <aside className="wi-side">
           <section className="card">
-            <h2>Running now {running.data && <span className="muted">({running.data.items.length})</span>}</h2>
-            {running.data?.items.length === 0 && <p className="muted">Nothing is running.</p>}
+            <h2>Running now {running.data && <span className="muted">({running.data.running.length})</span>}</h2>
+            {running.data?.running.length === 0 && <p className="muted">Nothing is running.</p>}
             <ul className="facts">
-              {running.data?.items.map((r) => (
+              {running.data?.running.map((r) => (
                 <li key={r.issueId}>
                   {roleName(r.role)} on {r.kind === "task" ? `task #${r.number} of ${r.epicTitle}` : r.epicTitle}
                   {r.runId && (

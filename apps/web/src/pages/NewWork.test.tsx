@@ -46,7 +46,7 @@ beforeEach(() => {
           { at: new Date().toISOString(), who: "The factory", person: false, text: "The factory built task #62 of Day-wise.", stage: "build", repo: "genai-jerry/beacon-api", epicId: "e1" },
         ],
       };
-    if (path.startsWith("/api/running")) return { items: [] };
+    if (path.startsWith("/api/running")) return { running: [] };
     if (path.startsWith("/api/orchestrator/usage")) return { runs: 3, window_hours: 5, active_runs: 0, limit: { reached: false, resets_at: null } };
     return {};
   });
