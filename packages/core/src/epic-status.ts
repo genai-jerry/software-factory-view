@@ -27,6 +27,14 @@ export interface EpicProgress {
   inTest: number;
   /** Merged onto the epic/integration branch, not yet closed (§6a, §6b). */
   shipping: number;
+  /** Released to an implementer and not started (`factory:ready`). */
+  ready?: number;
+  /** Of `shipping`: green, waiting for the Release Manager. */
+  readyToShip?: number;
+  /** Of `shipping`: merged onto the epic branch. */
+  onEpic?: number;
+  /** The epic's system test cases, where the repo runs them. */
+  tests?: EpicTests;
 }
 
 /**
@@ -62,6 +70,26 @@ export function testsOutstanding(tests: EpicTests | undefined): number {
  */
 export function tasksInFlight(tasks: EpicProgress): number {
   return tasks.inReview + tasks.inTest + tasks.shipping;
+}
+
+/**
+ * Where an epic's work actually is, as a pipeline stage. The epic keeps
+ * `factory:design-approved` for its whole build, so the stage rail drew it at
+ * "Released to build" while every task was on the epic branch and the epic
+ * was waiting on its testers. For an epic in that state this reads the
+ * stage of its slowest task — ready, in review, in test, ready to ship, then
+ * on the epic branch — and leaves every other state, and an epic with no
+ * released task yet, where its label has it.
+ */
+export function effectiveStage(state: string | null | undefined, tasks: EpicProgress | undefined): string | null {
+  if (state !== DESIGN_APPROVED_STATE) return state ?? null;
+  if (!tasks || tasks.total === 0) return state;
+  if ((tasks.ready ?? 0) > 0) return "factory:ready";
+  if (tasks.inReview > 0) return "factory:in-review";
+  if (tasks.inTest > 0) return "factory:in-test";
+  if ((tasks.readyToShip ?? 0) > 0) return "factory:ready-to-ship";
+  if ((tasks.onEpic ?? 0) > 0 || tasks.shipping > 0 || tasks.done === tasks.total) return "factory:on-epic";
+  return state;
 }
 
 export function epicStatus(

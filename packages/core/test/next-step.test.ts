@@ -132,6 +132,25 @@ describe("nextStep with the facts the label cannot carry", () => {
     expect(done.how).toMatch(/All 4 tasks are done/);
   });
 
+  it("says what an epic with every task assembled is waiting on", () => {
+    // beacon-api #35: five tasks on the epic branch, 16 system tests to run.
+    const waiting = nextStep("factory:design-approved", [], {
+      tasks: rollup({ total: 5, shipping: 5, tests: { total: 16, passed: 0, runnable: 16, failed: 0 } }),
+    });
+    expect(waiting.who).toBe("you — the testers");
+    expect(waiting.waitsOnPerson).toBe(true);
+    expect(waiting.how).toMatch(/All 5 tasks are assembled on the epic branch\. 16 system tests still need a verdict/);
+    expect(waiting.how).not.toMatch(/Building/);
+    // Tests all passed (or none): the Release Manager moves it to gate GS.
+    const ready = nextStep("factory:design-approved", [], {
+      tasks: rollup({ total: 5, shipping: 5, tests: { total: 16, passed: 16, runnable: 0, failed: 0 } }),
+    });
+    expect(ready.who).toBe("the Release Manager");
+    expect(ready.how).toMatch(/moves the epic to release to staging \(GS\)/);
+    // Still building: the old answer, unchanged.
+    expect(nextStep("factory:design-approved", [], { tasks: rollup({ total: 5, shipping: 3, inReview: 2 }) }).how).toMatch(/Building/);
+  });
+
   it("leaves a not-yet-dispatched epic on the table's own answer", () => {
     const step = nextStep("factory:design-approved", [], { tasks: rollup({ total: 0 }) });
     expect(step.how).toMatch(/Dispatcher/);

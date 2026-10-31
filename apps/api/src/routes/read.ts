@@ -4,6 +4,7 @@ import {
   bugReportAvailability,
   decryptSecret,
   deriveExpedited,
+  effectiveStage,
   epicStatus,
   factoryRunIsPending,
   GATE_STATES,
@@ -372,6 +373,9 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         htmlUrl: epic.htmlUrl,
         labels: epic.labels,
         status: epicStatus(epic.state === "open" ? epic.factoryState : null, rollup, rollup.tests),
+        // Where the work actually is: the stage rail highlights this, not the
+        // epic's own label, which stays at design-approved for the whole build.
+        stage: effectiveStage(epic.state === "open" ? epic.factoryState : null, rollup),
         nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup, expedited }),
       },
       /**

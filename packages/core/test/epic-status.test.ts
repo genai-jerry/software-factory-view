@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { epicStatus } from "../src/index.js";
+import { effectiveStage, epicStatus } from "../src/index.js";
 
 /**
  * An epic holds `factory:design-approved` for its whole build — the label is
@@ -49,5 +49,29 @@ describe("epicStatus", () => {
     expect(epicStatus("factory:design-ready", { ...none, total: 4 })).toBeNull();
     expect(epicStatus("factory:in-staging", { ...none, total: 4, done: 4 })).toBeNull();
     expect(epicStatus(null, { ...none, total: 4 })).toBeNull();
+  });
+});
+
+describe("effectiveStage", () => {
+  const base = { total: 5, done: 0, blocked: 0, inReview: 0, inTest: 0, shipping: 0 };
+  const stage = (over: Record<string, unknown>) => effectiveStage("factory:design-approved", { ...base, ...over } as never);
+
+  it("puts an epic whose tasks are all on the epic branch at on-epic, not at design-approved", () => {
+    expect(stage({ shipping: 5, onEpic: 5 })).toBe("factory:on-epic");
+    expect(stage({ shipping: 5 })).toBe("factory:on-epic");
+  });
+
+  it("reads the slowest task's stage", () => {
+    expect(stage({ ready: 1, inReview: 2, shipping: 2, onEpic: 2 })).toBe("factory:ready");
+    expect(stage({ inReview: 2, inTest: 1, shipping: 2, onEpic: 2 })).toBe("factory:in-review");
+    expect(stage({ inTest: 1, shipping: 4, onEpic: 4 })).toBe("factory:in-test");
+    expect(stage({ shipping: 5, readyToShip: 1, onEpic: 4 })).toBe("factory:ready-to-ship");
+  });
+
+  it("leaves every other state, and an epic with nothing released yet, as its label has it", () => {
+    expect(effectiveStage("factory:epic-ready", { ...base, shipping: 5 })).toBe("factory:epic-ready");
+    expect(effectiveStage(null, undefined)).toBeNull();
+    expect(stage({})).toBe("factory:design-approved");
+    expect(stage({ total: 0 })).toBe("factory:design-approved");
   });
 });

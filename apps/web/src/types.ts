@@ -322,6 +322,8 @@ export interface EpicWorkspace {
     labels: string[];
     /** Derived progress where the label cannot carry it; null means use the label. */
     status: string | null;
+    /** The stage the epic's work is actually in (the label stays at design-approved for the whole build); null: use `state`. */
+    stage?: string | null;
     nextStep: NextStep;
   };
   repo: { id: string; fullName: string; defaultBranch: string };
