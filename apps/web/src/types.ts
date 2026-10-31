@@ -678,6 +678,19 @@ export interface ValidationResult {
   checks: Array<{ check: string; ok: boolean | null; detail: string }>;
 }
 
+/** GET /api/running — one open task or epic with a factory run live on it. */
+export interface RunningItem {
+  issueId: string;
+  number: number;
+  title: string;
+  repo: string;
+  kind: "task" | "epic";
+  role: string;
+  epicId: string;
+  epicNumber: number;
+  epicTitle: string;
+}
+
 /** GET /api/orchestrator/usage — the orchestrator's GET /usage. */
 export interface FactoryUsage {
   as_of: string;

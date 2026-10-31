@@ -6,6 +6,7 @@ import { Banner } from "../components/Banner.js";
 import { IssuePeek } from "../components/IssuePeek.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
+import { RunningCards } from "../components/RunningCards.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
 import { useHalt } from "../components/Shell.js";
 import { useFocus } from "../lib/filter.js";
@@ -101,6 +102,7 @@ function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
   const { needsYou, mine, waitingOn } = myWork.data;
   return (
     <div>
+      <RunningCards />
       <div className="card">
         <h2>Needs you</h2>
         {needsYou.length === 0 && <p className="muted">Nothing is waiting on you. The factory is running.</p>}
@@ -215,6 +217,7 @@ function FactoryTab({ estates, onPeek }: { estates: EstateSummary[] | undefined;
   });
   return (
     <div>
+      <RunningCards />
       <div className="card">
         <h2>Pipeline</h2>
         <p className="muted">Board on larger screens. On a phone this is a phase list.</p>
