@@ -72,8 +72,16 @@ export function lineFor(m: Move): ActivityLine | null {
       return isEpic ? null : { who: "The factory", person: false, text: `The factory built ${on}.`, stage: "build" };
     case "factory:blocked":
       return { who: "The factory", person: false, text: `The factory stopped on ${on} and asked a question.`, stage: "build" };
-    case "factory:manual-test":
-      return { who: "The factory", person: false, text: `${sub ? `Test ${short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `#${m.number}`}` : "A test"} of ${item} is ready to run.`, stage: "test" };
+    case "factory:manual-test": {
+      const caseId = short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `#${m.number}`;
+      // A case with no parent link has no epic title to name; its own title
+      // says what it checks, so say that rather than the raw `test(34): …`.
+      if (m.epicTitle === null) {
+        const what = short(m.title).replace(/^(ST|TC)-\d+\s*/, "");
+        return { who: "The factory", person: false, text: `Test ${caseId} is ready to run: ${what}.`, stage: "test" };
+      }
+      return { who: "The factory", person: false, text: `Test ${caseId} of ${item} is ready to run.`, stage: "test" };
+    }
     case "factory:test-passed":
       return { who, person, text: `${who} ran ${on}: passed.`, stage: "test" };
     case "factory:test-failed":
