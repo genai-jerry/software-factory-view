@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "../theme.js";
 import { useFocus } from "../lib/filter.js";
 import { isOrgAdminRole, canReachSettings } from "../lib/labels.js";
-import type { BlockedIssue, Me, ProjectsData, SetupStatus } from "../types.js";
+import type { Me, MyWork, ProjectsData, SetupStatus } from "../types.js";
 import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
@@ -43,11 +43,10 @@ export function Shell({
   const location = useLocation();
   const showSettings = canReachSettings(me, setup);
   const focus = useFocus();
-  const inbox = useQuery({
-    queryKey: ["blocked", focus.key],
-    queryFn: () => api.get<{ issues: BlockedIssue[] }>(`/api/blocked${focus.qs}`),
-  });
-  const inboxCount = inbox.data?.issues.length ?? 0;
+  // The Decisions badge counts work items, not issues: sixteen test cases on
+  // one epic are one decision for the tester.
+  const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
+  const inboxCount = new Set((myWork.data?.needsYou ?? []).map((e) => e.epicId)).size;
 
   return (
     <HaltCtx.Provider value={{ halt, setHalt }}>
@@ -134,13 +133,12 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
   return (
     <>
       <NavLink to="/" end>
-        My work
+        Work
       </NavLink>
-      <NavLink to="/flow">Flow</NavLink>
-      <NavLink to="/blocked">
-        Inbox
+      <NavLink to="/decisions">
+        Decisions
         {inboxCount > 0 && (
-          <span className="nav-badge" aria-label={`${inboxCount} blocked`}>
+          <span className="nav-badge" aria-label={`${inboxCount} waiting on you`}>
             {inboxCount}
           </span>
         )}
@@ -156,11 +154,34 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
   );
 }
 
+/** The screens the redesign hides from the team but engineers still reach. */
+function EngineerLinks({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <>
+      <NavLink to="/pipeline" onClick={onNavigate}>
+        Pipeline
+      </NavLink>
+      <NavLink to="/flow" onClick={onNavigate}>
+        Flow
+      </NavLink>
+      <NavLink to="/blocked" onClick={onNavigate}>
+        Inbox
+      </NavLink>
+      <NavLink to="/decision-log" onClick={onNavigate}>
+        Decision log
+      </NavLink>
+      <NavLink to="/onboarding" onClick={onNavigate}>
+        Onboarding
+      </NavLink>
+    </>
+  );
+}
+
 function MoreInline() {
   return (
-    <div className="sidenav-more">
-      <NavLink to="/decisions">Decisions</NavLink>
-      <NavLink to="/onboarding">Onboarding</NavLink>
+    <div className="sidenav-group">
+      <span className="sidenav-group-title">For engineers</span>
+      <EngineerLinks />
     </div>
   );
 }
@@ -183,12 +204,7 @@ function MoreMenu({
   const themeLabel = themePref === "system" ? "System" : themePref === "light" ? "Light" : "Dark";
   return (
     <div className="more-menu">
-      <NavLink to="/decisions" onClick={onNavigate}>
-        Decisions
-      </NavLink>
-      <NavLink to="/onboarding" onClick={onNavigate}>
-        Onboarding
-      </NavLink>
+      <EngineerLinks onNavigate={onNavigate} />
       {showSettings && setup?.canEditApp && (
         <NavLink to="/settings" onClick={onNavigate}>
           GitHub App
