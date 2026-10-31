@@ -280,7 +280,17 @@ textarea { min-height: 5rem; resize: vertical; }
 .board-card .meta { color: var(--text-dim); font-size: 0.78rem; margin-top: 0.3rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .board-card.blocked { border-color: var(--red); }
 /* "Running now" on the home page: small cards, one per live run. */
-.running-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.5rem; }
+/* One row that scrolls sideways, not a grid that grows downward: thirty past
+   runs pushed everything else on the page out of sight. */
+.running-strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+}
+.running-strip > * { flex: 0 0 15rem; scroll-snap-align: start; }
 .running-card {
   display: flex;
   flex-direction: column;
@@ -294,6 +304,8 @@ textarea { min-height: 5rem; resize: vertical; }
   text-decoration: none;
 }
 .running-card:hover { border-color: var(--accent); }
+/* "Show 10 more" sits at the end of the row, where the scrolling stops. */
+.running-more { align-items: center; justify-content: center; cursor: pointer; font: inherit; }
 .running-card-title {
   color: inherit;
   display: -webkit-box;

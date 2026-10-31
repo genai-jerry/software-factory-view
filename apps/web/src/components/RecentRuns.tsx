@@ -104,14 +104,12 @@ export function RecentRuns() {
             </div>
           );
         })}
-      </div>
-      {q.data?.hasMore && (
-        <p style={{ marginBottom: 0 }}>
-          <button type="button" onClick={() => setLimit((n) => n + PAGE)} disabled={q.isFetching}>
+        {q.data?.hasMore && (
+          <button type="button" className="running-card running-more" onClick={() => setLimit((n) => n + PAGE)} disabled={q.isFetching}>
             {q.isFetching ? "Loading…" : `Show ${PAGE} more`}
           </button>
-        </p>
-      )}
+        )}
+      </div>
     </section>
   );
 }
