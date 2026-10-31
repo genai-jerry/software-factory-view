@@ -229,10 +229,12 @@ export async function askOrchestrator(
     question: string;
     context: string;
     branch?: string;
+    /** How to answer, when the caller has its own rules (the epic panel's citations). */
+    instructions?: string;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
   },
-): Promise<{ ok: true; answer: string; model: string } | OrchestratorProxyError> {
+): Promise<{ ok: true; answer: string; model: string; inputTokens: number; outputTokens: number } | OrchestratorProxyError> {
   const dest = orchestratorBase(cfg);
   if ("error" in dest) return dest;
   let res: Response;
@@ -246,6 +248,7 @@ export async function askOrchestrator(
         question: body.question,
         context: body.context,
         ...(body.branch ? { branch: body.branch } : {}),
+        ...(body.instructions ? { instructions: body.instructions } : {}),
         ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
         ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
       }),
@@ -254,14 +257,25 @@ export async function askOrchestrator(
   } catch (err) {
     return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
   }
-  const json = (await res.json().catch(() => ({}))) as { answer?: string; model?: string; detail?: string };
+  const json = (await res.json().catch(() => ({}))) as {
+    answer?: string;
+    model?: string;
+    detail?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
   if (res.status === 404 || res.status === 405 || res.status === 501) {
     return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
   }
   if (!res.ok || !json.answer) {
     return { error: json.detail || `orchestrator returned ${res.status}`, status: res.status === 429 ? 429 : 502 };
   }
-  return { ok: true, answer: json.answer, model: json.model ?? "" };
+  return {
+    ok: true,
+    answer: json.answer,
+    model: json.model ?? "",
+    inputTokens: json.usage?.input_tokens ?? 0,
+    outputTokens: json.usage?.output_tokens ?? 0,
+  };
 }
 
 /**

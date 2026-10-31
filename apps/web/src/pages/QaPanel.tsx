@@ -62,8 +62,8 @@ export function QaPanel({ scope }: { scope: QaScope }) {
           Not configured —{" "}
           {setup.data?.canEditApp ? (
             <>
-              set an Anthropic <strong>API key</strong> in <a href="/settings">Settings → Ask the Factory</a>, or store{" "}
-              <code>ANTHROPIC_API_KEY</code> for factory runs (OAuth tokens cannot call this panel).
+              store a <strong>Claude token</strong> for the factory's agents (it is used first), or set an{" "}
+              <strong>API key</strong> for any provider in <a href="/settings">Settings → Ask the Factory</a>.
             </>
           ) : (
             <>the GitHub App owner can set this org's model and API key in Settings</>
@@ -73,7 +73,8 @@ export function QaPanel({ scope }: { scope: QaScope }) {
       {qa.data?.budget && (
         <p className="muted">
           org budget: {Math.round((qa.data.budget.used / Math.max(qa.data.budget.total, 1)) * 100)}% used
-          {enabled && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
+          {enabled && qa.data.via === "claude" && " · Claude (subscription)"}
+          {enabled && qa.data.via !== "claude" && qa.data.model && ` · ${qa.data.provider === "anthropic" || !qa.data.provider ? "" : `${qa.data.provider}/`}${qa.data.model}`}
         </p>
       )}
       {conv && (
@@ -108,7 +109,7 @@ export function QaPanel({ scope }: { scope: QaScope }) {
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder={enabled ? placeholder : "Configure an Anthropic API key in Settings to ask about this issue."}
+            placeholder={enabled ? placeholder : "Store a Claude token, or set an API key in Settings, to ask about this issue."}
             disabled={!enabled || ask.isPending}
             style={{ minHeight: "3.5rem" }}
           />

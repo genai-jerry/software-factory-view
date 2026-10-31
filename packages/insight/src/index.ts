@@ -52,7 +52,7 @@ export interface InsightOptions {
   maxTokens?: number;
 }
 
-const SYSTEM_PROMPT = `You are "Ask the Factory", the insight panel of the Factory Console — a review
+export const SYSTEM_PROMPT = `You are "Ask the Factory", the insight panel of the Factory Console — a review
 surface over a GitHub-based agentic software pipeline ("the factory").
 
 Rules, in priority order:
@@ -66,16 +66,48 @@ Rules, in priority order:
 4. You are advisory. Never phrase output as an instruction to approve or
    reject; surface the evidence and let the human decide.`;
 
+/**
+ * The same rules for a session that can also read the repository (the
+ * orchestrator's Claude CLI): the sources stay the basis, and the code is
+ * there to check them, not to widen the answer.
+ */
+export const CLI_INSTRUCTIONS = `${SYSTEM_PROMPT}
+
+You may also read the repository in your working directory to check what a
+source says. Treat what you read there as evidence for a numbered source, not
+as a source of its own: keep citing the [n] numbers, and name a file only when
+it helps the reader act.`;
+
+/** The numbered sources, as every provider and the CLI path are shown them. */
+export function sourcesBlock(sources: InsightSource[]): string {
+  const contextBlock = sources
+    .map((s, i) => `[${i + 1}] (${s.kind}) ${s.title} — ref:${s.ref}\n---\n${truncate(s.content, 12_000)}\n---`)
+    .join("\n\n");
+  return `Sources for this epic:\n\n${contextBlock}`;
+}
+
+/** Map the [n] markers in an answer back to the sources they name. */
+export function citationsFor(text: string, sources: InsightSource[]): InsightAnswer["citations"] {
+  const cited = new Set<number>();
+  for (const m of text.matchAll(/\[(\d+)\]/g)) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= sources.length) cited.add(n);
+  }
+  return [...cited]
+    .sort((a, b) => a - b)
+    .map((n) => {
+      const s = sources[n - 1]!;
+      return { kind: s.kind, ref: s.ref, detail: s.title };
+    });
+}
+
 export async function askInsight(
   opts: InsightOptions,
   sources: InsightSource[],
   history: Array<{ role: "user" | "assistant"; content: string }>,
   question: string,
 ): Promise<InsightAnswer> {
-  const contextBlock = sources
-    .map((s, i) => `[${i + 1}] (${s.kind}) ${s.title} — ref:${s.ref}\n---\n${truncate(s.content, 12_000)}\n---`)
-    .join("\n\n");
-  const userContent = `Sources for this epic:\n\n${contextBlock}\n\nQuestion: ${question}`;
+  const userContent = `${sourcesBlock(sources)}\n\nQuestion: ${question}`;
 
   const provider = opts.provider ?? "anthropic";
   const raw =
@@ -84,17 +116,7 @@ export async function askInsight(
       : await askOpenAICompatible(provider, opts, history, userContent);
 
   // Map [n] markers back to source refs for the citation chips.
-  const cited = new Set<number>();
-  for (const m of raw.text.matchAll(/\[(\d+)\]/g)) {
-    const n = Number(m[1]);
-    if (n >= 1 && n <= sources.length) cited.add(n);
-  }
-  const citations = [...cited]
-    .sort((a, b) => a - b)
-    .map((n) => {
-      const s = sources[n - 1]!;
-      return { kind: s.kind, ref: s.ref, detail: s.title };
-    });
+  const citations = citationsFor(raw.text, sources);
 
   return {
     answer: raw.text,

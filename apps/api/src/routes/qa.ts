@@ -1,5 +1,5 @@
 import { decryptSecret } from "@console/core";
-import { askInsight, type InsightProvider, type InsightSource } from "@console/insight";
+import { CLI_INSTRUCTIONS, askInsight, citationsFor, sourcesBlock, type InsightProvider, type InsightSource } from "@console/insight";
 import {
   artifactCache,
   changeArtifacts,
@@ -16,6 +16,7 @@ import {
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
+import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadDependencies, loadEpic, loadIssue } from "./read.js";
 
@@ -132,6 +133,20 @@ async function resolveInsight(
   return { provider: "anthropic", apiKey: "", model: anthropicModel };
 }
 
+/**
+ * The org's Claude subscription token, when one is stored for the factory's
+ * agents. It cannot call the API, but the orchestrator's Claude CLI accepts
+ * it, so an org that has one asks through the orchestrator (POST /ask) before
+ * anything else is tried.
+ */
+async function claudeTokenFor(deps: AppDeps, orgId: string): Promise<string | undefined> {
+  try {
+    return (await readRetainedAgentSecrets(deps, orgId)).claudeCodeOauthToken || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function listConversations(
   deps: AppDeps,
   ctx: RequestCtx,
@@ -155,11 +170,14 @@ async function listConversations(
   }
   const org = (await db.select().from(orgs).where(eq(orgs.id, orgId)).limit(1))[0];
   const insight = await resolveInsight(deps, org);
+  const viaClaude = Boolean(await claudeTokenFor(deps, orgId)) && Boolean(deps.cfg.ORCHESTRATOR_URL.trim());
   return {
     conversations: out,
-    enabled: Boolean(insight.apiKey),
-    provider: insight.provider,
-    model: insight.model,
+    enabled: viaClaude || Boolean(insight.apiKey),
+    /** Which backend answers: the Claude subscription first, else the org's API key. */
+    via: viaClaude ? "claude" : "api",
+    provider: viaClaude ? "claude" : insight.provider,
+    model: viaClaude ? "subscription" : insight.model,
     budget: org ? { used: org.insightUsedTokens, total: org.insightBudgetTokens } : null,
   };
 }
@@ -185,10 +203,12 @@ async function runAsk(
   // Per-org budget: a paid product shows its costs (spec 01 §5).
   const org = (await db.select().from(orgs).where(eq(orgs.id, opts.orgId)).limit(1))[0]!;
   const insight = await resolveInsight(deps, org);
-  if (!insight.apiKey) {
-    return reply
-      .code(503)
-      .send({ error: "insight service is not configured — set the org's model and API key in Settings, or ANTHROPIC_API_KEY on the API" });
+  const claudeToken = deps.cfg.ORCHESTRATOR_URL.trim() ? await claudeTokenFor(deps, opts.orgId) : undefined;
+  if (!claudeToken && !insight.apiKey) {
+    return reply.code(503).send({
+      error:
+        "insight service is not configured — store a Claude token for the factory, or set the org's model and API key in Settings",
+    });
   }
   if (org.insightUsedTokens >= org.insightBudgetTokens) {
     return reply
@@ -224,7 +244,50 @@ async function runAsk(
     )[0]!.id;
   }
 
-  const result = await askInsight(
+  let result: Awaited<ReturnType<typeof askInsight>> | undefined;
+  if (claudeToken) {
+    // Priority: the Claude subscription, through the orchestrator's CLI. The
+    // sources are the basis; the session may also read the repo to check them.
+    const focusId = opts.scopeIssueId ?? opts.epicIssueId;
+    const focus = (await db.select().from(issues).where(eq(issues.id, focusId)).limit(1))[0];
+    const epic = (await db.select().from(issues).where(eq(issues.id, opts.epicIssueId)).limit(1))[0];
+    const repo = focus ? (await db.select().from(repos).where(eq(repos.id, focus.repoId)).limit(1))[0] : undefined;
+    if (focus && epic && repo) {
+      // One argument carries the whole prompt, so the sources are kept under
+      // ~90k characters: each trimmed harder when the set is large.
+      let sources = opts.sources;
+      if (sourcesBlock(sources).length > 90_000) {
+        sources = sources.map((s) => ({ ...s, content: s.content.slice(0, 5_000) }));
+      }
+      const earlier = history.map((h) => `${h.role === "user" ? "Person" : "You"}: ${h.content}`).join("\n\n");
+      const [owner, name] = repo.fullName.split("/") as [string, string];
+      const got = await askOrchestrator(deps.cfg, {
+        owner,
+        repo: name,
+        question,
+        context: `${earlier ? `Earlier in this conversation:\n\n${earlier}\n\n` : ""}${sourcesBlock(sources)}`,
+        instructions: CLI_INSTRUCTIONS,
+        branch: `factory/epic-${epic.number}`,
+        claudeCodeOauthToken: claudeToken,
+      });
+      if ("ok" in got) {
+        result = {
+          answer: got.answer,
+          citations: citationsFor(got.answer, sources),
+          inputTokens: got.inputTokens,
+          outputTokens: got.outputTokens,
+          model: got.model,
+        };
+      } else if (!insight.apiKey) {
+        return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
+      }
+      // Otherwise the org's API key answers below.
+    }
+  }
+  if (!result && !insight.apiKey) {
+    return reply.code(502).send({ error: "could not find this issue's repository to answer from" });
+  }
+  result ??= await askInsight(
     { provider: insight.provider, apiKey: insight.apiKey, model: insight.model },
     opts.sources,
     history,

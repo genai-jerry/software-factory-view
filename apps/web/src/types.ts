@@ -527,6 +527,8 @@ export interface QaData {
     messages: Array<{ role: string; body: string; citations: Citation[]; createdAt: string }>;
   }>;
   enabled: boolean;
+  /** "claude": the orchestrator's Claude CLI on the factory's subscription token (tried first); "api": the org's API key. */
+  via?: "claude" | "api";
   /** The provider/model this org's questions run on (org override or instance default). */
   provider?: string;
   model?: string;
