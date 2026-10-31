@@ -146,7 +146,8 @@ describe("buildWork", () => {
   it("files a test case with no parent link under the epic its title names", () => {
     // Beacon #34's cases arrived without the sub-issue relation, so each
     // carries its own id as epicId. The row must not vanish.
-    const orphan = entry({ epicId: "case-55", issueId: "case-55", title: "test(34): ST-12 A status moved by a human" });
+    // The attention queue leads with the case's own number, as the live page showed.
+    const orphan = entry({ epicId: "case-55", issueId: "case-55", title: "#55 test(34): ST-12 A status moved by a human" });
     const epic34 = card({ epicId: "e34", number: 34, title: "Booker status synced from the sheet", tasks: rollup({ total: 7, shipping: 7, inFlight: 7, waiting: 6 }) });
     const lists = buildWork([epic34], [orphan], []);
     expect(lists.needsDecision).toHaveLength(1);
