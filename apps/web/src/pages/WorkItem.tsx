@@ -7,9 +7,11 @@ import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel } from "../lib/labels.js";
 import { STAGES, STAGE_LABEL, stageOf, type Stage } from "../lib/work.js";
 import { caseIdOf, parseTestPlan, plain, type PlanCase, type TestPlan } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, Me } from "../types.js";
-import { GateTab, TasksTab, ThreadsTab } from "./EpicWorkspace.js";
+import { GateTab, ThreadsTab } from "./EpicWorkspace.js";
 import { QaPanel } from "./QaPanel.js";
 import { ReportBug, TestVerdict } from "./SystemTests.js";
+import { ReleaseBoard } from "./ReleaseBoard.js";
+import { BuildBoard } from "./BuildBoard.js";
 
 /**
  * One work item, stage by stage (redesign boards 4–8). The page is the
@@ -65,19 +67,12 @@ export function WorkItemPage({ me }: { me: Me }) {
         <div className="wi-main">
           {stage === "test" ? (
             <TestBoard data={data} cases={cases} />
-          ) : stage === "clarify" || stage === "design" || stage === "release" ? (
-            <GateOrWait data={data} me={me} stage={stage} />
+          ) : stage === "release" ? (
+            <ReleaseBoard data={data} />
           ) : stage === "build" ? (
-            <>
-              <section className="card">
-                <h2>Tasks</h2>
-                <TasksTab data={data} />
-              </section>
-              <section className="card">
-                <h2>Conversations</h2>
-                <ThreadsTab data={data} />
-              </section>
-            </>
+            <BuildBoard data={data} />
+          ) : stage === "clarify" || stage === "design" ? (
+            <GateOrWait data={data} me={me} stage={stage} />
           ) : (
             <section className="card">
               <h2>{peopleLabel(data.epic.state)}</h2>
@@ -134,9 +129,7 @@ function GateOrWait({ data, me, stage }: { data: EpicWorkspace; me: Me; stage: S
   const gateOpen =
     data.gate !== null &&
     ["factory:spec-ready", "factory:design-ready", "factory:epic-ready", "factory:in-staging"].includes(data.epic.state ?? "");
-  const waiting = { clarify: "The plan is being written.", design: "The design is being written.", release: "Waiting on the release." }[
-    stage as "clarify" | "design" | "release"
-  ];
+  const waiting = { clarify: "The plan is being written.", design: "The design is being written." }[stage as "clarify" | "design"];
   return (
     <>
       <section className="card">
