@@ -1295,3 +1295,11 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .needs-answer { border-color: var(--halt); }
 .needs-answer blockquote.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem; border-left: 3px solid var(--halt); background: var(--bg-raised); font-style: italic; }
 @media (max-width: 720px) { .rel-step { grid-template-columns: 1fr; gap: 0.2rem; } }
+
+/* ---- Redesign: Clarify and Design boards ---- */
+.agree-list { margin: 0; padding: 0; list-style: none; }
+.agree-item { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 0.5rem; padding: 0.7rem 0; border-top: 1px solid var(--border); }
+.agree-item:first-child { border-top: 0; }
+.agree-n { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.agree-text { margin: 0 0 0.2rem; font-weight: 500; }
+.agree-body p { margin: 0.15rem 0; }

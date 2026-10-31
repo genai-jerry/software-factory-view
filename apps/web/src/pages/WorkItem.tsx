@@ -7,11 +7,12 @@ import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel } from "../lib/labels.js";
 import { STAGES, STAGE_LABEL, stageOf, type Stage } from "../lib/work.js";
 import { caseIdOf, parseTestPlan, plain, type PlanCase, type TestPlan } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, Me } from "../types.js";
-import { GateTab, ThreadsTab } from "./EpicWorkspace.js";
+import { ThreadsTab } from "./EpicWorkspace.js";
 import { QaPanel } from "./QaPanel.js";
 import { ReportBug, TestVerdict } from "./SystemTests.js";
 import { ReleaseBoard } from "./ReleaseBoard.js";
 import { BuildBoard } from "./BuildBoard.js";
+import { ClarifyBoard, DesignBoard } from "./PlanBoards.js";
 
 /**
  * One work item, stage by stage (redesign boards 4–8). The page is the
@@ -21,7 +22,7 @@ import { BuildBoard } from "./BuildBoard.js";
  * header until their boards land. The engineers' workspace stays at
  * `/epics/:id`.
  */
-export function WorkItemPage({ me }: { me: Me }) {
+export function WorkItemPage({ me: _me }: { me: Me }) {
   const { id = "" } = useParams();
   const ws = useQuery({
     queryKey: ["epic", id],
@@ -71,8 +72,10 @@ export function WorkItemPage({ me }: { me: Me }) {
             <ReleaseBoard data={data} />
           ) : stage === "build" ? (
             <BuildBoard data={data} />
-          ) : stage === "clarify" || stage === "design" ? (
-            <GateOrWait data={data} me={me} stage={stage} />
+          ) : stage === "clarify" ? (
+            <ClarifyBoard data={data} />
+          ) : stage === "design" ? (
+            <DesignBoard data={data} />
           ) : (
             <section className="card">
               <h2>{peopleLabel(data.epic.state)}</h2>
@@ -122,31 +125,6 @@ function StageRail({ current, state }: { current: Stage | null; state: string | 
       ))}
       {at < 0 && <span className="stage-chip halt">{peopleLabel(state)}</span>}
     </nav>
-  );
-}
-
-function GateOrWait({ data, me, stage }: { data: EpicWorkspace; me: Me; stage: Stage }) {
-  const gateOpen =
-    data.gate !== null &&
-    ["factory:spec-ready", "factory:design-ready", "factory:epic-ready", "factory:in-staging"].includes(data.epic.state ?? "");
-  const waiting = { clarify: "The plan is being written.", design: "The design is being written." }[stage as "clarify" | "design"];
-  return (
-    <>
-      <section className="card">
-        <h2>{gateOpen ? "Your decision" : waiting}</h2>
-        {gateOpen ? (
-          <GateTab epicId={data.epic.id} me={me} />
-        ) : (
-          <p>
-            {data.epic.nextStep.who}: {data.epic.nextStep.how}
-          </p>
-        )}
-      </section>
-      <section className="card">
-        <h2>Conversations</h2>
-        <ThreadsTab data={data} />
-      </section>
-    </>
   );
 }
 
