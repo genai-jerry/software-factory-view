@@ -8,6 +8,7 @@ import {
   TEST_FAILED_STATE,
   TEST_PASSED_BODY,
   TEST_PASSED_STATE,
+  TEST_SKIPPED_STATE,
   decryptSecret,
 } from "@console/core";
 import {
@@ -342,7 +343,7 @@ async function loadAssemblyEvidence(
     open: boolean;
     htmlUrl: string;
     caseId: string | null;
-    verdict: "passed" | "failed" | "runnable" | "pending";
+    verdict: "passed" | "failed" | "runnable" | "pending" | "skipped";
     verdictBy: string | null;
     verdictAt: Date | null;
   }>;
@@ -388,7 +389,9 @@ async function loadAssemblyEvidence(
     ...dto(c),
     caseId: /^test\(\d+\):\s*(ST-\d+)/i.exec(c.title)?.[1] ?? null,
     verdict:
-      c.factoryState === TEST_PASSED_STATE || (!(c.state === "open") && c.factoryState !== TEST_FAILED_STATE)
+      c.factoryState === TEST_SKIPPED_STATE
+        ? ("skipped" as const)
+        : c.factoryState === TEST_PASSED_STATE || (!(c.state === "open") && c.factoryState !== TEST_FAILED_STATE)
         ? ("passed" as const)
         : c.factoryState === TEST_FAILED_STATE
           ? ("failed" as const)
@@ -430,7 +433,7 @@ async function loadAssemblyEvidence(
      * every one of those the decision is the approver's, and hiding the
      * button would strand it.
      */
-    testsOutstanding: cases.filter((c) => c.verdict !== "passed").length,
+    testsOutstanding: cases.filter((c) => c.verdict !== "passed" && c.verdict !== "skipped").length,
     bugs,
     /**
      * Open bug reports (FACTORY.md §4c). Under `mode: gate` with an epic

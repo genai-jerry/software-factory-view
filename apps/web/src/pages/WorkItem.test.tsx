@@ -77,6 +77,7 @@ const epic: EpicWorkspace = {
     task({ id: "k1", number: 62, title: "task(35): compute counts", state: "factory:on-epic" }),
     task({ id: "c1", number: 66, title: "test(35): ST-1 A lead's CRM calling status reaches the leads page", kind: "test", caseId: "ST-1", state: "factory:manual-test" }),
     task({ id: "c2", number: 67, title: "test(35): ST-2 A lead with no CRM calling status shows a placeholder", kind: "test", caseId: "ST-2", state: "factory:test-passed", open: false }),
+    task({ id: "c4", number: 69, title: "test(35): ST-4 A status older than a day is greyed", kind: "test", caseId: "ST-4", state: "factory:test-skipped", open: false }),
     task({
       id: "c3",
       number: 68,
@@ -142,7 +143,8 @@ describe("WorkItemPage at Test", () => {
     renderItem();
     await screen.findByRole("heading", { name: /Test cases/ });
     expect(screen.getByRole("navigation", { name: "Stage" }).querySelector(".wi-stage.now")).toHaveTextContent("Test");
-    expect(screen.getByText("1 of 3 passed")).toBeInTheDocument();
+    // A skipped case is done but never counted as passed.
+    expect(screen.getByText("1 of 4 passed · 1 skipped")).toBeInTheDocument();
     expect(screen.getByText("1 to run · 1 not ready")).toBeInTheDocument();
     const st1 = screen.getByRole("article", { name: /^ST-1:/ });
     expect(within(st1).getByText("Run it")).toBeInTheDocument();
@@ -154,8 +156,20 @@ describe("WorkItemPage at Test", () => {
     // The environment comes from the plan.
     expect(screen.getByText("Run both repos on the local stack.")).toBeInTheDocument();
     expect(screen.getByText("AUTH_ENABLED=true")).toBeInTheDocument();
-    // Passed cases are folded away.
-    expect(screen.getByRole("button", { name: "Show the 1 passed test" })).toBeInTheDocument();
+    // Passed and skipped cases are folded away together.
+    await userEvent.click(screen.getByRole("button", { name: "Show the 2 passed and skipped tests" }));
+    expect(within(screen.getByRole("article", { name: /^ST-4:/ })).getByText("Skipped · not run")).toBeInTheDocument();
+  });
+
+  it("skips the open cases by asking the factory on the epic", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderItem();
+    await screen.findByRole("heading", { name: /Test cases/ });
+    await userEvent.click(screen.getByRole("button", { name: "Skip the tests" }));
+    expect(screen.getByText(/Close every open case \(2\) as skipped\. Bugs already raised stay open\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Skip them" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/e35/reply", { body: "Skip tests" }));
+    expect(await screen.findByText(/The factory is closing the open cases as skipped/)).toBeInTheDocument();
   });
 
   it("records a pass from the case", async () => {

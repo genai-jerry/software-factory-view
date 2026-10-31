@@ -51,11 +51,13 @@ export interface EpicTests {
   runnable: number;
   /** Failed; a fix task is in flight. */
   failed: number;
+  /** Skipped by a staging approver: closed, not run, not passed. */
+  skipped?: number;
 }
 
-/** Cases neither passed nor abandoned — what the epic is still waiting on. */
+/** Cases neither passed, skipped nor abandoned — what the epic is still waiting on. */
 export function testsOutstanding(tests: EpicTests | undefined): number {
-  return tests ? tests.total - tests.passed : 0;
+  return tests ? tests.total - tests.passed - (tests.skipped ?? 0) : 0;
 }
 
 /**

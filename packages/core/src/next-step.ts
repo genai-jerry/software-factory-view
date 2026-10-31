@@ -198,6 +198,10 @@ const TABLE: Record<string, Entry> = {
     who: "nobody — this case is done",
     how: "It passed and is closed. The epic reaches gate GS once its remaining cases and tasks are done too.",
   },
+  "factory:test-skipped": {
+    who: "nobody — this case was skipped",
+    how: "A staging approver skipped it, so it was not run and is closed. The release carries it as evidence of what was not tested. To run it after all, reopen the case and apply `factory:manual-test`.",
+  },
   // Bug reports (FACTORY.md §4c). Same shape as the case states above: the
   // report is the record, the fix is an ordinary task, and a human closes it.
   "factory:bug-open": {
@@ -366,7 +370,7 @@ function buildingEntry(tasks: NextStepProgress | undefined, expedited: boolean |
   // the epic is promoted, so "done" cannot see them). What the epic waits on
   // now is people: its system test cases, which only a tester can pass.
   const assembled = tasks.done + tasks.shipping === tasks.total;
-  const testsOpen = tasks.tests ? tasks.tests.total - tasks.tests.passed : 0;
+  const testsOpen = tasks.tests ? tasks.tests.total - tasks.tests.passed - (tasks.tests.skipped ?? 0) : 0;
   if (assembled && testsOpen > 0) {
     return {
       who: "you — the testers",

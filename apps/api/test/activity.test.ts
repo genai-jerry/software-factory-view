@@ -93,6 +93,13 @@ describe("lineFor", () => {
     expect(lineFor({ ...base, kind: "test", number: 68, title: "test(35): ST-3 A status follows through", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-failed", actor: "sowmya" })!.text).toBe(
       "sowmya ran test ST-3 of Day-wise: failed. The fix is being built.",
     );
+    // A skipped case is said as skipped, never as run.
+    expect(lineFor({ ...base, kind: "test", number: 69, title: "test(35): ST-4 Old status is greyed", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-skipped", actor: "jerry" })!.text).toBe(
+      "jerry skipped test ST-4 of Day-wise.",
+    );
+    expect(lineFor({ ...base, kind: "test", number: 69, title: "test(34): ST-4 Old status is greyed", toState: "factory:test-skipped", actor: "jerry" })!.text).toBe(
+      "jerry skipped test ST-4: Old status is greyed.",
+    );
     // A task becoming ready is the dispatcher's housekeeping on an epic; said for the task, not the epic.
     expect(lineFor({ ...base, toState: "factory:ready", actor: null })).toBeNull();
   });

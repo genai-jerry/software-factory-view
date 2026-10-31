@@ -137,7 +137,7 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
     case "ship":
       return "Ship: on staging and green. Ship to production?";
     case "release":
-      return `Release: ${tasks.total} task${tasks.total === 1 ? "" : "s"} built${tasks.tests ? ` and ${tasks.tests.passed} of ${tasks.tests.total} tests passed` : ""}. Release to staging?`;
+      return `Release: ${tasks.total} task${tasks.total === 1 ? "" : "s"} built${tasks.tests ? ` and ${tasks.tests.passed} of ${tasks.tests.total} tests passed${tasks.tests.skipped ? `, ${tasks.tests.skipped} skipped` : ""}` : ""}. Release to staging?`;
     case "decide":
       if (entry.state === "factory:spec-ready") return "Decide: approve the plan.";
       if (entry.state === "factory:design-ready") return "Decide: approve the design.";

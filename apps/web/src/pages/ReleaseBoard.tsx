@@ -39,8 +39,12 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
 
   const tests = data.rollup.tests;
   const cases = data.tasks.filter((t) => t.kind === "test");
-  const passed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")).length;
-  const built = `${data.rollup.total} task${data.rollup.total === 1 ? "" : "s"}${cases.length > 0 ? `, ${passed} of ${cases.length} tests passed` : ""}`;
+  const skipped = cases.filter((c) => c.state === "factory:test-skipped").length;
+  const passed = cases.filter((c) => c.state !== "factory:test-skipped" && (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"))).length;
+  // A case still open — runnable, failed, or not yet released — has not been
+  // run. Said before Ship to production, because shipping then ships untested.
+  const notRun = cases.filter((c) => c.open && c.state !== "factory:test-passed" && c.state !== "factory:test-skipped").length;
+  const built = `${data.rollup.total} task${data.rollup.total === 1 ? "" : "s"}${cases.length > 0 ? `, ${passed} of ${cases.length} tests passed${skipped > 0 ? `, ${skipped} skipped` : ""}` : ""}`;
 
   return (
     <>
@@ -89,6 +93,11 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
       </section>
 
       {atStaging && <ReleaseToStaging data={data} gate={gate.data ?? null} />}
+      {atProduction && notRun > 0 && (
+        <p className="banner warn">
+          {notRun} test case{notRun === 1 ? " has" : "s have"} not been run. Shipping now ships untested.
+        </p>
+      )}
       {atProduction && <ShipToProduction data={data} gate={gate.data ?? null} gateError={gate.isError ? (gate.error as ApiError).message : null} />}
       {live && (
         <section className="card">
@@ -171,7 +180,13 @@ function ReleaseToStaging({ data, gate }: { data: EpicWorkspace; gate: GatePanel
       <p className="need">You need to: release it to staging, or hold it.</p>
       <ul className="facts">
         {a && <li>{a.tasks.length} task{a.tasks.length === 1 ? "" : "s"} assembled{a.allGreen ? ", all green" : ""}.</li>}
-        {a && a.cases.length > 0 && <li>{a.cases.length - a.testsOutstanding} of {a.cases.length} tests passed{a.testsOutstanding > 0 ? `, ${a.testsOutstanding} outstanding` : ""}.</li>}
+        {a && a.cases.length > 0 && (
+          <li>
+            {a.cases.filter((c) => c.verdict === "passed").length} of {a.cases.length} tests passed
+            {a.cases.some((c) => c.verdict === "skipped") ? `, ${a.cases.filter((c) => c.verdict === "skipped").length} skipped` : ""}
+            {a.testsOutstanding > 0 ? `, ${a.testsOutstanding} outstanding` : ""}.
+          </li>
+        )}
         {a && a.bugsOpen > 0 && <li>{a.bugsOpen} bug{a.bugsOpen === 1 ? "" : "s"} still open.</li>}
         {gate && gate.openQuestions.length > 0 && (
           <li>

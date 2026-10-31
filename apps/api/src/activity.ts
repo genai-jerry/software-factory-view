@@ -78,6 +78,16 @@ export function lineFor(m: Move): ActivityLine | null {
       return { who, person, text: `${who} ran ${on}: passed.`, stage: "test" };
     case "factory:test-failed":
       return { who, person, text: `${who} ran ${on}: failed. The fix is being built.`, stage: "test" };
+    case "factory:test-skipped": {
+      // Skipped by a staging approver (`Skip tests`): not run, closed, and
+      // said as such so the feed never reads it as a pass.
+      const caseId = short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `#${m.number}`;
+      if (m.epicTitle === null) {
+        const what = short(m.title).replace(/^(ST|TC)-\d+\s*/, "");
+        return { who, person, text: `${who} skipped test ${caseId}: ${what}.`, stage: "test" };
+      }
+      return { who, person, text: `${who} skipped test ${caseId} of ${item}.`, stage: "test" };
+    }
     case "factory:bug-open":
       return { who, person, text: `${who} reported ${on}. The fix is being built.`, stage: "test" };
     case "factory:bug-retest":
