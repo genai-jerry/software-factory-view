@@ -5,7 +5,8 @@ import type { FastifyInstance } from "fastify";
 import { buildAttention, loadBlockedMeta } from "../attention.js";
 import { requireAuth, type AppDeps } from "../context.js";
 import { loadApproversForGate } from "../start-gate.js";
-import { loadDependencies, loadIssue, resolveRepoFilter, runningRoleOf, taskRollup, type RepoFilterQuery } from "./read.js";
+import { agentRoleLabel, loadDependencies, loadIssue, resolveRepoFilter, runningRoleOf, taskRollup, type RepoFilterQuery } from "./read.js";
+import { fetchActiveRuns } from "../orchestrator-dispatch.js";
 
 /**
  * The individual view (plan 07 §4): one round trip answering, in order,
@@ -41,7 +42,7 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
     const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
     if (repoFilter && repoFilter.length === 0) return { running: [] };
 
-    const rows = await db
+    const allRows = await db
       .select({ issue: issues, repoFullName: repos.fullName })
       .from(issues)
       .innerJoin(repos, eq(repos.id, issues.repoId))
@@ -51,29 +52,48 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
           eq(issues.state, "open"),
           inArray(issues.kind, ["task", "epic"]),
           dsql`${issues.labels} @> ${JSON.stringify([IN_PROGRESS_LABEL])}::jsonb`,
-          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
         ),
       )
-      .orderBy(desc(issues.ghUpdatedAt))
-      .limit(RUNNING_CAP);
+      .orderBy(desc(issues.ghUpdatedAt));
 
-    const parentIds = [...new Set(rows.map((r) => r.issue.parentIssueId).filter((id): id is string => Boolean(id)))];
+    const parentIds = [...new Set(allRows.map((r) => r.issue.parentIssueId).filter((id): id is string => Boolean(id)))];
     const parents = parentIds.length
-      ? await db.select({ id: issues.id, number: issues.number, title: issues.title }).from(issues).where(inArray(issues.id, parentIds))
+      ? await db
+          .select({ id: issues.id, number: issues.number, title: issues.title, repoId: issues.repoId })
+          .from(issues)
+          .where(inArray(issues.id, parentIds))
       : [];
     const parentOf = new Map(parents.map((p) => [p.id, p]));
+
+    // The focus is on repos, but a cross-repo epic keeps its tasks in sibling
+    // repos: a task belongs to its epic's repo as much as to its own, so the
+    // beacon-api view still shows the beacon-connectors task an epic is
+    // waiting on.
+    const rows = allRows
+      .filter(
+        ({ issue }) =>
+          !repoFilter ||
+          repoFilter.includes(issue.repoId) ||
+          repoFilter.includes(parentOf.get(issue.parentIssueId ?? "")?.repoId ?? ""),
+      )
+      .slice(0, RUNNING_CAP);
+    const activeRuns = rows.length ? await fetchActiveRuns(deps.cfg) : new Map();
 
     return {
       running: rows.map(({ issue, repoFullName }) => {
         const isEpic = issue.kind === "epic";
         const epic = isEpic ? issue : parentOf.get(issue.parentIssueId ?? "");
+        const run = activeRuns.get(`${repoFullName}#${issue.number}`);
         return {
           issueId: issue.id,
           number: issue.number,
           title: issue.title.replace(/^task\([^)]*\):?\s*/i, ""),
           repo: repoFullName,
           kind: issue.kind,
-          role: isEpic ? (EPIC_RUNNING_ROLE[issue.factoryState ?? ""] ?? "Factory") : runningRoleOf(issue.factoryState),
+          // The orchestrator's own word for the role when it is running, else
+          // the one the stage implies. `runId` is the log the card opens.
+          role: agentRoleLabel(run?.role) ?? (isEpic ? (EPIC_RUNNING_ROLE[issue.factoryState ?? ""] ?? "Factory") : runningRoleOf(issue.factoryState)),
+          runId: run?.id ?? null,
           epicId: isEpic ? issue.id : (issue.parentIssueId ?? issue.id),
           epicNumber: epic?.number ?? issue.number,
           epicTitle: epic?.title ?? issue.title,

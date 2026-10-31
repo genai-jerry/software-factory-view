@@ -358,6 +358,9 @@ export interface EpicWorkspace {
     /** A factory run is live on this task now, and which role it is. */
     running?: boolean;
     runningRole?: string | null;
+    /** The live orchestrator run on this task, and the repo the task is in. */
+    runId?: string | null;
+    repo?: string;
     /** The start gate is open AND still takes an approval: draw the button. */
     approvable: boolean;
   }>;
@@ -686,6 +689,8 @@ export interface RunningItem {
   repo: string;
   kind: "task" | "epic";
   role: string;
+  /** The live orchestrator run: its log is what the card opens. Null when the orchestrator cannot say. */
+  runId?: string | null;
   epicId: string;
   epicNumber: number;
   epicTitle: string;

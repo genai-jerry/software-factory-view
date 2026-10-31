@@ -215,6 +215,34 @@ export async function fetchOrchestratorTranscript(
   return { ok: true, transcript: got.text ?? "" };
 }
 
+export interface ActiveRun {
+  id: string;
+  /** The orchestrator's role name: implementer, reviewer, qa, release, … */
+  role: string;
+  startedAt: string;
+}
+
+/**
+ * Every run live on the orchestrator right now, keyed `owner/repo#issue`
+ * (the newest, where a restart left two). The run is what a "running" badge
+ * should open: its log says what the agent is doing. An orchestrator that
+ * cannot be reached, or is too old to list runs, gives an empty map — the
+ * badge still shows, with the role guessed from the stage and no log link.
+ */
+export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, ActiveRun>> {
+  const out = new Map<string, ActiveRun>();
+  const got = await orchestratorGet(cfg, "/runs?active=true");
+  if ("error" in got || !Array.isArray(got.body)) return out;
+  for (const r of got.body as Array<{ id?: string; repo?: string; issue?: number; role?: string; started_at?: string }>) {
+    if (!r.id || !r.repo || typeof r.issue !== "number") continue;
+    const key = `${r.repo}#${r.issue}`;
+    const startedAt = r.started_at ?? "";
+    const prior = out.get(key);
+    if (!prior || startedAt > prior.startedAt) out.set(key, { id: r.id, role: r.role ?? "", startedAt });
+  }
+  return out;
+}
+
 /**
  * A person's question about a thread, answered by the orchestrator's Claude
  * CLI (POST /ask) — the subscription token works there, not on the API. The
