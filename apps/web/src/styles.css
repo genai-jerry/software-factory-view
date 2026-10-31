@@ -279,6 +279,29 @@ textarea { min-height: 5rem; resize: vertical; }
 }
 .board-card .meta { color: var(--text-dim); font-size: 0.78rem; margin-top: 0.3rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .board-card.blocked { border-color: var(--red); }
+/* "Running now" on the home page: small cards, one per live run. */
+.running-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.5rem; }
+.running-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.running-card:hover { border-color: var(--accent); text-decoration: none; }
+.running-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+}
+.running-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
 .board-card .board-stages { margin-top: 0.4rem; font-size: 0.8rem; font-weight: 600; }
 /* Where an epic's tasks are, in the stage columns its own card is not in. */
 .board-chip {

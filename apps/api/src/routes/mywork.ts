@@ -1,11 +1,11 @@
-import { gateOfState, phaseOfState, NEXT_MOVER, stateSentence } from "@console/core";
+import { IN_PROGRESS_LABEL, gateOfState, phaseOfState, NEXT_MOVER, stateSentence } from "@console/core";
 import { issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull, or, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { buildAttention, loadBlockedMeta } from "../attention.js";
 import { requireAuth, type AppDeps } from "../context.js";
 import { loadApproversForGate } from "../start-gate.js";
-import { loadDependencies, loadIssue, resolveRepoFilter, taskRollup, type RepoFilterQuery } from "./read.js";
+import { loadDependencies, loadIssue, resolveRepoFilter, runningRoleOf, taskRollup, type RepoFilterQuery } from "./read.js";
 
 /**
  * The individual view (plan 07 §4): one round trip answering, in order,
@@ -17,8 +17,70 @@ import { loadDependencies, loadIssue, resolveRepoFilter, taskRollup, type RepoFi
 
 const DAY_MS = 86_400_000;
 
+/** What a live run on an epic itself is: the stage that hands it to a role. */
+const EPIC_RUNNING_ROLE: Record<string, string> = {
+  "factory:intake": "Intake Analyst",
+  "factory:spec-approved": "Planner",
+  "factory:planned": "Architect",
+  "factory:design-approved": "Dispatcher",
+};
+
+const RUNNING_CAP = 50;
+
 export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
+
+  /**
+   * Everything the factory is working on right now: each open task or epic
+   * that carries the run marker, newest first. The home page shows them as
+   * small cards, so nobody has to open an epic to see an agent is busy.
+   */
+  app.get<{ Querystring: RepoFilterQuery }>("/api/running", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    if (repoFilter && repoFilter.length === 0) return { running: [] };
+
+    const rows = await db
+      .select({ issue: issues, repoFullName: repos.fullName })
+      .from(issues)
+      .innerJoin(repos, eq(repos.id, issues.repoId))
+      .where(
+        and(
+          inArray(issues.orgId, ctx.orgIds),
+          eq(issues.state, "open"),
+          inArray(issues.kind, ["task", "epic"]),
+          dsql`${issues.labels} @> ${JSON.stringify([IN_PROGRESS_LABEL])}::jsonb`,
+          ...(repoFilter ? [inArray(issues.repoId, repoFilter)] : []),
+        ),
+      )
+      .orderBy(desc(issues.ghUpdatedAt))
+      .limit(RUNNING_CAP);
+
+    const parentIds = [...new Set(rows.map((r) => r.issue.parentIssueId).filter((id): id is string => Boolean(id)))];
+    const parents = parentIds.length
+      ? await db.select({ id: issues.id, number: issues.number, title: issues.title }).from(issues).where(inArray(issues.id, parentIds))
+      : [];
+    const parentOf = new Map(parents.map((p) => [p.id, p]));
+
+    return {
+      running: rows.map(({ issue, repoFullName }) => {
+        const isEpic = issue.kind === "epic";
+        const epic = isEpic ? issue : parentOf.get(issue.parentIssueId ?? "");
+        return {
+          issueId: issue.id,
+          number: issue.number,
+          title: issue.title.replace(/^task\([^)]*\):?\s*/i, ""),
+          repo: repoFullName,
+          kind: issue.kind,
+          role: isEpic ? (EPIC_RUNNING_ROLE[issue.factoryState ?? ""] ?? "Factory") : runningRoleOf(issue.factoryState),
+          epicId: isEpic ? issue.id : (issue.parentIssueId ?? issue.id),
+          epicNumber: epic?.number ?? issue.number,
+          epicTitle: epic?.title ?? issue.title,
+        };
+      }),
+    };
+  });
 
   app.get<{ Querystring: RepoFilterQuery }>("/api/my-work", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
