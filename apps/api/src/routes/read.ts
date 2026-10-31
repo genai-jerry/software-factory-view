@@ -406,6 +406,11 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           }),
           startStatus,
           approvable: startStatusTakesApproval(startStatus),
+          // A factory run is live on this task right now (the run marker is
+          // on it), and which role, read from the stage it is in — what the
+          // epic's header says so nobody has to open each task to find out.
+          running: t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL),
+          runningRole: t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL) ? runningRoleOf(t.factoryState) : null,
         };
       }),
       rollup,
@@ -993,6 +998,18 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
   }
   rollup.inFlight = tasksInFlight(rollup);
   return rollup;
+}
+
+/** The role a live run on a task in this stage is: the one that stage hands to. */
+const RUNNING_ROLE: Record<string, string> = {
+  "factory:ready": "Implementer",
+  "factory:in-review": "Reviewer",
+  "factory:in-test": "QA",
+  "factory:ready-to-ship": "Release Manager",
+  "factory:on-epic": "Release Manager",
+};
+export function runningRoleOf(state: string | null): string {
+  return (state && RUNNING_ROLE[state]) || "Factory";
 }
 
 /** A nightly walk (03:17 UTC) that has not happened in this long was missed. */

@@ -206,3 +206,13 @@ describe("POST /api/issues/:id/approve", () => {
     expect(ws.json().startGate).toMatchObject({ amApprover: false, approvers: ["sam"] });
   });
 });
+
+describe("runningRoleOf", () => {
+  it("reads the role from the stage the live run is in", async () => {
+    const { runningRoleOf } = await import("../src/routes/read.js");
+    expect([
+      runningRoleOf("factory:ready"), runningRoleOf("factory:in-review"), runningRoleOf("factory:in-test"),
+      runningRoleOf("factory:on-epic"), runningRoleOf(null),
+    ]).toEqual(["Implementer", "Reviewer", "QA", "Release Manager", "Factory"]);
+  });
+});
