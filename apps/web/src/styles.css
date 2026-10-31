@@ -1303,3 +1303,11 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .agree-n { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 .agree-text { margin: 0 0 0.2rem; font-weight: 500; }
 .agree-body p { margin: 0.15rem 0; }
+
+/* ---- Redesign: a run in plain words ---- */
+.run-now { border-color: var(--accent); background: var(--accent-soft); }
+.run-sofar { margin: 0; padding: 0; list-style: none; }
+.run-sofar li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; border-top: 1px solid var(--border); }
+.run-sofar li:first-child { border-top: 0; }
+.run-sofar li.now span:first-child { font-weight: 600; }
+.run-log-fold summary { cursor: pointer; font-weight: 600; min-height: var(--target); display: flex; align-items: center; }
