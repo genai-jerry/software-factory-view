@@ -10,6 +10,7 @@ import {
   expediteAvailability,
 } from "../expedite.js";
 import { postComment, writeLabel } from "../gh-write.js";
+import { THREAD_INSTRUCTIONS } from "@console/insight";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadEpic } from "./read.js";
@@ -162,6 +163,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       repo: name,
       question,
       context,
+      instructions: THREAD_INSTRUCTIONS,
       branch: `factory/epic-${epic.number}`,
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,

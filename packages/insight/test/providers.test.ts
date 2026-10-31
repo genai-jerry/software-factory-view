@@ -129,3 +129,15 @@ describe("listModels", () => {
     await expect(listModels("grok", "bad")).rejects.toThrow(/grok 401/);
   });
 });
+
+describe("the writing standard", () => {
+  it("is part of every provider's system prompt and of the CLI and thread instructions", async () => {
+    const { ANSWER_STYLE, CLI_INSTRUCTIONS, SYSTEM_PROMPT, THREAD_INSTRUCTIONS } = await import("../src/index.js");
+    for (const text of [SYSTEM_PROMPT, CLI_INSTRUCTIONS, THREAD_INSTRUCTIONS]) {
+      expect(text).toContain(ANSWER_STYLE);
+    }
+    expect(ANSWER_STYLE).toContain("15 words or fewer");
+    expect(ANSWER_STYLE).toContain("**You need to:**");
+    expect(SYSTEM_PROMPT).toContain("Never phrase output as an instruction to approve");
+  });
+});

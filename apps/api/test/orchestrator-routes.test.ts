@@ -221,6 +221,7 @@ describe("POST /api/threads/:id/ask", () => {
     expect(res.statusCode).toBe(200);
     expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
     expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "api", question: "Why is it blocked?", branch: "factory/epic-34" });
+    expect(String(calls[0]!.body.instructions)).toContain("Writing standard");
     const { threadEntries } = await import("@console/db");
     const entries = await deps.dbh.db.select().from(threadEntries);
     expect(entries.map((e) => [e.source, e.author, e.body])).toEqual([
@@ -285,6 +286,8 @@ describe("POST /api/epics/:id/qa with a Claude token", () => {
     expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
     expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "web", branch: "factory/epic-36", claude_code_oauth_token: "sk-ant-oat01-x" });
     expect(String(calls[0]!.body.context)).toContain("[1] (comment) Epic #36: Bug epic");
+    expect(String(calls[0]!.body.instructions)).toContain("Writing standard");
+    expect(String(calls[0]!.body.instructions)).toContain("numbered sources");
     expect(res.json()).toMatchObject({ answer: "The epic body says it is a bug fix [1].", cost: { inputTokens: 900, outputTokens: 60 } });
     expect(res.json().citations[0]).toMatchObject({ ref: "issue/36" });
   });
