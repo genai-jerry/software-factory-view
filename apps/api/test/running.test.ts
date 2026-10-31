@@ -138,3 +138,68 @@ describe("GET /api/running", () => {
     expect(by["acme/api#34"]).toMatchObject({ runId: null, role: "Dispatcher" }); // no run listed: the stage's guess
   });
 });
+
+describe("GET /api/runs/recent", () => {
+  const stubRuns = () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify([
+          { id: "live", repo: "acme/api", issue: 40, role: "qa", outcome: "running", started_at: "2026-10-30 11:50:00", finished_at: null },
+          { id: "r1", repo: "acme/api", issue: 40, role: "reviewer", outcome: "success", model: "claude-sonnet-5-5", has_log: true,
+            started_at: "2026-10-30 11:00:00.123456", finished_at: "2026-10-30 11:04:12.5" },
+          { id: "r2", repo: "acme/web", issue: 7, role: "implementer", outcome: "error", has_log: false,
+            error: "Claude usage limit reached:   \"You've hit your session limit\"", started_at: "2026-10-30 10:00:00", finished_at: "2026-10-30 10:00:45" },
+          { id: "r3", repo: "acme/api", issue: 34, role: "dispatch", outcome: "timeout", started_at: "2026-10-30 09:00:00", finished_at: "2026-10-30 09:45:00" },
+          { id: "other", repo: "someone/else", issue: 1, role: "qa", outcome: "success", started_at: "2026-10-30 08:00:00", finished_at: "2026-10-30 08:01:00" },
+        ]),
+        { status: 200 },
+      ),
+    );
+  };
+  const recent = async (qs = "") => app.inject({ method: "GET", url: `/api/runs/recent${qs}`, headers: { cookie } });
+
+  it("requires a session", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/runs/recent" })).statusCode).toBe(401);
+  });
+
+  it("lists finished runs on this org's repos, with what they were on and how they ended", async () => {
+    stubRuns();
+    const body = (await recent()).json() as { runs: Array<Record<string, unknown>>; hasMore: boolean };
+    // The live run and another tenant's repo are left out.
+    expect(body.runs.map((r) => r.runId)).toEqual(["r1", "r2", "r3"]);
+    expect(body.hasMore).toBe(false);
+    expect(body.runs[0]).toMatchObject({
+      repo: "acme/api", number: 40, title: "The status map", role: "Reviewer", outcome: "success",
+      seconds: 252, model: "claude-sonnet-5-5", hasLog: true, epicId: id.epic, epicNumber: 34,
+    });
+    expect(body.runs[0]!.startedAt).toBe("2026-10-30T11:00:00.123Z");
+    expect(body.runs[1]).toMatchObject({ role: "Implementer", outcome: "error", hasLog: false, seconds: 45 });
+    expect(body.runs[1]!.error).toBe('Claude usage limit reached: "You\'ve hit your session limit"');
+    expect(body.runs[2]).toMatchObject({ kind: "epic", role: "Dispatcher", outcome: "timeout" });
+  });
+
+  it("shows ten at a time, and says when there are more", async () => {
+    stubRuns();
+    const page = (await recent("?limit=2")).json() as { runs: unknown[]; hasMore: boolean };
+    expect(page.runs).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+    expect(((await recent("?limit=0")).json() as { runs: unknown[] }).runs).toHaveLength(3); // bad limit: the default of 10
+  });
+
+  it("follows the repo focus, counting a sibling-repo task with its epic", async () => {
+    stubRuns();
+    const apiFocus = (await recent(`?repo=${id.apiRepo}`)).json().runs as Array<{ runId: string }>;
+    expect(apiFocus.map((r) => r.runId)).toEqual(["r1", "r2", "r3"]); // r2 is acme/web#7, a task of the acme/api epic
+    const webFocus = (await recent(`?repo=${id.webRepo}`)).json().runs as Array<{ runId: string }>;
+    expect(webFocus.map((r) => r.runId)).toEqual(["r2"]);
+  });
+
+  it("shows nothing when the orchestrator cannot be reached", async () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async () => { throw new Error("down"); });
+    expect((await recent()).json()).toEqual({ runs: [], hasMore: false });
+  });
+});

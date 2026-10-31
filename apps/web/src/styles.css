@@ -303,6 +303,15 @@ textarea { min-height: 5rem; resize: vertical; }
   font-weight: 600;
 }
 .running-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+/* A finished run's reason for failing: short, two lines at most. */
+.running-card-error {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.78rem;
+  color: var(--red);
+}
 .board-card .board-stages { margin-top: 0.4rem; font-size: 0.8rem; font-weight: 600; }
 /* Where an epic's tasks are, in the stage columns its own card is not in. */
 .board-chip {

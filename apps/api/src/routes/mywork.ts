@@ -6,7 +6,7 @@ import { buildAttention, loadBlockedMeta } from "../attention.js";
 import { requireAuth, type AppDeps } from "../context.js";
 import { loadApproversForGate } from "../start-gate.js";
 import { agentRoleLabel, loadDependencies, loadIssue, resolveRepoFilter, runningRoleOf, taskRollup, type RepoFilterQuery } from "./read.js";
-import { fetchActiveRuns } from "../orchestrator-dispatch.js";
+import { fetchActiveRuns, fetchPastRuns } from "../orchestrator-dispatch.js";
 
 /**
  * The individual view (plan 07 §4): one round trip answering, in order,
@@ -97,6 +97,82 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
           epicId: isEpic ? issue.id : (issue.parentIssueId ?? issue.id),
           epicNumber: epic?.number ?? issue.number,
           epicTitle: epic?.title ?? issue.title,
+        };
+      }),
+    };
+  });
+
+  /**
+   * The factory's recent finished runs, newest first, ten at a time: what ran,
+   * on what, how it ended and for how long. The orchestrator keeps its newest
+   * hundred, so `limit` goes up to 100. Only runs on repos this user's orgs
+   * own are shown, and the repo focus applies the way it does to the live
+   * cards (a task counts with its epic's repo too).
+   */
+  app.get<{ Querystring: RepoFilterQuery & { limit?: string } }>("/api/runs/recent", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const repoFilter = await resolveRepoFilter(deps, ctx, req.query);
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit)) || 10));
+    if (repoFilter && repoFilter.length === 0) return { runs: [], hasMore: false };
+
+    const past = await fetchPastRuns(deps.cfg);
+    if (past.length === 0) return { runs: [], hasMore: false };
+
+    // Which of these repos belong to this user's orgs, and what each run was on.
+    const names = [...new Set(past.map((r) => r.repo))];
+    const repoRows = await db
+      .select({ id: repos.id, fullName: repos.fullName })
+      .from(repos)
+      .where(and(inArray(repos.fullName, names), inArray(repos.orgId, ctx.orgIds)));
+    const repoByName = new Map(repoRows.map((r) => [r.fullName, r.id]));
+    const issueRows = repoRows.length
+      ? await db
+          .select({ id: issues.id, repoId: issues.repoId, number: issues.number, title: issues.title, kind: issues.kind, parentIssueId: issues.parentIssueId })
+          .from(issues)
+          .where(and(inArray(issues.repoId, repoRows.map((r) => r.id)), inArray(issues.number, [...new Set(past.map((r) => r.issue))])))
+      : [];
+    const issueOf = new Map(issueRows.map((i) => [`${i.repoId}#${i.number}`, i]));
+    const parentIds = [...new Set(issueRows.map((i) => i.parentIssueId).filter((id): id is string => Boolean(id)))];
+    const parents = parentIds.length
+      ? await db.select({ id: issues.id, repoId: issues.repoId, number: issues.number }).from(issues).where(inArray(issues.id, parentIds))
+      : [];
+    const parentOf = new Map(parents.map((p) => [p.id, p]));
+
+    const mine = past.filter((r) => {
+      const repoId = repoByName.get(r.repo);
+      if (!repoId) return false; // another tenant's repo, or one the Console does not know
+      if (!repoFilter) return true;
+      const issue = issueOf.get(`${repoId}#${r.issue}`);
+      const parentRepo = issue?.parentIssueId ? parentOf.get(issue.parentIssueId)?.repoId : undefined;
+      return repoFilter.includes(repoId) || (parentRepo !== undefined && repoFilter.includes(parentRepo));
+    });
+
+    return {
+      hasMore: mine.length > limit,
+      runs: mine.slice(0, limit).map((r) => {
+        const repoId = repoByName.get(r.repo)!;
+        const issue = issueOf.get(`${repoId}#${r.issue}`);
+        const parent = issue?.parentIssueId ? parentOf.get(issue.parentIssueId) : undefined;
+        const started = new Date(r.startedAt.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(r.startedAt) ? "" : "Z"));
+        const finished = new Date(r.finishedAt.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(r.finishedAt) ? "" : "Z"));
+        return {
+          runId: r.id,
+          repo: r.repo,
+          number: r.issue,
+          title: issue ? issue.title.replace(/^task\([^)]*\):?\s*/i, "") : null,
+          kind: issue?.kind ?? null,
+          epicId: issue ? (issue.kind === "epic" ? issue.id : (issue.parentIssueId ?? issue.id)) : null,
+          epicNumber: issue ? (issue.kind === "epic" ? issue.number : (parent?.number ?? null)) : null,
+          role: agentRoleLabel(r.role) ?? (r.role || "Factory"),
+          outcome: r.outcome,
+          startedAt: started.toISOString(),
+          finishedAt: finished.toISOString(),
+          seconds: Math.max(0, Math.round((finished.getTime() - started.getTime()) / 1000)),
+          model: r.model,
+          // The reason a run failed, short: the full text is in the log.
+          error: r.error ? r.error.replace(/\s+/g, " ").slice(0, 200) : null,
+          hasLog: r.hasLog !== false,
         };
       }),
     };
