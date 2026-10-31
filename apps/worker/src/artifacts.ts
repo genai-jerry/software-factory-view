@@ -126,6 +126,14 @@ export async function refreshEpicArtifacts(
   if (paths.size === 0) return;
   const slug = paths.values().next().value!.slug;
 
+  // Where the documents live once their PRs merge: the default branch, or,
+  // with epic branches on (FACTORY.md §6b), the epic's own branch — the spec,
+  // design and test-plan PRs merge there first and reach the default branch
+  // only when the epic ships. Without this read an assembled epic had no
+  // cached version of any of its documents, and the Console could render
+  // neither its gate nor its test plan.
+  const epicRef = `factory/epic-${epicNumber}`;
+
   const changeRow =
     (
       await db
@@ -137,7 +145,9 @@ export async function refreshEpicArtifacts(
 
   for (const [path, meta] of paths) {
     const latestSha = branchRef ? await cacheArtifact(db, repo, reader, path, branchRef, masterKey) : null;
-    const mergedSha = await cacheArtifact(db, repo, reader, path, repo.defaultBranch, masterKey);
+    const mergedSha =
+      (await cacheArtifact(db, repo, reader, path, repo.defaultBranch, masterKey)) ??
+      (await cacheArtifact(db, repo, reader, path, epicRef, masterKey));
     await db
       .insert(changeArtifacts)
       .values({
