@@ -95,6 +95,10 @@ describe("lineFor", () => {
     );
     // A task becoming ready is the dispatcher's housekeeping on an epic; said for the task, not the epic.
     expect(lineFor({ ...base, toState: "factory:ready", actor: null })).toBeNull();
+    // A case with no parent link names what it checks instead of its raw title.
+    expect(lineFor({ ...base, kind: "test", number: 55, title: "test(34): ST-12 A status moved by a human is read back", toState: "factory:manual-test", actor: null })!.text).toBe(
+      "Test ST-12 is ready to run: A status moved by a human is read back.",
+    );
   });
 });
 

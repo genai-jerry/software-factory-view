@@ -65,7 +65,12 @@ export function registerActivityRoutes(app: FastifyInstance, deps: AppDeps): voi
         epicNumber: r.epicNumber,
       });
       if (!line) continue;
+      // Two label moves can say the same thing about the same issue minutes
+      // apart (in-test → on-epic, then ready-to-ship → on-epic). One line.
+      const prev = lines[lines.length - 1];
+      if (prev && prev.text === line.text && prev.issueId === r.issueId) continue;
       lines.push({
+        issueId: r.issueId,
         at: r.at,
         who: line.who,
         person: line.person,
