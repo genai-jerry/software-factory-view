@@ -144,6 +144,7 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
           </span>
         )}
       </NavLink>
+      <NavLink to="/activity">Activity</NavLink>
       {onMore ? (
         <button type="button" className="nav-more" onClick={onMore}>
           More

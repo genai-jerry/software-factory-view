@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api.js";
 import { Banner } from "../components/Banner.js";
 import { RepoChip } from "../components/RepoChip.js";
@@ -16,6 +16,7 @@ import type { BoardCard, EstateSummary, IngestionHealth, MyWork, RunningItem } f
  */
 export function WorkPage() {
   const focus = useFocus();
+  const added = (useLocation().state as { added?: { number: number; title: string } } | null)?.added ?? null;
   const estates = useQuery({
     queryKey: ["estates"],
     queryFn: () => api.get<{ estates: EstateSummary[]; ingestion: IngestionHealth }>("/api/estates"),
@@ -48,7 +49,15 @@ export function WorkPage() {
     <div className="work-page">
       <div className="spread">
         <h1>Work</h1>
+        <Link to="/work/new" className="button primary">
+          Add work
+        </Link>
       </div>
+      {added && (
+        <Banner tone="success">
+          Added #{added.number} {added.title}. The factory reads it and comes back with a plan to approve.
+        </Banner>
+      )}
       {webhooksStuck && ingestion && (
         <Banner tone="error" technical={`${ingestion.pending} webhook deliveries waiting. Worker or Redis may be down.`}>
           Updates from GitHub are stuck. Ask the host operator to check the worker.
