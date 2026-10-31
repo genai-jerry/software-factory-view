@@ -31,7 +31,8 @@ export function ActivityPage() {
   const [who, setWho] = useState<Who>("everyone");
   const activity = useQuery({ queryKey: ["activity", focus.key], queryFn: () => api.get<{ lines: Line[] }>(`/api/activity${focus.qs}`), refetchInterval: 60_000 });
   const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"), refetchInterval: 30_000 });
-  const usage = useQuery({ queryKey: ["usage"], queryFn: () => api.get<FactoryUsage>("/api/orchestrator/usage"), retry: false });
+  const usageQ = useQuery({ queryKey: ["usage"], queryFn: () => api.get<{ usage: FactoryUsage | null }>("/api/orchestrator/usage"), retry: false });
+  const usage = { data: usageQ.data?.usage ?? null };
 
   const lines = (activity.data?.lines ?? []).filter((l) => (who === "everyone" ? true : who === "people" ? l.person : !l.person));
   const days = new Map<string, Line[]>();

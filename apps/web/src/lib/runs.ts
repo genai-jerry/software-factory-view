@@ -46,6 +46,7 @@ export function stepOf(phase: string): Step {
 export function phaseWords(phase: string, role?: string | null): string {
   const p = phase.toLowerCase();
   if (p.startsWith("resolving")) return "Choosing which model to use.";
+  if (p === "starting" || p.startsWith("starting")) return "Starting.";
   if (p.startsWith("cloning")) return "Getting a copy of the code.";
   if (p.startsWith("running claude")) {
     switch (role) {
