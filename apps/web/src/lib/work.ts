@@ -184,8 +184,12 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
 
 const EMPTY_ROLLUP: TaskRollup = { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0, inFlight: 0 };
 
-/** `test(34): …`, `task(34): …`, `bug(34): …` — the factory's own naming names the epic. */
-const EPIC_IN_TITLE = /^(?:test|task|bug)\((\d+)\)/;
+/**
+ * `test(34): …`, `task(34): …`, `bug(34): …` — the factory's own naming names
+ * the epic. The attention queue puts the issue's own number first (`#55
+ * test(34): …`), so that prefix is allowed.
+ */
+const EPIC_IN_TITLE = /^(?:#\d+\s+)?(?:test|task|bug)\((\d+)\)/;
 
 /**
  * An attention entry whose epic the board does not carry. Usually the issue
