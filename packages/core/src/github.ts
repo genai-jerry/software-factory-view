@@ -716,6 +716,21 @@ export class UserClient extends RepoReader {
     super(apiUrl, typeof userToken === "string" ? async () => userToken : userToken);
   }
 
+  /** Commit one file as the signed-in user, where the commit must carry their name. */
+  async putFile(
+    owner: string,
+    repo: string,
+    path: string,
+    opts: { message: string; content: string; branch: string; sha?: string },
+  ): Promise<void> {
+    await this.req("PUT", `/repos/${owner}/${repo}/contents/${encodePath(path)}`, {
+      message: opts.message,
+      content: Buffer.from(opts.content, "utf8").toString("base64"),
+      branch: opts.branch,
+      ...(opts.sha ? { sha: opts.sha } : {}),
+    });
+  }
+
   async me(): Promise<{ id: number; login: string; name: string | null; avatar_url: string }> {
     return (await this.req("GET", "/user")) as never;
   }
