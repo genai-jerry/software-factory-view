@@ -10,6 +10,7 @@ import type { Me, MyWork, ProjectsData, SetupStatus } from "../types.js";
 import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
+import { PageErrorBoundary } from "./ErrorBoundary.js";
 import { UsageBadge } from "./UsageBadge.js";
 
 export interface HaltState {
@@ -101,7 +102,7 @@ export function Shell({
             </div>
           </nav>
           <main id="main" className="main" tabIndex={-1}>
-            {children}
+            <PageErrorBoundary>{children}</PageErrorBoundary>
           </main>
         </div>
 

@@ -14,9 +14,9 @@ import type { PastRunItem, RunningItem } from "../types.js";
 export function OrchestratorRunPage() {
   const { runId = "" } = useParams();
   const run = useLiveOrchestratorRun({ runId, repo: "", enabled: true });
-  const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ items: RunningItem[] }>("/api/running") });
+  const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ running: RunningItem[] }>("/api/running") });
   const recent = useQuery({ queryKey: ["runs-recent"], queryFn: () => api.get<{ runs: PastRunItem[] }>("/api/runs/recent") });
-  const live = running.data?.items.find((i) => i.runId === runId);
+  const live = running.data?.running.find((i) => i.runId === runId);
   const past = recent.data?.runs.find((r) => r.runId === runId);
   const title = live?.title ?? past?.title ?? null;
   const epicId = live?.epicId ?? past?.epicId ?? null;

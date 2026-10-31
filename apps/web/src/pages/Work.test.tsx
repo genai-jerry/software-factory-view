@@ -98,7 +98,7 @@ beforeEach(() => {
   vi.mocked(api.get).mockImplementation(async (path: string) => {
     if (path.startsWith("/api/board")) return { columns: [], cards: [epic, designEpic, quietEpic] };
     if (path.startsWith("/api/my-work")) return myWork;
-    if (path.startsWith("/api/running")) return { items: [] };
+    if (path.startsWith("/api/running")) return { running: [] };
     if (path.startsWith("/api/estates")) return { estates: [], ingestion: { lastReceivedAt: null, lastProcessedAt: null, pending: 0 } };
     throw new Error(`unexpected GET ${path}`);
   });

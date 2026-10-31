@@ -28,7 +28,7 @@ export function WorkPage() {
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
   const running = useQuery({
     queryKey: ["running"],
-    queryFn: () => api.get<{ items: RunningItem[] }>("/api/running"),
+    queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"),
     refetchInterval: 30_000,
   });
 
@@ -42,7 +42,7 @@ export function WorkPage() {
   );
 
   const loading = board.isLoading || myWork.isLoading;
-  const lists = board.data && myWork.data ? buildWork(board.data.cards, myWork.data.needsYou, running.data?.items ?? []) : null;
+  const lists = board.data && myWork.data ? buildWork(board.data.cards, myWork.data.needsYou, running.data?.running ?? []) : null;
   const doneThisWeek = lists?.done.filter((w) => w.card.daysInState <= 7) ?? [];
 
   return (
