@@ -24,6 +24,7 @@ import { ActionBar } from "../components/ActionBar.js";
 import { APPROVE_LABEL, START_STATUS_LABEL, startStatusTakesApproval, TaskStartGate } from "../components/Approve.js";
 import { HaltBar } from "../components/HaltBar.js";
 import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
+import { RunningNow } from "../components/RunningNow.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel, factoryShort } from "../lib/labels.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tree" | "tasks" | "tests" | "threads" | "decisions";
@@ -140,6 +141,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
       <StageRail pipeline={data.pipeline} current={data.epic.state} pendingMine={gateOpen && data.gate!.amApprover} expanded={railOpen} onToggle={() => setRailOpen((v) => !v)} />
 
       <FactoryRunStatus data={data} />
+      <RunningNow data={data} />
 
       {/* The epic's own "what now?", in the same words the factory posts on
           the issue. The tabs below answer it for the tasks. */}

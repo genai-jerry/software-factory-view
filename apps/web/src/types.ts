@@ -355,6 +355,9 @@ export interface EpicWorkspace {
     /** Where this task stands at the start gate — see `startStatusLabel`. */
     nextStep: NextStep;
     startStatus: TaskStartStatus;
+    /** A factory run is live on this task now, and which role it is. */
+    running?: boolean;
+    runningRole?: string | null;
     /** The start gate is open AND still takes an approval: draw the button. */
     approvable: boolean;
   }>;
