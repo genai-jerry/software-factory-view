@@ -9,6 +9,7 @@ import { HomePage } from "./pages/Home.js";
 import { MissionControl } from "./pages/MissionControl.js";
 import { WorkPage } from "./pages/Work.js";
 import { DecisionsQueuePage } from "./pages/DecisionsQueue.js";
+import { WorkItemPage } from "./pages/WorkItem.js";
 import { FlowPage } from "./pages/Flow.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
@@ -120,6 +121,7 @@ export function App() {
         <Route path="/pipeline" element={<MissionControl />} />
         <Route path="/flow" element={<FlowPage />} />
         <Route path="/epics/:id" element={<EpicWorkspacePage me={user!} />} />
+        <Route path="/work/:id" element={<WorkItemPage me={user!} />} />
         <Route path="/blocked" element={<BlockedPage />} />
         <Route path="/decisions" element={<DecisionsQueuePage />} />
         <Route path="/decision-log" element={<DecisionsPage />} />

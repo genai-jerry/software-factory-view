@@ -106,7 +106,7 @@ describe("buildWork", () => {
     expect(row.ask).toBe("run");
     expect(row.pointer).toBe("Run: 16 of 16 tests are left.");
     expect(row.who).toBe("You run the tests");
-    expect(row.link).toBe("/epics/e1?tab=tests");
+    expect(row.link).toBe("/work/e1");
     expect(lists.counts).toEqual({ you: 1, others: 0, working: 0 });
   });
 

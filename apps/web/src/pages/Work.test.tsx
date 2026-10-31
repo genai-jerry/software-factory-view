@@ -144,7 +144,7 @@ describe("DecisionsQueuePage", () => {
   it("collapses the test cases into one Run card", async () => {
     renderAt("/decisions", <DecisionsQueuePage />);
     expect(await screen.findByRole("heading", { name: "Run 16 tests" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Run them" })).toHaveAttribute("href", "/epics/e35?tab=tests");
+    expect(screen.getByRole("link", { name: "Run them" })).toHaveAttribute("href", "/work/e35");
     expect(screen.getByText("and 13 more")).toBeInTheDocument();
   });
 });

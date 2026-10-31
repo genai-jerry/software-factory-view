@@ -232,6 +232,16 @@ function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): strin
   return card.daysInState === 0 ? "moved today" : `quiet ${card.daysInState}d`;
 }
 
+/**
+ * Where a row opens: the work item page. An attention entry's own link points
+ * at the engineers' workspace and its tab; the item page shows the stage
+ * instead, so only the epic id is kept.
+ */
+export function workLink(epicId: string, entryLink?: string): string {
+  const m = entryLink ? /^\/epics\/([^/?#]+)/.exec(entryLink) : null;
+  return `/work/${m ? m[1] : epicId}`;
+}
+
 export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[]): WorkLists {
   const shown = cards.filter((c) => !isHousekeeping(c));
   const known = new Set(shown.map((c) => c.epicId));
@@ -266,7 +276,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     const ask = picked?.ask ?? null;
     const pointer = picked ? pointerFor(picked.ask, picked.entry, card, entries) : workingLine(stage, card, live);
     const who = whoFor(ask, card, live);
-    const item: WorkItem = { card, stage, entries, running: live, ask, pointer, who, link: picked?.entry.link ?? `/epics/${card.epicId}` };
+    const item: WorkItem = { card, stage, entries, running: live, ask, pointer, who, link: workLink(card.epicId, picked?.entry.link) };
     if (!card.open) {
       done.push(item);
       continue;
