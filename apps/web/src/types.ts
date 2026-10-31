@@ -696,6 +696,28 @@ export interface RunningItem {
   epicTitle: string;
 }
 
+/** One finished factory run, from GET /api/runs/recent. */
+export interface PastRunItem {
+  runId: string;
+  repo: string;
+  number: number;
+  /** The task or epic the run was on, when the Console knows it. */
+  title: string | null;
+  kind: string | null;
+  epicId: string | null;
+  epicNumber: number | null;
+  role: string;
+  /** success | error | timeout | no_op */
+  outcome: string;
+  startedAt: string;
+  finishedAt: string;
+  seconds: number;
+  model: string | null;
+  error: string | null;
+  /** The run's log can still be opened. */
+  hasLog: boolean;
+}
+
 /** GET /api/orchestrator/usage — the orchestrator's GET /usage. */
 export interface FactoryUsage {
   as_of: string;

@@ -215,6 +215,48 @@ export async function fetchOrchestratorTranscript(
   return { ok: true, transcript: got.text ?? "" };
 }
 
+export interface PastRun {
+  id: string;
+  repo: string;
+  issue: number;
+  role: string;
+  outcome: string;
+  startedAt: string;
+  finishedAt: string;
+  model: string | null;
+  error: string | null;
+  /** The transcript can still be served; false once a redeploy has cleared it. Absent on an older orchestrator. */
+  hasLog: boolean | null;
+}
+
+/**
+ * The orchestrator's recent runs (its newest 100), finished ones only. An
+ * orchestrator that cannot be reached gives an empty list, and the page
+ * simply has no history to show.
+ */
+export async function fetchPastRuns(cfg: ConsoleConfig): Promise<PastRun[]> {
+  const got = await orchestratorGet(cfg, "/runs");
+  if ("error" in got || !Array.isArray(got.body)) return [];
+  const out: PastRun[] = [];
+  for (const r of got.body as Array<Record<string, unknown>>) {
+    if (typeof r.id !== "string" || typeof r.repo !== "string" || typeof r.issue !== "number") continue;
+    if (!r.finished_at || !r.started_at) continue;
+    out.push({
+      id: r.id,
+      repo: r.repo,
+      issue: r.issue,
+      role: typeof r.role === "string" ? r.role : "",
+      outcome: typeof r.outcome === "string" ? r.outcome : "",
+      startedAt: String(r.started_at),
+      finishedAt: String(r.finished_at),
+      model: typeof r.model === "string" ? r.model : null,
+      error: typeof r.error === "string" && r.error ? r.error : null,
+      hasLog: typeof r.has_log === "boolean" ? r.has_log : null,
+    });
+  }
+  return out;
+}
+
 export interface ActiveRun {
   id: string;
   /** The orchestrator's role name: implementer, reviewer, qa, release, … */
