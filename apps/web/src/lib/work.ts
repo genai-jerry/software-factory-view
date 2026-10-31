@@ -31,10 +31,16 @@ const DESIGN = new Set(["factory:planned", "factory:design-ready"]);
 const BUILD = new Set(["factory:design-approved", "factory:ready", "factory:in-review", "factory:in-test", "factory:ready-to-ship"]);
 const RELEASE = new Set(["factory:epic-ready", "factory:in-staging", "factory:deployed"]);
 
-/** Every code task is written, reviewed and tested: nothing is ready, in flight or held. */
+/**
+ * Every code task is written, reviewed and tested: nothing is ready, in
+ * flight or held. `waiting` is left out on purpose: the rollup counts a task
+ * as waiting while its blocker is still open, and a blocker on the epic
+ * branch stays open until the epic closes, so an assembled epic shows waiting
+ * tasks that are in fact done.
+ */
 function buildFinished(tasks: TaskRollup | undefined): boolean {
   if (!tasks || tasks.total === 0) return false;
-  return tasks.ready === 0 && tasks.inReview === 0 && tasks.inTest === 0 && tasks.blocked === 0 && tasks.waiting === 0;
+  return tasks.ready === 0 && tasks.inReview === 0 && tasks.inTest === 0 && tasks.blocked === 0;
 }
 
 export function stageOf(state: string | null | undefined, tasks?: TaskRollup): Stage | null {
@@ -100,6 +106,7 @@ function testLine(tasks: TaskRollup): string {
   if (!t || t.total === 0) return "";
   const left = t.outstanding;
   let line = `${left} of ${t.total} tests ${left === 1 ? "is" : "are"} left.`;
+  if (t.runnable > 0 && t.runnable < left) line += ` ${t.runnable} can run now.`;
   if (t.failed > 0) line += ` ${t.failed} failed; the fix is being built.`;
   return line;
 }
@@ -137,7 +144,8 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
       return "Decide: approve at this gate.";
     case "run": {
       const retests = entries.filter((e) => e.state === "factory:bug-retest").length;
-      const line = testLine(tasks) || `${entries.filter((e) => e.kind === "task-start").length} tests to run.`;
+      const n = entries.filter((e) => e.kind === "task-start").length;
+      const line = testLine(tasks) || `${n} test${n === 1 ? "" : "s"} to run.`;
       return `Run: ${line}${retests > 0 ? ` ${retests} bug fix${retests === 1 ? "" : "es"} to re-test.` : ""}`;
     }
     case "start": {
@@ -167,8 +175,46 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
       if (card.state === "factory:deployed") return "In production and soaking.";
       return "Waiting on someone else to release it.";
     default:
-      return now || (card.blocked ? "Held. Someone has to answer the factory." : peopleLabel(card.state));
+      if (now) return now;
+      if (card.state === "factory:fast-track") return "Fast lane: a pull request waits for someone to read and merge it.";
+      if (card.blocked) return "Held. Someone has to answer the factory.";
+      return peopleLabel(card.state);
   }
+}
+
+const EMPTY_ROLLUP: TaskRollup = { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0, inFlight: 0 };
+
+/** `test(34): …`, `task(34): …`, `bug(34): …` — the factory's own naming names the epic. */
+const EPIC_IN_TITLE = /^(?:test|task|bug)\((\d+)\)/;
+
+/**
+ * An attention entry whose epic the board does not carry. Usually the issue
+ * has no parent link yet (the sub-issue relation arrives by webhook and can
+ * lag), so the factory's title prefix is the next best pointer; failing that
+ * the entry stands as a row of its own rather than vanishing.
+ */
+function placeOrphan(e: AttentionEntry, byNumber: Map<string, BoardCard>): BoardCard {
+  const m = EPIC_IN_TITLE.exec(e.title);
+  const parent = m ? byNumber.get(`${e.repo}#${m[1]}`) : undefined;
+  if (parent) return parent;
+  return {
+    epicId: e.epicId,
+    number: 0,
+    title: e.title,
+    repo: e.repo,
+    estateId: "",
+    state: e.state,
+    open: true,
+    daysInState: e.ageDays,
+    blocked: e.kind === "blocked",
+    expedited: e.expedited,
+    tasks: EMPTY_ROLLUP,
+  };
+}
+
+/** Repo set-up issues are the factory's own housekeeping, not the team's work. */
+function isHousekeeping(card: BoardCard): boolean {
+  return card.title.startsWith("Factory: repo profile");
 }
 
 function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): string {
@@ -183,8 +229,23 @@ function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): strin
 }
 
 export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[]): WorkLists {
+  const shown = cards.filter((c) => !isHousekeeping(c));
+  const known = new Set(shown.map((c) => c.epicId));
+  const byNumber = new Map(shown.map((c) => [`${c.repo}#${c.number}`, c]));
+  const extra: BoardCard[] = [];
   const byEpic = new Map<string, AttentionEntry[]>();
-  for (const e of needsYou) byEpic.set(e.epicId, [...(byEpic.get(e.epicId) ?? []), e]);
+  for (const e of needsYou) {
+    let epicId = e.epicId;
+    if (!known.has(epicId)) {
+      const home = placeOrphan(e, byNumber);
+      epicId = home.epicId;
+      if (!known.has(epicId)) {
+        known.add(epicId);
+        extra.push(home);
+      }
+    }
+    byEpic.set(epicId, [...(byEpic.get(epicId) ?? []), e]);
+  }
   const runningByEpic = new Map<string, RunningItem[]>();
   for (const r of running) runningByEpic.set(r.epicId, [...(runningByEpic.get(r.epicId) ?? []), r]);
 
@@ -193,7 +254,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
   const done: WorkItem[] = [];
   let others = 0;
 
-  for (const card of cards) {
+  for (const card of [...shown, ...extra]) {
     const entries = byEpic.get(card.epicId) ?? [];
     const live = runningByEpic.get(card.epicId) ?? [];
     const stage = stageOf(card.state, card.tasks);
@@ -224,6 +285,16 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     done,
     counts: { you: needsDecision.length, others, working: working.length - others },
   };
+}
+
+/**
+ * The work item an attention entry belongs to, for counting without the
+ * board: its epic, or the epic its factory title prefix names when the parent
+ * link is missing.
+ */
+export function workKey(e: AttentionEntry): string {
+  const m = EPIC_IN_TITLE.exec(e.title);
+  return m ? `${e.repo}#${m[1]}` : e.epicId;
 }
 
 /** The Decisions page: one card per work item that waits on me, newest first. */
