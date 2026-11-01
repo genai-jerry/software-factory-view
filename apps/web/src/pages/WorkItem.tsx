@@ -32,16 +32,17 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
   if (ws.isError) return <div className="banner error">{(ws.error as ApiError).message}</div>;
   if (!ws.data) return <p className="muted">Loading…</p>;
   const data = ws.data;
+  if (/^test\(\d+\)/i.test(data.epic.title)) return <CaseItemPage data={data} />;
   const cases = data.tasks.filter((t) => t.kind === "test");
   const stage = stageFor(data, cases);
 
   return (
     <div className="work-item">
       <p className="crumb">
-        <Link to="/">Work</Link> › {data.epic.title}
+        <Link to="/">Work</Link> › {plainTitle(data.epic.title)}
       </p>
       <header className="wi-head">
-        <h1>{data.epic.title}</h1>
+        <h1>{plainTitle(data.epic.title)}</h1>
         <p className="muted wi-meta">
           <RepoChip fullName={data.repo.fullName} />
           {data.epic.author && <> · added by {data.epic.author}</>}
@@ -137,6 +138,124 @@ function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" | "
   if (c.state === "factory:test-failed") return "failed";
   if (c.state === "factory:manual-test") return "runnable";
   return "pending";
+}
+
+/**
+ * One test case opened on its own — from the Work list, where a case whose
+ * epic the Console could not link is filed by its title. The page is the
+ * case's own card: its steps from the epic's plan (found by the epic number
+ * in the title) and the Pass / Fail verdict, with a way to the epic's Test
+ * board.
+ */
+export function CaseItemPage({ data }: { data: EpicWorkspace }) {
+  const m = data.epic.title.match(/^test\((\d+)\)/i);
+  const epicNumber = m ? Number(m[1]) : null;
+  const board = useQuery({
+    queryKey: ["board-cards"],
+    queryFn: () => api.get<{ cards: Array<{ epicId: string; number: number; repo: string; title: string }> }>("/api/board"),
+    enabled: epicNumber !== null,
+  });
+  const parentCard = board.data?.cards.find((c) => c.repo === data.repo.fullName && c.number === epicNumber) ?? null;
+  const parent = useQuery({
+    queryKey: ["epic", parentCard?.epicId],
+    queryFn: () => api.get<EpicWorkspace>(`/api/epics/${parentCard!.epicId}`),
+    enabled: parentCard !== null,
+  });
+  const planPath = parent.data?.systemTests.plan?.path ?? null;
+  const planDoc = useQuery({
+    queryKey: ["artifact", parentCard?.epicId, planPath],
+    queryFn: () => api.get<ArtifactView>(`/api/epics/${parentCard!.epicId}/artifact?path=${encodeURIComponent(planPath!)}`),
+    enabled: parentCard !== null && planPath !== null,
+    retry: false,
+  });
+  const plan: TestPlan | null = planDoc.data ? parseTestPlan(planDoc.data.markdown) : null;
+  const row: CaseRow = {
+    id: data.epic.id,
+    number: data.epic.number,
+    title: data.epic.title,
+    kind: "test",
+    caseId: caseIdOf(data.epic.title, null) ?? null,
+    state: data.epic.state,
+    open: data.epic.open,
+    htmlUrl: data.epic.htmlUrl,
+    blockedBy: [],
+    blocks: [],
+    nextStep: data.epic.nextStep,
+    startStatus: "none" as CaseRow["startStatus"],
+    approvable: false,
+  };
+  const verdict = verdictOf(row);
+  const title = plainTitle(data.epic.title).replace(/^(?:ST|TC)-\d+\s*/, "");
+  return (
+    <div className="work-item">
+      <p className="crumb">
+        <Link to="/">Work</Link>
+        {parentCard && (
+          <>
+            {" › "}
+            <Link to={`/work/${parentCard.epicId}`}>{parentCard.title}</Link>
+          </>
+        )}
+        {" › "}
+        {title}
+      </p>
+      <header className="wi-head">
+        <h1>
+          {row.caseId && <span className="tc-id">{row.caseId}</span>} {title}
+        </h1>
+        <p className="muted wi-meta">
+          <RepoChip fullName={data.repo.fullName} />
+          {parentCard && <> · a test of {parentCard.title}</>}
+          {" · "}
+          <a href={data.epic.htmlUrl} target="_blank" rel="noreferrer">
+            Open on GitHub
+          </a>
+        </p>
+      </header>
+      <div className="wi-body">
+        <div className="wi-main">
+          <section className="card tc-page" aria-labelledby="case">
+            <h2 id="case">{verdict === "runnable" ? "Run this test" : verdict === "passed" ? "Passed" : verdict === "failed" ? "Failed" : verdict === "skipped" ? "Skipped" : "Not ready yet"}</h2>
+            {verdict === "runnable" && <p className="muted">Run it on the environment below, then press Pass or Fail. A fail files the fix for you.</p>}
+            {verdict === "pending" && <p className="muted">The code this test checks is not built yet. It becomes runnable when it is.</p>}
+            {parentCard && planPath && planDoc.isError && <p className="muted">The test plan could not be read; the steps are on GitHub.</p>}
+            {!parentCard && board.data && <p className="muted">The epic this test belongs to is not in the Work list, so its steps are on GitHub.</p>}
+            <TestCase c={row} plan={plan} />
+            {plan?.environment && (
+              <>
+                <h3>Before you start</h3>
+                {plan.environment.notes.slice(0, 2).map((n, i) => (
+                  <p key={i}>{plain(n)}</p>
+                ))}
+                {plan.environment.rows.length > 0 && (
+                  <dl className="tc-env">
+                    {plan.environment.rows.map(([k, v]) => (
+                      <div key={k}>
+                        <dt>{plain(k)}</dt>
+                        <dd>{plain(v)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </>
+            )}
+            {parentCard && (
+              <p>
+                <Link to={`/work/${parentCard.epicId}`}>All the tests for {parentCard.title}</Link>
+              </p>
+            )}
+          </section>
+        </div>
+        <aside className="wi-side">
+          <section className="card">
+            <h2>Ask the factory</h2>
+            <p className="muted">About this test, from the plan and the conversation around it.</p>
+            <QaPanel scope={{ kind: "epic", id: parentCard?.epicId ?? data.epic.id }} />
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 /** Test — the cases a person runs (redesign board 7). */

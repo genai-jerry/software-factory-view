@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { OpenQuestions } from "../components/OpenQuestions.js";
 import { plain } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, GatePanelData, PrSummary, TimelineEvent } from "../types.js";
 
@@ -231,21 +232,14 @@ function ReleaseToStaging({ data, gate }: { data: EpicWorkspace; gate: GatePanel
           </li>
         )}
         {a && a.bugsOpen > 0 && <li>{a.bugsOpen} bug{a.bugsOpen === 1 ? "" : "s"} still open.</li>}
-        {gate && gate.openQuestions.length > 0 && (
-          <li>
-            {gate.openQuestions.length} question{gate.openQuestions.length === 1 ? " is" : "s are"} still open on this item.{" "}
-            <label>
-              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> Release anyway
-            </label>
-          </li>
-        )}
         <li>Releasing merges the epic onto the staging branch. You are asked again before production.</li>
       </ul>
+      {gate && <OpenQuestions questions={gate.openQuestions} ack={ack} onAck={setAck} ackLabel="Release anyway, with this question open" />}
       {approve.isSuccess ? (
         <p className="muted">Released. The factory is moving it to staging.</p>
       ) : canDecide ? (
         <div className="decision-actions">
-          <button type="button" className="primary" disabled={approve.isPending} onClick={() => approve.mutate()}>
+          <button type="button" className="primary" disabled={approve.isPending || ((gate?.openQuestions.length ?? 0) > 0 && !ack)} onClick={() => approve.mutate()}>
             {approve.isPending ? "Releasing…" : "Release to staging"}
           </button>
           <Link to="/" className="button">

@@ -181,3 +181,40 @@ describe("WorkItemPage at Test", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/c1/test-verdict", { verdict: "passed", evidence: undefined }));
   });
 });
+
+describe("WorkItemPage on one test case", () => {
+  it("shows the case's steps and takes the verdict, naming its epic", async () => {
+    const caseIssue: EpicWorkspace = {
+      ...epic,
+      epic: { ...epic.epic, id: "c12", number: 55, title: "test(35): ST-1 A lead's CRM calling status reaches the leads page", state: "factory:manual-test" },
+      tasks: [],
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/c12") return caseIssue;
+      if (path === "/api/board") return { columns: [], cards: [{ epicId: "e35", number: 35, repo: epic.repo.fullName, title: "Day-wise calling performance" }] };
+      if (path === "/api/epics/e35") return epic;
+      if (path.startsWith("/api/epics/e35/artifact")) return { path: "", ref: "proposed", sha: "s", markdown: PLAN, html: "", otherSha: null };
+      if (path.includes("/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/work/c12"]}>
+          <Routes>
+            <Route path="/work/:id" element={<WorkItemPage me={me} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: "Run this test" })).toBeInTheDocument();
+    expect(screen.queryByText(/test\(35\)/)).toBeNull();
+    expect(await screen.findByRole("link", { name: /All the tests for Day-wise calling performance/ })).toBeInTheDocument();
+    const st1 = await screen.findByRole("article", { name: /^ST-1:/ });
+    await waitFor(() => expect(within(st1).getByText(/each row shows its CRM status/)).toBeInTheDocument());
+    await userEvent.click(within(st1).getByRole("button", { name: "Pass" }));
+    await userEvent.click(within(st1).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/c12/test-verdict", { verdict: "passed", evidence: undefined }));
+  });
+});

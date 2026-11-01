@@ -1334,3 +1334,12 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .rel-body ol.chain, .markdown-body ol.chain { padding-left: 1.25rem; }
 .rel-body ol.chain li, .markdown-body ol.chain li { margin: 0.2rem 0; }
 .chain-alone { color: var(--text-dim); }
+
+/* Open questions on a gate, shown in full with one control to answer them. */
+.open-questions { margin: 0.25rem 0 0.75rem; }
+.open-question { border-left: 3px solid var(--warn, #c77a00); padding: 0.25rem 0 0.25rem 0.75rem; margin: 0.5rem 0; }
+.open-question h3 { margin: 0 0 0.25rem; font-size: 1rem; }
+.open-question .oq-entry { margin: 0.25rem 0; }
+.open-questions .ack { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+.open-questions .ack input { width: auto; margin: 0; }
+.tc-page h1 .tc-id { margin-right: 0.4rem; }
