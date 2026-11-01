@@ -451,7 +451,7 @@ async function loadAssemblyEvidence(
       ? {
           author: report.author,
           at: report.at,
-          html: renderMarkdown(report.body, { repoId: repo.id, repoFullName: repo.fullName }),
+          html: renderMarkdown(report.body, { repoId: repo.id, repoFullName: repo.fullName, issueNumber: epic.number }),
           htmlUrl: report.htmlUrl,
         }
       : null,
