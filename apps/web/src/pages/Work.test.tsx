@@ -115,7 +115,7 @@ describe("WorkPage", () => {
     expect(screen.getByText("approve the design.")).toBeInTheDocument();
     // The intake epic waits on the factory, under its own heading.
     expect(screen.getByText("Sarvam changes")).toBeInTheDocument();
-    expect(screen.getByText("The plan is being written. You will be asked to approve it.")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for the factory to write the plan. You will be asked to approve it.")).toBeInTheDocument();
     // The counters add up.
     expect(screen.getByText("need you").previousSibling).toHaveTextContent("2");
     expect(screen.getByText("1 approval, 1 test run")).toBeInTheDocument();

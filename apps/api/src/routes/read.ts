@@ -380,8 +380,21 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         : []
       ).map((r) => [r.id, r.fullName]),
     );
-    const anyRunning = codeAndCaseRows.some((t) => t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL));
+    const epicLive = epic.state === "open" && epic.labels.includes(IN_PROGRESS_LABEL);
+    const anyRunning = epicLive || codeAndCaseRows.some((t) => t.state === "open" && t.labels.includes(IN_PROGRESS_LABEL));
     const activeRuns = anyRunning ? await fetchActiveRuns(deps.cfg) : new Map();
+    const epicRun = epicLive ? activeRuns.get(`${repo.fullName}#${epic.number}`) : undefined;
+    // When the epic reached its state: the page says how long it has sat
+    // there with nothing running, which is how a skipped hand-off shows.
+    const lastTransition = (
+      await db
+        .select({ at: issueStateHistory.occurredAt })
+        .from(issueStateHistory)
+        .where(eq(issueStateHistory.issueId, epic.id))
+        .orderBy(desc(issueStateHistory.occurredAt))
+        .limit(1)
+    )[0];
+    const inStateSince = (lastTransition?.at ?? epic.ghCreatedAt ?? epic.ghUpdatedAt).toISOString();
     const estate = (await db.select().from(estates).where(eq(estates.id, repo.estateId)).limit(1))[0];
     const org = (await db.select().from(orgs).where(eq(orgs.id, repo.orgId)).limit(1))[0];
     const staleMs = deps.cfg.STALENESS_THRESHOLD_MINUTES * 60_000;
@@ -414,6 +427,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         // epic's own label, which stays at design-approved for the whole build.
         stage: effectiveStage(epic.state === "open" ? epic.factoryState : null, rollup),
         nextStep: nextStepFor(epic.state === "open" ? epic.factoryState : null, gateApprovers, { tasks: rollup, expedited }),
+        inStateSince,
+        // A run live on the epic itself (intake, planner, architect, release…),
+        // with the orchestrator's word for it when it can say.
+        running: epicLive ? { role: epicRun?.role ?? null, runId: epicRun?.id ?? null } : null,
       },
       /**
        * The toggle's whole state: on/off from the label, whether it may be

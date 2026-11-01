@@ -138,6 +138,54 @@ beforeEach(() => {
   });
 });
 
+describe("WorkItemPage waiting on the factory", () => {
+  const atIntake = (over: Partial<EpicWorkspace["epic"]>): EpicWorkspace => ({
+    ...epic,
+    epic: { ...epic.epic, state: "factory:intake", labels: ["factory:intake"], ...over },
+    tasks: [],
+    rollup: { total: 0, ready: 0, inReview: 0, inTest: 0, shipping: 0, done: 0, blocked: 0, waiting: 0, inFlight: 0 },
+    change: null,
+  });
+
+  it("says nothing has started when the item has sat at intake with no run, and starts it on request", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return atIntake({ inStateSince: new Date(Date.now() - 17 * 60_000).toISOString(), running: null });
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ role: "intake" });
+    renderItem();
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent("Nothing has started on this in 17 minutes.");
+    expect(screen.getByText("Waiting for the factory to write the plan. You will be asked to approve it.")).toBeInTheDocument();
+    await userEvent.click(within(banner).getByRole("button", { name: "Start it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e35/start"));
+    expect(await screen.findByText(/Started\. The factory is on it/)).toBeInTheDocument();
+  });
+
+  it("stays quiet while a run is live, and says the plan is being written now", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return atIntake({ inStateSince: new Date(Date.now() - 40 * 60_000).toISOString(), running: { role: "intake", runId: "r1" } });
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      return {};
+    });
+    renderItem();
+    expect(await screen.findByText("The plan is being written now. You will be asked to approve it.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("stays quiet when the item only just arrived", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return atIntake({ inStateSince: new Date(Date.now() - 2 * 60_000).toISOString(), running: null });
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      return {};
+    });
+    renderItem();
+    await screen.findByText("Waiting for the factory to write the plan. You will be asked to approve it.");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
 describe("WorkItemPage at Test", () => {
   it("puts the item at Test and lists the cases with their standing", async () => {
     renderItem();

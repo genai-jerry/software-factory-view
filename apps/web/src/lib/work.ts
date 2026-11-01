@@ -160,10 +160,12 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
   const live = running[0];
   const now = live ? (live.kind === "task" ? `${plainTitle(live.title) ? `“${plainTitle(live.title)}”` : "A task"} is ${roleVerb(live.role)} now.` : `It is ${roleVerb(live.role)} now.`) : "";
   switch (stage) {
+    // With no run live the factory has not picked the item up: say that,
+    // rather than claim a plan is being written when nothing is.
     case "clarify":
-      return now || "The plan is being written. You will be asked to approve it.";
+      return now || "Waiting for the factory to write the plan. You will be asked to approve it.";
     case "design":
-      return now || "The design is being written. You will be asked to approve it.";
+      return now || "Waiting for the factory to write the design. You will be asked to approve it.";
     case "build": {
       const built = tasks.done + tasks.shipping;
       const base = tasks.total > 0 ? `${built} of ${tasks.total} tasks built.` : "The tasks are being set up.";
