@@ -445,6 +445,9 @@ export interface ThreadDetail {
   topicKind: string;
   topicRef: string;
   status: string;
+  /** The issue is at factory:blocked, and these are the questions the role asked (FACTORY.md §1a rule 13). */
+  blocked?: boolean;
+  questions?: string[];
   entries: Array<{
     id: string;
     source: string;

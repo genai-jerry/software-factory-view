@@ -1307,6 +1307,23 @@ function ThreadCard({
               <div className="markdown-body" dangerouslySetInnerHTML={{ __html: e.bodyHtml }} />
             </div>
           ))}
+          {thread.data.blocked && (
+            <div className="open-questions thread-questions" role="note" aria-label="Questions for you">
+              {(thread.data.questions ?? []).length > 0 ? (
+                <>
+                  <p className="need">The factory stopped and needs your answer{(thread.data.questions ?? []).length === 1 ? "" : "s"}:</p>
+                  <ol>
+                    {(thread.data.questions ?? []).map((q, i) => (
+                      <li key={i}>{q}</li>
+                    ))}
+                  </ol>
+                  <p className="muted">Reply below. Your reply clears the block and re-runs the stage that stopped.</p>
+                </>
+              ) : (
+                <p className="need">The factory stopped on this and is waiting for a reply. It did not list its questions; read its newest comment above, then reply below to clear the block.</p>
+              )}
+            </div>
+          )}
           <div className="thread-composer" style={{ marginTop: "0.6rem" }}>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Reply — posts to GitHub as you, threaded here." />
             {post.isError && <div className="banner error">{(post.error as Error).message}</div>}

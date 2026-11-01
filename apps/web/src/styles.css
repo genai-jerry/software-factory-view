@@ -1352,6 +1352,11 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 
 /* Open questions on a gate, shown in full with one control to answer them. */
 .open-questions { margin: 0.25rem 0 0.75rem; }
+.thread-questions { margin-top: 0.75rem; padding: 0.6rem 0.9rem; border: 1px solid var(--amber); background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; }
+.thread-questions ol { margin: 0.3rem 0 0.4rem 1.25rem; padding: 0; }
+.thread-questions li { margin: 0.2rem 0; }
+.thread-questions .need { margin: 0; }
+.thread-questions .muted { margin: 0; font-size: 0.85rem; }
 .open-question { border-left: 3px solid var(--warn, #c77a00); padding: 0.25rem 0 0.25rem 0.75rem; margin: 0.5rem 0; }
 .open-question h3 { margin: 0 0 0.25rem; font-size: 1rem; }
 .open-question .oq-entry { margin: 0.25rem 0; }
