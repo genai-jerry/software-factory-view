@@ -303,6 +303,10 @@ export async function askOrchestrator(
     instructions?: string;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
+    /** Images the session reads with its Read tool (Shape). */
+    images?: Array<{ name: string; mime: string; dataB64: string }>;
+    /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
+    mode?: "ask" | "shape";
   },
 ): Promise<{ ok: true; answer: string; model: string; inputTokens: number; outputTokens: number } | OrchestratorProxyError> {
   const dest = orchestratorBase(cfg);
@@ -321,8 +325,12 @@ export async function askOrchestrator(
         ...(body.instructions ? { instructions: body.instructions } : {}),
         ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
         ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
+        ...(body.images && body.images.length > 0
+          ? { images: body.images.map((i) => ({ name: i.name, mime: i.mime, data_b64: i.dataB64 })) }
+          : {}),
+        ...(body.mode && body.mode !== "ask" ? { mode: body.mode } : {}),
       }),
-      signal: AbortSignal.timeout(330_000),
+      signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
     });
   } catch (err) {
     return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };

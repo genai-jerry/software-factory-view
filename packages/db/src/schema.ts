@@ -613,3 +613,54 @@ export const apiErrors = pgTable(
   },
   (t) => [index("api_errors_at").on(t.at)],
 );
+
+/**
+ * Shape: a person's conversation that turns an idea into work. Private to
+ * its author, scoped to the repository the chat may read; the spec is the
+ * requirement written from it, and the issue is where it went.
+ */
+export const shapeConversations = pgTable(
+  "shape_conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    repoId: uuid("repo_id").notNull().references(() => repos.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    spec: text("spec"),
+    specUpdatedAt: timestamp("spec_updated_at", { withTimezone: true }),
+    issueId: uuid("issue_id").references(() => issues.id, { onDelete: "set null" }),
+    issueUrl: text("issue_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("shape_conversations_user").on(t.userId, t.updatedAt)],
+);
+
+export const shapeMessages = pgTable(
+  "shape_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    conversationId: uuid("conversation_id").notNull().references(() => shapeConversations.id, { onDelete: "cascade" }),
+    role: text("role").notNull(), // user | assistant
+    body: text("body").notNull(),
+    attachments: jsonb("attachments").$type<Array<{ id: string; name: string; mime: string }>>().notNull().default([]),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    model: text("model"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("shape_messages_conv").on(t.conversationId, t.createdAt)],
+);
+
+export const shapeAttachments = pgTable("shape_attachments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull(),
+  conversationId: uuid("conversation_id").notNull().references(() => shapeConversations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  mime: text("mime").notNull(),
+  bytesB64: text("bytes_b64").notNull(),
+  size: integer("size").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

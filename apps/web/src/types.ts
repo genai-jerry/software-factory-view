@@ -734,3 +734,45 @@ export interface FactoryUsage {
   /** Rate-limit detail a run reported, if any (e.g. five_hour.used_percentage). */
   rate_limit: Record<string, unknown> | null;
 }
+
+/* Shape — a chat that turns an idea into work (GET/POST /api/shape…). */
+export interface ShapeConversationSummary {
+  id: string;
+  title: string;
+  repo: string;
+  repoId: string;
+  updatedAt: string;
+  hasSpec: boolean;
+  issueUrl: string | null;
+}
+
+export interface ShapeAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  url: string;
+}
+
+export interface ShapeMessage {
+  id: string;
+  role: "user" | "assistant";
+  body: string;
+  bodyHtml: string;
+  mocks: Array<{ html: string }>;
+  attachments: ShapeAttachment[];
+  createdAt: string;
+}
+
+export interface ShapeConversation {
+  conversation: {
+    id: string;
+    title: string;
+    repoId: string;
+    repo: string;
+    spec: string | null;
+    specUpdatedAt: string | null;
+    issueUrl: string | null;
+    issueId: string | null;
+  };
+  messages: ShapeMessage[];
+}

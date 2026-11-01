@@ -139,7 +139,7 @@ async function resolveInsight(
  * it, so an org that has one asks through the orchestrator (POST /ask) before
  * anything else is tried.
  */
-async function claudeTokenFor(deps: AppDeps, orgId: string): Promise<string | undefined> {
+export async function claudeTokenFor(deps: AppDeps, orgId: string): Promise<string | undefined> {
   try {
     return (await readRetainedAgentSecrets(deps, orgId)).claudeCodeOauthToken || undefined;
   } catch {

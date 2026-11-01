@@ -1,10 +1,10 @@
-import { GitHubHttpError } from "@console/core";
+import { GitHubHttpError, type GhIssue } from "@console/core";
 import { auditLog, issueStateHistory, issues, projects, repos } from "@console/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { alias } from "drizzle-orm/pg-core";
 import { lineFor } from "../activity.js";
-import { requireAuth, userClient, type AppDeps } from "../context.js";
+import { requireAuth, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { githubMessage } from "../gh-write.js";
 import { SignInRequiredError } from "../user-token.js";
 import { resolveRepoFilter, type RepoFilterQuery } from "./read.js";
@@ -91,30 +91,9 @@ export function registerActivityRoutes(app: FastifyInstance, deps: AppDeps): voi
     if (!title) return reply.code(400).send({ error: "say what you want done" });
     const repo = (await db.select().from(repos).where(and(eq(repos.id, req.body.repoId ?? ""), inArray(repos.orgId, ctx.orgIds))).limit(1))[0];
     if (!repo) return reply.code(404).send({ error: "repository not found" });
-    const [owner, name] = repo.fullName.split("/") as [string, string];
-    const labels = ["factory:intake", ...(req.body.fast ? ["factory:expedite"] : [])];
-    const gh = userClient(deps, ctx);
-    try {
-      const issue = await gh.createIssue(owner, name, { title, body: (req.body.body ?? "").trim(), labels });
-      await db.insert(auditLog).values({
-        orgId: repo.orgId,
-        actorUserId: ctx.userId,
-        action: "work.add",
-        target: `${repo.fullName}#${issue.number}`,
-        payload: { htmlUrl: issue.html_url, fast: Boolean(req.body.fast) },
-      });
-      return { ok: true, number: issue.number, htmlUrl: issue.html_url, repo: repo.fullName };
-    } catch (err) {
-      if (err instanceof SignInRequiredError) return reply.code(401).send({ error: err.message, reauth: true });
-      if (err instanceof GitHubHttpError) {
-        const detail = githubMessage(err);
-        if (err.status === 401) return reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign in again`, reauth: true });
-        if (err.status === 403 || err.status === 404)
-          return reply.code(403).send({ error: `GitHub declined to open an issue in ${repo.fullName}: ${detail}. Opening one needs write access to the repository.` });
-        return reply.code(502).send({ error: `GitHub declined to open the issue: ${detail}` });
-      }
-      return reply.code(502).send({ error: `could not reach GitHub to open the issue: ${(err as Error).message}` });
-    }
+    const issue = await openWorkIssue(deps, ctx, reply, repo, { title, body: (req.body.body ?? "").trim(), fast: Boolean(req.body.fast) });
+    if (!issue) return;
+    return { ok: true, number: issue.number, htmlUrl: issue.html_url, repo: repo.fullName };
   });
 
   /** The project a repo belongs to, for the Add work form's default. */
@@ -129,4 +108,48 @@ export function registerActivityRoutes(app: FastifyInstance, deps: AppDeps): voi
       .orderBy(repos.fullName);
     return { targets: rows };
   });
+}
+
+/**
+ * Open a requirement issue as the acting user, with `factory:intake` (and
+ * `factory:expedite` on the fast lane), and record it. Shared by Add work and
+ * Shape's "Open as work": one path into the factory, one error wording. On a
+ * failure the reply is already sent and null comes back.
+ */
+export async function openWorkIssue(
+  deps: AppDeps,
+  ctx: RequestCtx,
+  reply: FastifyReply,
+  repo: { id: string; orgId: string; fullName: string },
+  opts: { title: string; body: string; fast: boolean },
+): Promise<GhIssue | null> {
+  const [owner, name] = repo.fullName.split("/") as [string, string];
+  const labels = ["factory:intake", ...(opts.fast ? ["factory:expedite"] : [])];
+  const gh = userClient(deps, ctx);
+  try {
+    const issue = await gh.createIssue(owner, name, { title: opts.title, body: opts.body, labels });
+    await deps.dbh.db.insert(auditLog).values({
+      orgId: repo.orgId,
+      actorUserId: ctx.userId,
+      action: "work.add",
+      target: `${repo.fullName}#${issue.number}`,
+      payload: { htmlUrl: issue.html_url, fast: opts.fast },
+    });
+    return issue;
+  } catch (err) {
+    if (err instanceof SignInRequiredError) {
+      void reply.code(401).send({ error: err.message, reauth: true });
+      return null;
+    }
+    if (err instanceof GitHubHttpError) {
+      const detail = githubMessage(err);
+      if (err.status === 401) void reply.code(401).send({ error: `GitHub rejected your sign-in (${detail}) — sign in again`, reauth: true });
+      else if (err.status === 403 || err.status === 404)
+        void reply.code(403).send({ error: `GitHub declined to open an issue in ${repo.fullName}: ${detail}. Opening one needs write access to the repository.` });
+      else void reply.code(502).send({ error: `GitHub declined to open the issue: ${detail}` });
+      return null;
+    }
+    void reply.code(502).send({ error: `could not reach GitHub to open the issue: ${(err as Error).message}` });
+    return null;
+  }
 }

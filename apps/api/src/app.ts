@@ -16,6 +16,7 @@ import { registerOnboardingRoutes } from "./routes/onboarding.js";
 import { registerOrchestratorRoutes } from "./routes/orchestrator.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerActivityRoutes } from "./routes/activity.js";
+import { registerShapeRoutes } from "./routes/shape.js";
 import { registerEstateRoutes } from "./routes/estates.js";
 import { registerSetupRoutes } from "./setup.js";
 import type { AppDeps } from "./context.js";
@@ -85,6 +86,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerOrchestratorRoutes(app, deps);
   registerOpsRoutes(app, deps);
   registerActivityRoutes(app, deps);
+  registerShapeRoutes(app, deps);
 
   return app;
 }
