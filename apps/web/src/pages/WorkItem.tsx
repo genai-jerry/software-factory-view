@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
-import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, namesOf, peopleLabel, plainTitle } from "../lib/labels.js";
 import { STAGES, STAGE_LABEL, stageOf, type Stage } from "../lib/work.js";
 import { caseIdOf, parseTestPlan, plain, type PlanCase, type TestPlan } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, Me } from "../types.js";
@@ -205,9 +205,9 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
           {retests.map((b) => (
             <div className="tc" key={b.id}>
               <div className="tc-head">
-                <strong>#{b.number}</strong> {b.title.replace(/^bug\(\d+\):\s*/i, "")}
+                <strong>{plainTitle(b.title)}</strong>
               </div>
-              <TestVerdict caseId={b.id} label={`#${b.number}`} bug />
+              <TestVerdict caseId={b.id} label={plainTitle(b.title)} bug />
             </div>
           ))}
         </section>
@@ -313,9 +313,9 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
   const [open, setOpen] = useState(verdict === "runnable");
   const after = c.blockedBy.filter((d) => d.open);
   return (
-    <article className={`tc ${verdict}`} aria-label={`${id ?? `#${c.number}`}: ${title}`}>
+    <article className={`tc ${verdict}`} aria-label={`${id ?? title}: ${title}`}>
       <div className="tc-head">
-        <span className="tc-id">{id ?? `#${c.number}`}</span>
+        {id && <span className="tc-id">{id}</span>}
         <span className="tc-title">{title}</span>
         <span className={`stage-chip ${verdict === "runnable" ? "decide" : verdict === "failed" ? "halt" : verdict === "passed" ? "done" : ""}`}>
           {verdict === "runnable" ? "Run it" : verdict === "failed" ? "Failed · fix being built" : verdict === "passed" ? "Passed" : verdict === "skipped" ? "Skipped · not run" : "Not ready"}
@@ -323,7 +323,7 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
       </div>
       {verdict === "pending" && after.length > 0 && (
         <p className="muted">
-          After {after.map((d) => `#${d.number}`).join(", ")} {after.length === 1 ? "is" : "are"} built.
+          After {namesOf(after)} {after.length === 1 ? "is" : "are"} built.
         </p>
       )}
       {planned && (planned.steps.length > 0 || planned.expected) && (
@@ -363,7 +363,7 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
           .
         </p>
       )}
-      {verdict === "runnable" && <TestVerdict caseId={c.id} label={id ?? `#${c.number}`} />}
+      {verdict === "runnable" && <TestVerdict caseId={c.id} label={id ?? title} />}
     </article>
   );
 }

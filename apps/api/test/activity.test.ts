@@ -88,7 +88,7 @@ describe("lineFor", () => {
     expect(lineFor({ ...base, toState: "factory:spec-approved", actor: "jerry" })).toEqual({ who: "jerry", person: true, text: "jerry approved the plan for Day-wise.", stage: "clarify" });
     expect(lineFor({ ...base, toState: "factory:spec-ready", actor: "acme-console[bot]" })!.text).toBe("The factory finished the plan for Day-wise. Waiting for approval.");
     expect(lineFor({ ...base, kind: "task", number: 62, title: "task(35): compute counts", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:blocked", actor: null })!.text).toBe(
-      "The factory stopped on task #62 of Day-wise and asked a question.",
+      "The factory stopped on the task “compute counts” of Day-wise and asked a question.",
     );
     expect(lineFor({ ...base, kind: "test", number: 68, title: "test(35): ST-3 A status follows through", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-failed", actor: "sowmya" })!.text).toBe(
       "sowmya ran test ST-3 of Day-wise: failed. The fix is being built.",
@@ -111,7 +111,7 @@ describe("GET /api/activity", () => {
     expect(res.statusCode).toBe(200);
     const { lines } = res.json() as { lines: Array<{ text: string; who: string; epicId: string; stage: string }> };
     expect(lines.map((l) => l.text)).toEqual([
-      "The factory built task #62 of Day-wise calling performance.",
+      "The factory built the task “compute counts” of Day-wise calling performance.",
       "jerry approved the plan for Day-wise calling performance.",
       "jerry added Day-wise calling performance.",
     ]);

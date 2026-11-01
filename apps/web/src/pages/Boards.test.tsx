@@ -141,11 +141,11 @@ describe("BuildBoard", () => {
     task({ id: "a", number: 1, title: "task(34): The status map learns the sheet kind", state: "factory:on-epic" }),
     task({ id: "b", number: 4, title: "task(34): The adapter writes status words", state: "factory:blocked" }),
     task({ id: "c", number: 5, title: "task(34): The poller reports changes", state: "factory:in-review", running: true, runningRole: "reviewer", runId: "run-9" }),
-    task({ id: "d", number: 6, title: "task(34): The page shows the columns", state: "factory:ready", blockedBy: [{ id: "b", number: 4, title: "", state: "factory:blocked", open: true, htmlUrl: "" }] }),
+    task({ id: "d", number: 6, title: "task(34): The page shows the columns", state: "factory:ready", blockedBy: [{ id: "b", number: 4, title: "task(34): Sync the setter status", state: "factory:blocked", open: true, htmlUrl: "" }] }),
   ];
 
   it("says each task's standing in words", () => {
-    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on #4"]);
+    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on Sync the setter status"]);
   });
 
   it("answers a stopped builder from the board", async () => {
