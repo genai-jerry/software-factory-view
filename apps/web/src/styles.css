@@ -1421,7 +1421,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-spec-edit { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 .shape-spec-view h3 { margin: 0.9rem 0 0.3rem; font-size: 1rem; }
 .shape-spec-view p, .shape-spec-view li { margin: 0.2rem 0; }
-.shape-open { margin-top: 1rem; }
+.shape-open label { display: block; font-weight: 600; margin-top: 0.75rem; }
 .shape-open input[type="text"], .shape-open input:not([type]), .shape-open select { width: 100%; margin: 0.25rem 0 0.6rem; }
 .shape-fast { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.25rem 0 0.75rem; }
 .shape-fast input { width: auto; margin-top: 0.2rem; }
