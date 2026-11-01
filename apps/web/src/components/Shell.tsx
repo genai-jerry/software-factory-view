@@ -59,6 +59,7 @@ export function Shell({
       <div className="shell">
         <header className="topbar" role="banner">
           <NavLink to="/" className="brand" end>
+            <img src="/icon.svg" alt="" width={24} height={24} />
             Compass
           </NavLink>
           <FocusControls />
