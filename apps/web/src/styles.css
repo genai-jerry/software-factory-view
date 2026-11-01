@@ -776,11 +776,15 @@ ol.run-events time {
   border-bottom: 1px solid var(--border);
 }
 .topbar .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 700;
   color: var(--text);
   text-decoration: none;
   white-space: nowrap;
 }
+.topbar .brand img { display: block; border-radius: 6px; }
 .topbar .brand:hover { text-decoration: none; }
 .topbar-who {
   display: flex;
