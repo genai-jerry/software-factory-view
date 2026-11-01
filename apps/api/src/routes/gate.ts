@@ -3,6 +3,7 @@ import {
   BUG_VERIFIED_STATE,
   GATE_STATES,
   GitHubHttpError,
+  IN_PROGRESS_LABEL,
   MANUAL_TEST_STATE,
   TEST_FAILED_BODY,
   TEST_FAILED_STATE,
@@ -30,6 +31,7 @@ import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { githubMessage, postComment } from "../gh-write.js";
 import { loadApproversForGate, repoApprovers } from "../start-gate.js";
+import { ROLE_FOR_STATE, startFactoryRole } from "../start-role.js";
 import { countQuestionEntries } from "../threads.js";
 import { renderMarkdown } from "../render.js";
 import { loadEpic } from "./read.js";
@@ -238,6 +240,34 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
   );
 
   /** Request changes: by factory semantics, an ordinary comment. */
+  /**
+   * Start the role the factory should already be running on this epic. For
+   * the states that wait on the factory, not a person: an epic sitting there
+   * with no run live is a missed hand-off, and the page offers this. Refused
+   * while a run is live, and at every other state.
+   */
+  app.post<{ Params: { id: string } }>("/api/epics/:id/start", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadEpic(deps, ctx, req.params.id);
+    if (!found) return reply.code(404).send({ error: "epic not found" });
+    const { epic, repo } = found;
+    const role = epic.state === "open" ? ROLE_FOR_STATE[epic.factoryState ?? ""] : undefined;
+    if (!role) return reply.code(409).send({ error: "nothing waits on the factory at this state" });
+    if (epic.labels.includes(IN_PROGRESS_LABEL)) return reply.code(409).send({ error: "a factory run is already live on this item" });
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    const got = await startFactoryRole(deps, { orgId: repo.orgId, estateId: repo.estateId, owner, repo: name, issue: epic.number, role });
+    if (got.dispatchError) return reply.code(502).send({ error: got.dispatchError });
+    await db.insert(auditLog).values({
+      orgId: repo.orgId,
+      actorUserId: ctx.userId,
+      action: "factory.start",
+      target: `${repo.fullName}#${epic.number}`,
+      payload: { role, dispatchId: got.dispatchId ?? null },
+    });
+    return { role, dispatchId: got.dispatchId ?? null };
+  });
+
   app.post<{ Params: { id: string }; Body: { body: string } }>("/api/epics/:id/gate/request-changes", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;

@@ -64,6 +64,7 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
         </p>
       </header>
       <StageRail current={stage} state={data.epic.state} />
+      <FactoryQuiet data={data} />
 
       <div className="wi-body">
         <div className="wi-main">
@@ -95,6 +96,60 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
           </section>
         </aside>
       </div>
+    </div>
+  );
+}
+
+/** The states where the factory, not a person, is meant to act next. */
+const FACTORY_ACTS = new Set(["factory:intake", "factory:spec-approved", "factory:planned", "factory:design-approved"]);
+const QUIET_AFTER_MS = 10 * 60_000;
+
+function sinceText(ms: number): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 60) return `${min} minute${min === 1 ? "" : "s"}`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return `${h} hour${h === 1 ? "" : "s"}`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"}`;
+}
+
+/**
+ * The item waits on the factory, nothing is running on it, and it has been
+ * that way for a while: say so, and offer to start the role by hand. This is
+ * what a missed hand-off looks like from the page; without it the item
+ * reads exactly like one the factory is busy on.
+ */
+function FactoryQuiet({ data }: { data: EpicWorkspace }) {
+  const qc = useQueryClient();
+  const [started, setStarted] = useState(false);
+  const start = useMutation({
+    mutationFn: () => api.post<{ role: string }>(`/api/epics/${data.epic.id}/start`),
+    onSuccess: () => {
+      setStarted(true);
+      setTimeout(() => void qc.invalidateQueries({ queryKey: ["epic", data.epic.id] }), 4_000);
+    },
+  });
+  const state = data.epic.state ?? "";
+  if (!data.epic.open || !FACTORY_ACTS.has(state) || data.epic.running) return null;
+  // At design-approved the Dispatcher's output is on the tasks, so "nothing
+  // started" means no task has moved at all.
+  if (state === "factory:design-approved" && data.rollup.ready + data.rollup.inFlight + data.rollup.done > 0) return null;
+  const since = data.epic.inStateSince ? Date.now() - new Date(data.epic.inStateSince).getTime() : 0;
+  if (!started && since < QUIET_AFTER_MS) return null;
+  if (started) {
+    return (
+      <div className="banner success" role="status">
+        Started. The factory is on it; this page updates as it runs.
+      </div>
+    );
+  }
+  return (
+    <div className="banner warn" role="status">
+      Nothing has started on this in {sinceText(since)}. The factory should have picked it up by itself.{" "}
+      <button type="button" className="link" disabled={start.isPending} onClick={() => start.mutate()}>
+        {start.isPending ? "Starting…" : "Start it"}
+      </button>
+      {start.isError && <> {(start.error as ApiError).message}</>}
     </div>
   );
 }

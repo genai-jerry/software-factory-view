@@ -123,7 +123,7 @@ export function ClarifyBoard({ data }: { data: EpicWorkspace }) {
         title="Approve the plan"
         need="approve the plan, or ask for a change."
         after="Approving starts the design."
-        waiting="The plan is being written. You will be asked to approve it."
+        waiting={data.epic.running ? "The plan is being written now. You will be asked to approve it." : "Waiting for the factory to write the plan. You will be asked to approve it."}
       />
     </>
   );
@@ -197,7 +197,7 @@ export function DesignBoard({ data }: { data: EpicWorkspace }) {
         title="Approve the design"
         need="approve the design, or ask for a change."
         after={`Approving releases the build${parts && parts.tasks.length > 0 ? `: ${parts.tasks.length} tasks` : ""}. You are asked again only if a builder gets stuck.`}
-        waiting="The design is being written. You will be asked to approve it."
+        waiting={data.epic.running ? "The design is being written now. You will be asked to approve it." : "Waiting for the factory to write the design. You will be asked to approve it."}
       />
 
       {(cases > 0 || data.systemTests.planned) && (

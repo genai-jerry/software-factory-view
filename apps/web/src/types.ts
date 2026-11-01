@@ -326,6 +326,10 @@ export interface EpicWorkspace {
     /** The stage the epic's work is actually in (the label stays at design-approved for the whole build); null: use `state`. */
     stage?: string | null;
     nextStep: NextStep;
+    /** When the epic reached its current state. */
+    inStateSince?: string;
+    /** A factory run live on the epic itself, with the orchestrator's word for the role when it can say. */
+    running?: { role: string | null; runId: string | null } | null;
   };
   repo: { id: string; fullName: string; defaultBranch: string };
   pipeline: string[];
