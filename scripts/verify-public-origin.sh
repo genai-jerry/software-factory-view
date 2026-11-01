@@ -13,8 +13,22 @@ if [[ -z "$ORIGIN" ]]; then
 fi
 
 ORIGIN="${ORIGIN%/}"
-ROOT_BODY="$(curl -fsS "$ORIGIN/" || true)"
-HEALTH_BODY="$(curl -fsS "$ORIGIN/api/health" || true)"
+
+# The deploy reports the api healthy before compose has replaced the web
+# container behind Traefik, so the first requests after a deploy can meet a
+# 404 that clears within seconds. Wait for both answers, up to ~2 minutes,
+# before judging them.
+ROOT_BODY=""
+HEALTH_BODY=""
+for attempt in $(seq 1 24); do
+  ROOT_BODY="$(curl -fsS "$ORIGIN/" 2>/dev/null || true)"
+  HEALTH_BODY="$(curl -fsS "$ORIGIN/api/health" 2>/dev/null || true)"
+  if [[ -n "$ROOT_BODY" && -n "$HEALTH_BODY" ]]; then
+    break
+  fi
+  echo "verify-public-origin: waiting for $ORIGIN (attempt $attempt)"
+  sleep 5
+done
 
 if [[ "$ROOT_BODY" == *'"service":"factory-orchestrator"'* ]]; then
   cat >&2 <<EOF
