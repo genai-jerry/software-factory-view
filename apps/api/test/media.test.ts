@@ -94,3 +94,29 @@ describe("GET /api/media/:repoId", () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+describe("GET /api/media/:repoId with an issue number", () => {
+  it("falls back to the signed URL the Issues API renders when no token can fetch the asset", async () => {
+    const SIGNED = "https://private-user-images.githubusercontent.com/1/689073985-6e43d622-0bf6-47e4-8cf7-815138a1eff3.png?jwt=abc";
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const auth = String((init?.headers as Record<string, string>)?.Authorization ?? "");
+        seen.push(`${auth || "anon"} ${url}`);
+        if (url === ASSET) return new Response("Not Found", { status: 404, statusText: "Not Found" });
+        if (url === "https://gh.invalid/repos/acme/app/issues/36")
+          return new Response(JSON.stringify({ body_html: `<p>x</p><img alt="Image" src="${SIGNED.replace("&", "&amp;")}">` }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        if (url === SIGNED && !auth) return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { "content-type": "image/png" } });
+        return new Response("Not Found", { status: 404, statusText: "Not Found" });
+      }),
+    );
+    const res = await app.inject({ method: "GET", url: `/api/media/${id.repo}?url=${encodeURIComponent(ASSET)}&issue=36`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(seen).toContain(`anon ${SIGNED}`);
+  });
+});

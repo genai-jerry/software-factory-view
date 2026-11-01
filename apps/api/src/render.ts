@@ -126,7 +126,7 @@ function readableDiagrams(md: string): string {
   });
 }
 
-export function renderMarkdown(md: string, opts?: { repoId?: string; repoFullName?: string }): string {
+export function renderMarkdown(md: string, opts?: { repoId?: string; repoFullName?: string; issueNumber?: number | null }): string {
   const html = marked.parse(readableDiagrams(md), { async: false, gfm: true }) as string;
   const sanitized = sanitizeHtml(html, {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "details", "summary", "input"]),
@@ -146,5 +146,5 @@ export function renderMarkdown(md: string, opts?: { repoId?: string; repoFullNam
     },
   });
   const linked = linkifyRefs(sanitized, opts?.repoFullName);
-  return opts?.repoId ? rewriteGitHubMediaUrls(linked, opts.repoId) : linked;
+  return opts?.repoId ? rewriteGitHubMediaUrls(linked, opts.repoId, opts.issueNumber) : linked;
 }

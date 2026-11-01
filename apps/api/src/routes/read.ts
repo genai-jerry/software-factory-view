@@ -44,12 +44,13 @@ import {
   webhookDeliveries,
 } from "@console/db";
 import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
 import { EXPEDITE_ACTIONS, expediteAvailability, loadLastExpediteFlip } from "../expedite.js";
 import { loadApproversForGate, loadGateApprovers, loadTaskStartFacts, nextStepFor, startStatusOf } from "../start-gate.js";
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
-import { fetchGitHubMedia, isGitHubMediaUrl } from "../media.js";
+import { attachmentAssetId, fetchGitHubMedia, fetchSignedMedia, isGitHubMediaUrl, signedAttachmentUrl } from "../media.js";
 import { fetchActiveRuns } from "../orchestrator-dispatch.js";
 import { renderMarkdown } from "../render.js";
 import { countThreadEntries } from "../threads.js";
@@ -79,11 +80,12 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /** Proxy GitHub-hosted issue/comment images with installation or user auth. */
-  app.get<{ Params: { repoId: string }; Querystring: { url?: string } }>("/api/media/:repoId", async (req, reply) => {
+  app.get<{ Params: { repoId: string }; Querystring: { url?: string; issue?: string } }>("/api/media/:repoId", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const url = req.query.url?.trim();
     if (!url || !isGitHubMediaUrl(url)) return reply.code(400).send({ error: "unsupported or missing media url" });
+    const issueNumber = Number(req.query.issue);
 
     const row = (
       await db
@@ -125,6 +127,30 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         return reply.send(body);
       } catch (err) {
         fetchError = err as Error;
+      }
+    }
+    // Neither token could fetch it directly. For an issue's own attachment
+    // the Issues API still renders a signed URL for it (media.ts).
+    const assetId = attachmentAssetId(url);
+    if (assetId && Number.isInteger(issueNumber) && issueNumber > 0) {
+      const [owner, name] = row.repo.fullName.split("/") as [string, string];
+      for (const next of tokens) {
+        let token: string;
+        try {
+          token = await next();
+        } catch {
+          continue;
+        }
+        try {
+          const signed = await signedAttachmentUrl(deps.cfg.GITHUB_API_URL, token, owner, name, issueNumber, assetId);
+          if (!signed) continue;
+          const { body, contentType } = await fetchSignedMedia(signed);
+          reply.header("content-type", contentType);
+          reply.header("cache-control", "private, max-age=240");
+          return reply.send(body);
+        } catch (err) {
+          fetchError = err as Error;
+        }
       }
     }
     if (!fetchError) return reply.code(503).send({ error: "no GitHub credentials available to fetch media" });
@@ -377,7 +403,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         id: epic.id,
         number: epic.number,
         title: epic.title,
-        bodyHtml: epic.body ? renderMarkdown(epic.body, { repoId: repo.id, repoFullName: repo.fullName }) : "",
+        bodyHtml: epic.body ? renderMarkdown(epic.body, { repoId: repo.id, repoFullName: repo.fullName, issueNumber: epic.number }) : "",
         state: epic.factoryState,
         open: epic.state === "open",
         author: epic.author,
@@ -643,7 +669,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         ref: wantRef,
         sha,
         markdown: content,
-        html: renderMarkdown(content, { repoId: repo.id, repoFullName: repo.fullName }),
+        html: renderMarkdown(content, { repoId: repo.id, repoFullName: repo.fullName, issueNumber: epic.number }),
         otherSha: wantRef === "approved" ? artifact.latestSha : artifact.mergedSha,
       };
     },
@@ -670,10 +696,12 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       ? (await db.select({ fullName: repos.fullName }).from(repos).where(eq(repos.id, repoId)).limit(1))[0]?.fullName
       : undefined;
 
+    const commentIssue = alias(issues, "comment_issue");
     const entries = await db
-      .select({ entry: threadEntries, comment: comments })
+      .select({ entry: threadEntries, comment: comments, issueNumber: commentIssue.number })
       .from(threadEntries)
       .leftJoin(comments, eq(comments.id, threadEntries.commentId))
+      .leftJoin(commentIssue, eq(commentIssue.id, comments.issueId))
       .where(eq(threadEntries.threadId, thread.id))
       .orderBy(threadEntries.createdAt);
 
@@ -683,7 +711,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       topicKind: thread.topicKind,
       topicRef: thread.topicRef,
       status: thread.status,
-      entries: entries.map(({ entry, comment }) => ({
+      entries: entries.map(({ entry, comment, issueNumber }) => ({
         id: entry.id,
         source: entry.source,
         author: entry.author ?? comment?.author ?? null,
@@ -692,6 +720,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         bodyHtml: renderMarkdown(comment?.body ?? entry.body ?? "", {
           ...(repoId ? { repoId } : {}),
           repoFullName: /github\.com\/([^/]+\/[^/]+)\//.exec(comment?.htmlUrl ?? "")?.[1] ?? epicRepoName,
+          issueNumber: issueNumber ?? null,
         }),
         isAgent: comment?.isAgent ?? false,
         isApproval: comment?.isApproval ?? false,

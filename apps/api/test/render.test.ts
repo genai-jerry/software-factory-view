@@ -136,3 +136,11 @@ describe("renderMarkdown diagrams", () => {
     expect(html).toContain("sequenceDiagram");
   });
 });
+
+describe("rewriteGitHubMediaUrls with an issue number", () => {
+  it("tells the proxy which issue the attachment belongs to", () => {
+    const out = rewriteGitHubMediaUrls('<img src="https://github.com/user-attachments/assets/abc123">', "repo-uuid", 36);
+    expect(out).toContain("/api/media/repo-uuid?url=");
+    expect(out).toContain("&issue=36");
+  });
+});
