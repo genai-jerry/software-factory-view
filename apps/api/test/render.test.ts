@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fetchGitHubMedia, isGitHubMediaUrl, rewriteGitHubMediaUrls } from "../src/media.js";
-import { renderMarkdown } from "../src/render.js";
+import { mermaidToChains, renderMarkdown } from "../src/render.js";
 
 describe("isGitHubMediaUrl", () => {
   it("accepts user-attachments on github.com", () => {
@@ -103,5 +103,36 @@ describe("issue and PR references", () => {
     const html = renderMarkdown("**You need to:** read #21\n\n- merged in #22", { repoFullName: "o/r" });
     expect(html).toContain(`${link("21")}#21</a>`);
     expect(html).toContain(`${link("22")}#22</a>`);
+  });
+});
+
+describe("renderMarkdown diagrams", () => {
+  const tree = [
+    "```mermaid",
+    "graph LR",
+    "  T1[1 aggregation<br/>beacon-api#62] --> T2[2 endpoint<br/>beacon-api#63] --> T5[5 panel<br/>beacon-web#26]",
+    "  T3[3 call_status pin<br/>beacon-api#64]",
+    "  T4[4 status column<br/>beacon-web#25]",
+    "```",
+  ].join("\n");
+
+  it("turns a task graph into readable chains without numbers", () => {
+    const html = renderMarkdown(tree);
+    expect(html).toContain('<ol class="chain"><li>aggregation → endpoint → panel</li></ol>');
+    expect(html).toContain('<p class="chain-alone">On their own: call_status pin, status column</p>');
+    expect(html).not.toContain("#62");
+    expect(html).not.toContain("T1");
+  });
+
+  it("follows branches and reads flowchart labels with quotes and shapes", () => {
+    expect(mermaidToChains('flowchart TD\n  A("Plan tests") --> B{Approve}\n  B --> C[Build]\n  B --> D[Ship]')).toBe(
+      '<ol class="chain"><li>Plan tests → Approve → Build</li><li>Plan tests → Approve → Ship</li></ol>',
+    );
+  });
+
+  it("leaves other diagram types as code", () => {
+    const html = renderMarkdown("```mermaid\nsequenceDiagram\n  A->>B: hi\n```");
+    expect(html).toContain("<code");
+    expect(html).toContain("sequenceDiagram");
   });
 });

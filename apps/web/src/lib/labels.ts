@@ -105,3 +105,20 @@ export function isOrgAdminRole(role: string | undefined): boolean {
 export function canReachSettings(me: Me, setup: SetupStatus | undefined): boolean {
   return Boolean(setup?.canEditApp) || me.orgs.some((o) => isOrgAdminRole(o.role));
 }
+
+/**
+ * A task, test or bug title the way a person reads it: the factory's
+ * `task(35): ` / `test(34): ` / `bug(35): ` prefix and any leading `#55 `
+ * number removed. The user view names work by title, never by number.
+ */
+export function plainTitle(title: string | null | undefined): string {
+  return (title ?? "")
+    .replace(/^\s*#\d+\s+/, "")
+    .replace(/^(?:task|test|bug)\([^)]*\):?\s*/i, "")
+    .trim();
+}
+
+/** The names of the open items a task or case waits on, or a plain word for one without a title. */
+export function namesOf(items: Array<{ title: string }>): string {
+  return items.map((d) => plainTitle(d.title) || "another task").join(", ");
+}

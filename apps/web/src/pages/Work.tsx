@@ -55,7 +55,7 @@ export function WorkPage() {
       </div>
       {added && (
         <Banner tone="success">
-          Added #{added.number} {added.title}. The factory reads it and comes back with a plan to approve.
+          Added “{added.title}”. The factory reads it and comes back with a plan to approve.
         </Banner>
       )}
       {webhooksStuck && ingestion && (

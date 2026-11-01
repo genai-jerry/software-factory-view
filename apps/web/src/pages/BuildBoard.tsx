@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { TaskStartGate } from "../components/Approve.js";
+import { namesOf, plainTitle } from "../lib/labels.js";
 import type { EpicWorkspace, IssuePeekData } from "../types.js";
 
 /**
@@ -29,7 +30,7 @@ export function taskWord(t: Task): { word: TaskWord; text: string } {
   if (s === "factory:in-progress") return { word: "writing", text: "Being written" };
   const after = t.blockedBy.filter((d) => d.open);
   if (s === "factory:ready" && t.approvable) return { word: "waiting-start", text: "Waiting for a start" };
-  if (after.length > 0) return { word: "waiting-on", text: `Waiting on #${after.map((d) => d.number).join(", #")}` };
+  if (after.length > 0) return { word: "waiting-on", text: `Waiting on ${namesOf(after)}` };
   return { word: "queued", text: "Waiting" };
 }
 
@@ -62,10 +63,10 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         </div>
         {tasks.length === 0 && <p className="muted">No tasks yet. The Planner opens them when the plan is approved.</p>}
         <ol className="task-list">
-          {words.map(({ t, word, text }) => (
+          {words.map(({ t, word, text }, i) => (
             <li key={t.id} className={`task-row ${word}`}>
-              <span className="task-n">{t.number}</span>
-              <span className="task-title">{t.title.replace(/^task\(\d+\):\s*/i, "")}</span>
+              <span className="task-n">{i + 1}</span>
+              <span className="task-title">{plainTitle(t.title)}</span>
               <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : word === "waiting-start" ? "decide" : ["writing", "reviewing", "testing"].includes(word) ? "wait" : ""}`}>
                 {text}
               </span>

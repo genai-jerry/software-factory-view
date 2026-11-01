@@ -152,7 +152,7 @@ describe("WorkItemPage at Test", () => {
     expect(await within(st1).findByText("Open /leads in beacon-web.")).toBeInTheDocument();
     expect(within(st1).getByText(/each row shows its CRM status/)).toBeInTheDocument();
     // A case that waits on a task says which.
-    expect(within(screen.getByRole("article", { name: /^ST-3:/ })).getByText("After #25 is built.")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: /^ST-3:/ })).getByText("After show status is built.")).toBeInTheDocument();
     // The environment comes from the plan.
     expect(screen.getByText("Run both repos on the local stack.")).toBeInTheDocument();
     expect(screen.getByText("AUTH_ENABLED=true")).toBeInTheDocument();
