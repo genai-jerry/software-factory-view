@@ -190,7 +190,14 @@ export function ShapePage() {
 
 function Conversation({ id }: { id: string }) {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["shape", id], queryFn: () => api.get<ShapeConversation>(`/api/shape/${id}`), retry: false });
+  // Answers and the requirement are written in the background: while one is
+  // pending the page asks again every few seconds, and stops when it lands.
+  const q = useQuery({
+    queryKey: ["shape", id],
+    queryFn: () => api.get<ShapeConversation>(`/api/shape/${id}`),
+    retry: false,
+    refetchInterval: (query) => (busy(query.state.data) ? 3_000 : false),
+  });
   const [text, setText] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
   const [showSpec, setShowSpec] = useState(false);
@@ -221,8 +228,13 @@ function Conversation({ id }: { id: string }) {
     },
   });
 
+  const retry = useMutation({
+    mutationFn: (messageId: string) => api.post(`/api/shape/${id}/messages/${messageId}/retry`, {}),
+    onSuccess: refresh,
+  });
+
   const writeSpec = useMutation({
-    mutationFn: () => api.post<{ spec: string }>(`/api/shape/${id}/spec`),
+    mutationFn: () => api.post<{ specStatus: string }>(`/api/shape/${id}/spec`),
     onSuccess: () => {
       setShowSpec(true);
       refresh();
@@ -230,9 +242,10 @@ function Conversation({ id }: { id: string }) {
   });
 
   const count = q.data?.messages?.length ?? 0;
+  const answering = (q.data?.messages ?? []).some((m) => m.status === "pending");
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
-  }, [count, send.isPending]);
+  }, [count, send.isPending, answering]);
 
   const addFiles = async (files: FileList | File[]) => {
     const picked: Pending[] = [];
@@ -259,7 +272,7 @@ function Conversation({ id }: { id: string }) {
   const submit = () => {
     const body = text.trim();
     if (!body && pending.length === 0) return;
-    if (send.isPending) return;
+    if (send.isPending || answering) return;
     send.mutate({ body: body || "What do you see in this screenshot?", files: pending });
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -279,8 +292,10 @@ function Conversation({ id }: { id: string }) {
   // Once the issue is projected, the idea is about its epic and the chat goes on
   // (on the epic's branch). Until then there is nothing to talk to yet.
   const inFactory = (Boolean(conversation.issueUrl) || opened !== null) && !conversation.epic;
-  const sendErr = send.error as ApiError | null;
+  const sendErr = (send.error ?? retry.error) as ApiError | null;
   const noClaude = sendErr?.status === 503;
+  const specPending = conversation.specStatus === "pending";
+  const composerBusy = send.isPending || answering;
 
   return (
     <div className="shape-conv">
@@ -302,8 +317,13 @@ function Conversation({ id }: { id: string }) {
           </p>
         </div>
         <div className="shape-actions">
-          <button type="button" className="secondary" disabled={writeSpec.isPending || messages.length === 0} onClick={() => (conversation.spec && !showSpec ? setShowSpec(true) : writeSpec.mutate())}>
-            {writeSpec.isPending ? "Writing…" : conversation.spec ? (showSpec ? "Requirement" : "Show the requirement") : "Write the requirement"}
+          <button
+            type="button"
+            className="secondary"
+            disabled={writeSpec.isPending || specPending || messages.length === 0}
+            onClick={() => (conversation.spec && !showSpec ? setShowSpec(true) : writeSpec.mutate())}
+          >
+            {specPending ? "Writing…" : conversation.spec ? (showSpec ? "Requirement" : "Show the requirement") : "Write the requirement"}
           </button>
           <button type="button" className="primary" disabled={!conversation.spec || inFactory} onClick={() => setOpening(true)}>
             Open as work
@@ -327,7 +347,7 @@ function Conversation({ id }: { id: string }) {
                 </p>
                 <div className="shape-chips">
                   {(conversation.epic ? EPIC_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                    <button key={s} type="button" className="chip" disabled={send.isPending} onClick={() => send.mutate({ body: s, files: [] })}>
+                    <button key={s} type="button" className="chip" disabled={composerBusy} onClick={() => send.mutate({ body: s, files: [] })}>
                       {s}
                     </button>
                   ))}
@@ -335,25 +355,23 @@ function Conversation({ id }: { id: string }) {
               </div>
             )}
             {messages.map((m, i) => (
-              <Message key={m.id} m={m} index={i} />
+              <Message key={m.id} m={m} index={i} first={!messages.some((x) => x.role === "assistant" && x.status !== "pending" && x.id !== m.id)} onRetry={(mid) => retry.mutate(mid)} retrying={retry.isPending} />
             ))}
-            {send.isPending && (
+            {send.isPending && !answering && (
               <div className="shape-msg assistant" aria-live="polite">
-                <div className="shape-bubble muted">
-                  {messages.some((m) => m.role === "assistant") ? "Thinking…" : "Thinking… the factory is reading the code. The first answer takes longer."}
-                </div>
+                <div className="shape-bubble muted">Sending…</div>
               </div>
             )}
             <div ref={endRef} />
           </div>
-          {send.isError && (
+          {(send.isError || retry.isError) && (
             <div className="banner error">
               {noClaude ? (
                 <>
                   {sendErr?.message} <Link to="/settings">Open Settings</Link>.
                 </>
               ) : (
-                failureText(send.error)
+                failureText(send.error ?? retry.error)
               )}
             </div>
           )}
@@ -377,13 +395,13 @@ function Conversation({ id }: { id: string }) {
                 aria-label="Your message"
                 rows={3}
                 value={text}
-                placeholder="Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line."
+                placeholder={answering ? "Waiting for the answer…" : "Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line."}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKey}
                 onPaste={onPaste}
                 onDrop={onDrop}
                 onDragOver={(e) => e.preventDefault()}
-                disabled={send.isPending}
+                disabled={composerBusy}
               />
               <div className="decision-actions">
                 <input
@@ -398,18 +416,35 @@ function Conversation({ id }: { id: string }) {
                     e.target.value = "";
                   }}
                 />
-                <button type="button" className="secondary" onClick={() => fileRef.current?.click()} disabled={send.isPending}>
+                <button type="button" className="secondary" onClick={() => fileRef.current?.click()} disabled={composerBusy}>
                   Attach image
                 </button>
-                <button type="button" className="primary" onClick={submit} disabled={send.isPending || (!text.trim() && pending.length === 0)}>
-                  {send.isPending ? "Sending…" : "Send"}
+                <button type="button" className="primary" onClick={submit} disabled={composerBusy || (!text.trim() && pending.length === 0)}>
+                  {send.isPending ? "Sending…" : answering ? "Waiting…" : "Send"}
                 </button>
               </div>
             </div>
           )}
         </section>
-        {showSpec && conversation.spec !== null && (
-          <SpecPanel id={id} spec={conversation.spec} onClose={() => setShowSpec(false)} onSaved={refresh} />
+        {showSpec && specPending && (
+          <aside className="card shape-spec" aria-label="Requirement">
+            <h2>Requirement</h2>
+            <p className="muted" role="status">
+              Writing the requirement… the factory is reading the conversation. This takes a minute or two.
+            </p>
+          </aside>
+        )}
+        {showSpec && !specPending && conversation.specStatus === "failed" && !conversation.spec && (
+          <aside className="card shape-spec" aria-label="Requirement">
+            <h2>Requirement</h2>
+            <p className="decision-failure">{conversation.specError ?? "Writing the requirement failed."}</p>
+            <button type="button" className="secondary" disabled={writeSpec.isPending} onClick={() => writeSpec.mutate()}>
+              Try again
+            </button>
+          </aside>
+        )}
+        {showSpec && !specPending && conversation.spec !== null && (
+          <SpecPanel id={id} spec={conversation.spec} failedNote={conversation.specStatus === "failed" ? conversation.specError : null} onRewrite={() => writeSpec.mutate()} onClose={() => setShowSpec(false)} onSaved={refresh} />
         )}
       </div>
 
@@ -429,7 +464,32 @@ function Conversation({ id }: { id: string }) {
   );
 }
 
-function Message({ m, index }: { m: ShapeMessage; index: number }) {
+/** Whether anything on this conversation is still being written in the background. */
+function busy(data: ShapeConversation | undefined): boolean {
+  if (!data?.conversation) return false;
+  return data.conversation.specStatus === "pending" || (data.messages ?? []).some((m) => m.status === "pending");
+}
+
+function Message({ m, index, first, onRetry, retrying }: { m: ShapeMessage; index: number; first: boolean; onRetry: (id: string) => void; retrying: boolean }) {
+  if (m.role === "assistant" && m.status === "pending") {
+    return (
+      <div className="shape-msg assistant" aria-live="polite">
+        <div className="shape-bubble muted">{first ? "Thinking… the factory is reading the code. The first answer takes longer." : "Thinking…"}</div>
+      </div>
+    );
+  }
+  if (m.role === "assistant" && m.status === "failed") {
+    return (
+      <div className="shape-msg assistant">
+        <div className="shape-bubble assistant shape-failed">
+          <p className="decision-failure">{m.error ?? "The answer failed."}</p>
+          <button type="button" className="secondary" disabled={retrying} onClick={() => onRetry(m.id)}>
+            {retrying ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`shape-msg ${m.role}`}>
       {m.role === "user" ? (
@@ -485,7 +545,21 @@ function Mock({ html, n }: { html: string; n: number }) {
   );
 }
 
-function SpecPanel({ id, spec, onClose, onSaved }: { id: string; spec: string; onClose: () => void; onSaved: () => void }) {
+function SpecPanel({
+  id,
+  spec,
+  failedNote,
+  onRewrite,
+  onClose,
+  onSaved,
+}: {
+  id: string;
+  spec: string;
+  failedNote?: string | null;
+  onRewrite: () => void;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(spec);
   useEffect(() => setDraft(spec), [spec]);
@@ -528,6 +602,14 @@ function SpecPanel({ id, spec, onClose, onSaved }: { id: string; spec: string; o
         </span>
       </div>
       <p className="muted">This is what the factory reads when you open it as work. Change anything that is not right.</p>
+      {failedNote && (
+        <p className="decision-failure">
+          The last rewrite failed: {failedNote}{" "}
+          <button type="button" className="link" onClick={onRewrite}>
+            Try again
+          </button>
+        </p>
+      )}
       {editing ? <textarea className="shape-spec-edit" value={draft} onChange={(e) => setDraft(e.target.value)} rows={24} aria-label="Requirement text" /> : <SpecView markdown={spec} />}
       {save.isError && <p className="decision-failure">{failureText(save.error)}</p>}
     </aside>

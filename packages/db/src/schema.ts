@@ -636,6 +636,9 @@ export const shapeConversations = pgTable(
     /** The orchestrator's Claude session for this conversation, resumed on the next message so the model keeps what it read. */
     askSession: text("ask_session"),
     askSessionAt: timestamp("ask_session_at", { withTimezone: true }),
+    /** The requirement is written in the background: idle | pending | done | failed. */
+    specStatus: text("spec_status").notNull().default("idle"),
+    specError: text("spec_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -654,6 +657,9 @@ export const shapeMessages = pgTable(
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
     model: text("model"),
+    /** An assistant message is answered in the background: pending | done | failed. */
+    status: text("status").notNull().default("done"),
+    error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("shape_messages_conv").on(t.conversationId, t.createdAt)],

@@ -1432,3 +1432,5 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-start-pick input { width: auto; margin: 0; }
 .shape-hint { font-size: 0.8rem; margin: 0 0 0.5rem; }
 .shape-conv-epic { display: block; font-size: 0.8rem; }
+.shape-bubble.shape-failed { border-color: var(--danger, #b42318); }
+.shape-bubble.shape-failed .decision-failure { margin: 0 0 0.4rem; }
