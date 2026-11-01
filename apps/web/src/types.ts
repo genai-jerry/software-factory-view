@@ -769,6 +769,9 @@ export interface ShapeMessage {
   bodyHtml: string;
   mocks: Array<{ html: string }>;
   attachments: ShapeAttachment[];
+  /** An answer is written in the background: pending until it lands, failed with `error` when it did not. */
+  status?: "pending" | "done" | "failed";
+  error?: string | null;
   createdAt: string;
 }
 
@@ -780,6 +783,9 @@ export interface ShapeConversation {
     repo: string;
     spec: string | null;
     specUpdatedAt: string | null;
+    /** The requirement is written in the background. */
+    specStatus?: "idle" | "pending" | "done" | "failed";
+    specError?: string | null;
     issueUrl: string | null;
     issueId: string | null;
     /** Set when the idea is about an epic: it reads the epic's branch and documents. */

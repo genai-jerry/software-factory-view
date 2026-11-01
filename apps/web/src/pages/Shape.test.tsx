@@ -185,3 +185,74 @@ describe("ShapePage", () => {
     expect(screen.queryByText(/reads the latest main/)).toBeNull();
   });
 });
+
+describe("ShapePage answers in the background", () => {
+  const pendingReply = { ...conversation.messages[1]!, id: "m3", body: "", bodyHtml: "", mocks: [], status: "pending" as const, error: null };
+  const doneReply = { ...pendingReply, body: "It lives in the leads list component.", bodyHtml: "<p>It lives in the leads list component.</p>", status: "done" as const };
+
+  it("shows the thinking bubble at once, polls, and swaps in the answer when it lands", async () => {
+    let answered = false;
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: summaries };
+      if (p === "/api/work/targets") return targets;
+      if (p === "/api/shape/c1") {
+        const extra = answered ? doneReply : pendingReply;
+        return { ...conversation, messages: [...conversation.messages, { ...conversation.messages[0]!, id: "u2", body: "Where does it live?" }, extra] };
+      }
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ message: pendingReply, conversation: { title: "Day-wise calling panel" } });
+    renderAt("/shape/c1");
+    expect(await screen.findByText("Thinking…")).toBeInTheDocument();
+    // The composer waits while the answer is written.
+    expect(screen.getByLabelText("Your message")).toBeDisabled();
+    expect(screen.getByLabelText("Your message")).toHaveAttribute("placeholder", "Waiting for the answer…");
+    answered = true;
+    expect(await screen.findByText("It lives in the leads list component.", {}, { timeout: 6_000 })).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).toBeNull();
+    expect(screen.getByLabelText("Your message")).toBeEnabled();
+  }, 10_000);
+
+  it("shows why an answer failed and tries it again on request", async () => {
+    const failed = { ...pendingReply, status: "failed" as const, error: "No model in the preference chain for 'ask' is accessible" };
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: summaries };
+      if (p === "/api/work/targets") return targets;
+      if (p === "/api/shape/c1") return { ...conversation, messages: [...conversation.messages, failed] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ message: pendingReply, conversation: { title: "Day-wise calling panel" } });
+    renderAt("/shape/c1");
+    expect(await screen.findByText(/No model in the preference chain/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/messages/m3/retry", {}));
+  });
+
+  it("says the requirement is being written, then shows it", async () => {
+    let phase: "idle" | "pending" | "done" = "idle";
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: summaries };
+      if (p === "/api/work/targets") return targets;
+      if (p === "/api/shape/c1")
+        return phase === "done"
+          ? { ...conversation, conversation: { ...conversation.conversation, spec: "## What should be built?\n- A panel.", specStatus: "done" } }
+          : { ...conversation, conversation: { ...conversation.conversation, specStatus: phase } };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path.endsWith("/spec")) {
+        phase = "pending";
+        return { specStatus: "pending" };
+      }
+      return {};
+    });
+    renderAt("/shape/c1");
+    await screen.findByText("Here is the page with the panel.");
+    await userEvent.click(screen.getByRole("button", { name: "Write the requirement" }));
+    expect(await screen.findByText(/Writing the requirement…/)).toBeInTheDocument();
+    phase = "done";
+    // The next poll swaps the waiting panel for the written requirement.
+    await waitFor(() => expect(screen.getByText("A panel.")).toBeInTheDocument(), { timeout: 6_000 });
+    expect(screen.queryByText(/Writing the requirement…/)).toBeNull();
+  }, 10_000);
+});
