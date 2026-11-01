@@ -93,6 +93,10 @@ describe("lineFor", () => {
     expect(lineFor({ ...base, kind: "test", number: 68, title: "test(35): ST-3 A status follows through", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-failed", actor: "sowmya" })!.text).toBe(
       "sowmya ran test ST-3 of Day-wise: failed. The fix is being built.",
     );
+    // A case with no parent link names what it checks instead of its raw title.
+    expect(lineFor({ ...base, kind: "test", number: 55, title: "test(34): ST-12 A status moved by a human is read back", toState: "factory:manual-test", actor: null })!.text).toBe(
+      "Test ST-12 is ready to run: A status moved by a human is read back.",
+    );
     // A skipped case is said as skipped, never as run.
     expect(lineFor({ ...base, kind: "test", number: 69, title: "test(35): ST-4 Old status is greyed", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-skipped", actor: "jerry" })!.text).toBe(
       "jerry skipped test ST-4 of Day-wise.",

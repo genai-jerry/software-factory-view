@@ -84,7 +84,15 @@ beforeEach(() => {
   vi.mocked(api.post).mockReset();
   vi.mocked(api.get).mockImplementation(async (path: string) => {
     if (path.endsWith("/gate")) return gate;
-    if (path.endsWith("/timeline")) return { events: [{ type: "state", at: "2026-10-30T10:12:00Z", detail: "Released to staging", actor: "jerry" }] };
+    if (path.endsWith("/timeline"))
+      return {
+        events: [
+          { type: "state", at: "2026-10-30T10:12:00Z", detail: "→ factory:in-staging", actor: "jerry" },
+          { type: "state", at: "2026-10-30T10:11:00Z", detail: "→ factory:test-skipped", actor: "acme-console[bot]" },
+          { type: "state", at: "2026-10-30T10:11:00Z", detail: "− factory:manual-test", actor: "acme-console[bot]" },
+          { type: "state", at: "2026-10-30T10:10:00Z", detail: "→ factory:test-skipped", actor: "acme-console[bot]" },
+        ],
+      };
     if (path.includes("/peek")) return { blocked: { since: null, question: "May the status column be the phone column?" } };
     return {};
   });
@@ -98,7 +106,12 @@ describe("ReleaseBoard at production", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.post).mock.calls.map((c) => c[0])).toEqual(["/api/prs/p1/merge", "/api/prs/p2/merge"]);
     expect(await screen.findByText("Shipped. Ops verifies production next.")).toBeInTheDocument();
-    expect(screen.getByText("Released to staging")).toBeInTheDocument();
+    // The history says what each move means, folds repeats, and names a bot as the factory.
+    const history = screen.getByRole("heading", { name: "How it got here" }).parentElement!;
+    expect(within(history).getByText(/Released to staging/)).toBeInTheDocument();
+    expect(within(history).getByText(/A test case was skipped \(2 times\)/)).toBeInTheDocument();
+    expect(within(history).queryByText(/factory:/)).toBeNull();
+    expect(within(history).queryByText(/\[bot\]/)).toBeNull();
   });
 
   it("stops at the first refusal and says what was merged", async () => {
