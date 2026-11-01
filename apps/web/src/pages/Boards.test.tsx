@@ -84,7 +84,15 @@ beforeEach(() => {
   vi.mocked(api.post).mockReset();
   vi.mocked(api.get).mockImplementation(async (path: string) => {
     if (path.endsWith("/gate")) return gate;
-    if (path.endsWith("/timeline")) return { events: [{ type: "state", at: "2026-10-30T10:12:00Z", detail: "Released to staging", actor: "jerry" }] };
+    if (path.endsWith("/timeline"))
+      return {
+        events: [
+          { type: "state", at: "2026-10-30T10:12:00Z", detail: "→ factory:in-staging", actor: "jerry" },
+          { type: "state", at: "2026-10-30T10:11:00Z", detail: "→ factory:test-skipped", actor: "acme-console[bot]" },
+          { type: "state", at: "2026-10-30T10:11:00Z", detail: "− factory:manual-test", actor: "acme-console[bot]" },
+          { type: "state", at: "2026-10-30T10:10:00Z", detail: "→ factory:test-skipped", actor: "acme-console[bot]" },
+        ],
+      };
     if (path.includes("/peek")) return { blocked: { since: null, question: "May the status column be the phone column?" } };
     return {};
   });
@@ -98,7 +106,12 @@ describe("ReleaseBoard at production", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.post).mock.calls.map((c) => c[0])).toEqual(["/api/prs/p1/merge", "/api/prs/p2/merge"]);
     expect(await screen.findByText("Shipped. Ops verifies production next.")).toBeInTheDocument();
-    expect(screen.getByText("Released to staging")).toBeInTheDocument();
+    // The history says what each move means, folds repeats, and names a bot as the factory.
+    const history = screen.getByRole("heading", { name: "How it got here" }).parentElement!;
+    expect(within(history).getByText(/Released to staging/)).toBeInTheDocument();
+    expect(within(history).getByText(/A test case was skipped \(2 times\)/)).toBeInTheDocument();
+    expect(within(history).queryByText(/factory:/)).toBeNull();
+    expect(within(history).queryByText(/\[bot\]/)).toBeNull();
   });
 
   it("stops at the first refusal and says what was merged", async () => {
@@ -108,6 +121,39 @@ describe("ReleaseBoard at production", () => {
     expect(await screen.findByText(/Stopped after 1 of 2/)).toBeInTheDocument();
     expect(screen.getByText(/Promote beacon-web was declined/)).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledTimes(2);
+  });
+
+  it("warns before shipping when cases have not been run", async () => {
+    const cases = [
+      task({ id: "c1", number: 50, title: "test(40): ST-1 Preview shows", kind: "test", caseId: "ST-1", state: "factory:manual-test" }),
+      task({ id: "c2", number: 51, title: "test(40): ST-2 No preview for a bare link", kind: "test", caseId: "ST-2", state: "factory:test-skipped", open: false }),
+      task({ id: "c3", number: 52, title: "test(40): ST-3 Preview on a long link", kind: "test", caseId: "ST-3", state: "factory:test-passed", open: false }),
+    ];
+    renderIn(<ReleaseBoard data={epic({ state: "factory:in-staging" }, cases)} />);
+    await screen.findByRole("heading", { name: "Your decision" });
+    expect(screen.getByText("1 test case has not been run. Shipping now ships untested.")).toBeInTheDocument();
+    // Skipped is said apart from passed, never folded into it.
+    expect(screen.getByText("3 tasks, 1 of 3 tests passed, 1 skipped")).toBeInTheDocument();
+  });
+
+  it("shows an open question in full, holds the release until it is acknowledged, and can mark it answered", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.endsWith("/gate"))
+        return { ...gate, gate: "staging", state: "factory:epic-ready", releasePrs: [], openQuestions: [{ id: "t1", title: "Which time zone groups the days?", topicRef: "gate/staging", entryCount: 1 }] };
+      if (path === "/api/threads/t1")
+        return { id: "t1", title: "Which time zone groups the days?", topicKind: "gate", topicRef: "gate/staging", status: "open", entries: [{ id: "n1", source: "console", author: "sowmya", bodyHtml: "<p>Is it the workspace zone or UTC?</p>" }] };
+      if (path.endsWith("/timeline")) return { events: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderIn(<ReleaseBoard data={epic({ state: "factory:epic-ready" })} />);
+    expect(await screen.findByText("Is it the workspace zone or UTC?")).toBeInTheDocument();
+    const release = screen.getByRole("button", { name: "Release to staging" });
+    expect(release).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Release anyway/ }));
+    expect(release).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Mark as answered" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/threads/t1/status", { status: "resolved" }));
   });
 
   it("offers Release to staging at GS", async () => {
@@ -128,11 +174,11 @@ describe("BuildBoard", () => {
     task({ id: "a", number: 1, title: "task(34): The status map learns the sheet kind", state: "factory:on-epic" }),
     task({ id: "b", number: 4, title: "task(34): The adapter writes status words", state: "factory:blocked" }),
     task({ id: "c", number: 5, title: "task(34): The poller reports changes", state: "factory:in-review", running: true, runningRole: "reviewer", runId: "run-9" }),
-    task({ id: "d", number: 6, title: "task(34): The page shows the columns", state: "factory:ready", blockedBy: [{ id: "b", number: 4, title: "", state: "factory:blocked", open: true, htmlUrl: "" }] }),
+    task({ id: "d", number: 6, title: "task(34): The page shows the columns", state: "factory:ready", blockedBy: [{ id: "b", number: 4, title: "task(34): Sync the setter status", state: "factory:blocked", open: true, htmlUrl: "" }] }),
   ];
 
   it("says each task's standing in words", () => {
-    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on #4"]);
+    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on Sync the setter status"]);
   });
 
   it("answers a stopped builder from the board", async () => {

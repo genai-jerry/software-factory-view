@@ -147,7 +147,7 @@ describe("an epic's cases are counted apart from its tasks", () => {
 
   it("rolls the cases up on their own", async () => {
     const { rollup } = await get(id.epic!);
-    expect(rollup.tests).toEqual({ total: 3, passed: 1, runnable: 1, failed: 1, outstanding: 2 });
+    expect(rollup.tests).toEqual({ total: 3, passed: 1, runnable: 1, failed: 1, skipped: 0, outstanding: 2 });
   });
 
   it("says what the assembled epic is waiting on", async () => {

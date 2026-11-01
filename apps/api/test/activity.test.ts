@@ -88,17 +88,24 @@ describe("lineFor", () => {
     expect(lineFor({ ...base, toState: "factory:spec-approved", actor: "jerry" })).toEqual({ who: "jerry", person: true, text: "jerry approved the plan for Day-wise.", stage: "clarify" });
     expect(lineFor({ ...base, toState: "factory:spec-ready", actor: "acme-console[bot]" })!.text).toBe("The factory finished the plan for Day-wise. Waiting for approval.");
     expect(lineFor({ ...base, kind: "task", number: 62, title: "task(35): compute counts", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:blocked", actor: null })!.text).toBe(
-      "The factory stopped on task #62 of Day-wise and asked a question.",
+      "The factory stopped on the task “compute counts” of Day-wise and asked a question.",
     );
     expect(lineFor({ ...base, kind: "test", number: 68, title: "test(35): ST-3 A status follows through", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-failed", actor: "sowmya" })!.text).toBe(
       "sowmya ran test ST-3 of Day-wise: failed. The fix is being built.",
     );
-    // A task becoming ready is the dispatcher's housekeeping on an epic; said for the task, not the epic.
-    expect(lineFor({ ...base, toState: "factory:ready", actor: null })).toBeNull();
     // A case with no parent link names what it checks instead of its raw title.
     expect(lineFor({ ...base, kind: "test", number: 55, title: "test(34): ST-12 A status moved by a human is read back", toState: "factory:manual-test", actor: null })!.text).toBe(
       "Test ST-12 is ready to run: A status moved by a human is read back.",
     );
+    // A skipped case is said as skipped, never as run.
+    expect(lineFor({ ...base, kind: "test", number: 69, title: "test(35): ST-4 Old status is greyed", epicTitle: "Day-wise", epicNumber: 35, toState: "factory:test-skipped", actor: "jerry" })!.text).toBe(
+      "jerry skipped test ST-4 of Day-wise.",
+    );
+    expect(lineFor({ ...base, kind: "test", number: 69, title: "test(34): ST-4 Old status is greyed", toState: "factory:test-skipped", actor: "jerry" })!.text).toBe(
+      "jerry skipped test ST-4: Old status is greyed.",
+    );
+    // A task becoming ready is the dispatcher's housekeeping on an epic; said for the task, not the epic.
+    expect(lineFor({ ...base, toState: "factory:ready", actor: null })).toBeNull();
   });
 });
 
@@ -108,7 +115,7 @@ describe("GET /api/activity", () => {
     expect(res.statusCode).toBe(200);
     const { lines } = res.json() as { lines: Array<{ text: string; who: string; epicId: string; stage: string }> };
     expect(lines.map((l) => l.text)).toEqual([
-      "The factory built task #62 of Day-wise calling performance.",
+      "The factory built the task “compute counts” of Day-wise calling performance.",
       "jerry approved the plan for Day-wise calling performance.",
       "jerry added Day-wise calling performance.",
     ]);

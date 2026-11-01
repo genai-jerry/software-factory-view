@@ -273,6 +273,7 @@ export interface TestRollup {
   passed: number;
   runnable: number;
   failed: number;
+  skipped?: number;
   outstanding: number;
 }
 
@@ -470,7 +471,7 @@ export interface GatePanelData {
       open: boolean;
       htmlUrl: string;
       caseId: string | null;
-      verdict: "passed" | "failed" | "runnable" | "pending";
+      verdict: "passed" | "failed" | "runnable" | "pending" | "skipped";
       verdictBy: string | null;
       verdictAt: string | null;
     }>;

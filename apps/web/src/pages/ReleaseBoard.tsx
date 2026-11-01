@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { OpenQuestions } from "../components/OpenQuestions.js";
 import { plain } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, GatePanelData, PrSummary, TimelineEvent } from "../types.js";
 
@@ -39,8 +40,12 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
 
   const tests = data.rollup.tests;
   const cases = data.tasks.filter((t) => t.kind === "test");
-  const passed = cases.filter((c) => c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")).length;
-  const built = `${data.rollup.total} task${data.rollup.total === 1 ? "" : "s"}${cases.length > 0 ? `, ${passed} of ${cases.length} tests passed` : ""}`;
+  const skipped = cases.filter((c) => c.state === "factory:test-skipped").length;
+  const passed = cases.filter((c) => c.state !== "factory:test-skipped" && (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed"))).length;
+  // A case still open — runnable, failed, or not yet released — has not been
+  // run. Said before Ship to production, because shipping then ships untested.
+  const notRun = cases.filter((c) => c.open && c.state !== "factory:test-passed" && c.state !== "factory:test-skipped").length;
+  const built = `${data.rollup.total} task${data.rollup.total === 1 ? "" : "s"}${cases.length > 0 ? `, ${passed} of ${cases.length} tests passed${skipped > 0 ? `, ${skipped} skipped` : ""}` : ""}`;
 
   return (
     <>
@@ -89,6 +94,11 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
       </section>
 
       {atStaging && <ReleaseToStaging data={data} gate={gate.data ?? null} />}
+      {atProduction && notRun > 0 && (
+        <p className="banner warn">
+          {notRun} test case{notRun === 1 ? " has" : "s have"} not been run. Shipping now ships untested.
+        </p>
+      )}
       {atProduction && <ShipToProduction data={data} gate={gate.data ?? null} gateError={gate.isError ? (gate.error as ApiError).message : null} />}
       {live && (
         <section className="card">
@@ -101,21 +111,63 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
         <h2 id="how">How it got here</h2>
         {timeline.data?.events.filter((e) => e.type === "state").length === 0 && <p className="muted">No moves recorded yet.</p>}
         <ol className="rel-history">
-          {timeline.data?.events
-            .filter((e) => e.type === "state")
-            .slice(0, 10)
-            .reverse()
-            .map((e, i) => (
-              <li key={i}>
-                <span className="muted">{new Date(e.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>{" "}
-                {e.detail}
-                {e.actor && <span className="muted"> · {e.actor}</span>}
-              </li>
-            ))}
+          {historyLines(timeline.data?.events ?? []).map((e, i) => (
+            <li key={i}>
+              <span className="muted">{new Date(e.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span> {e.text}
+              <span className="muted"> · {e.who}</span>
+            </li>
+          ))}
         </ol>
       </section>
     </>
   );
+}
+
+/** What a state move means, in the reader's words; null for a move not worth a line. */
+const MOVE_WORDS: Record<string, string> = {
+  "factory:intake": "Added",
+  "factory:spec-ready": "The plan was written",
+  "factory:spec-approved": "The plan was approved",
+  "factory:planned": "Broken into tasks",
+  "factory:design-ready": "The design was written",
+  "factory:design-approved": "The design was approved; building started",
+  "factory:manual-test": "A test case became ready to run",
+  "factory:test-passed": "A test case passed",
+  "factory:test-failed": "A test case failed",
+  "factory:test-skipped": "A test case was skipped",
+  "factory:bug-open": "A bug was reported",
+  "factory:bug-retest": "A bug fix is ready to re-test",
+  "factory:bug-verified": "A bug fix was confirmed",
+  "factory:epic-ready": "Built; waiting for the release to staging",
+  "factory:in-staging": "Released to staging",
+  "factory:deployed": "Shipped to production",
+  "factory:blocked": "Stopped with a question",
+};
+
+const BOT = /\[bot\]$|^github-actions/;
+
+/**
+ * The epic's moves as sentences, oldest first, at most ten: only moves into a
+ * state (leaving one says nothing on its own), consecutive repeats folded
+ * into one line with a count, and a bot named as the factory.
+ */
+export function historyLines(events: TimelineEvent[]): Array<{ at: string; text: string; who: string }> {
+  const out: Array<{ at: string; text: string; who: string; n: number }> = [];
+  for (const e of events) {
+    if (e.type !== "state") continue;
+    const state = e.detail.match(/^→\s*(factory:[\w-]+)/)?.[1];
+    if (!state) continue;
+    const text = MOVE_WORDS[state] ?? "Moved on";
+    const who = !e.actor || BOT.test(e.actor) ? "the factory" : e.actor;
+    const prev = out[out.length - 1];
+    if (prev && prev.text === text && prev.who === who) {
+      prev.n += 1;
+      continue;
+    }
+    out.push({ at: e.at, text, who, n: 1 });
+    if (out.length >= 10) break;
+  }
+  return out.reverse().map(({ at, text, who, n }) => ({ at, text: n > 1 ? `${text} (${n} times)` : text, who }));
 }
 
 /** The first prose paragraphs of a proposal, before any heading past the title. */
@@ -135,7 +187,8 @@ function Summary({ markdown }: { markdown: string }) {
       if (paras.length >= 3) break;
       continue;
     }
-    if (line.startsWith("|") || line.startsWith("- ") || line.startsWith("* ") || /^\d+\./.test(line)) continue;
+    // Bookkeeping lines such as `Epic: owner/repo#35` are links, not a summary.
+    if (line.startsWith("|") || line.startsWith("- ") || line.startsWith("* ") || /^\d+\./.test(line) || /^\w[\w ]*:\s*\S*#\d+\s*$/.test(line)) continue;
     buf.push(line);
   }
   if (buf.length && paras.length < 3) paras.push(buf.join(" "));
@@ -171,23 +224,22 @@ function ReleaseToStaging({ data, gate }: { data: EpicWorkspace; gate: GatePanel
       <p className="need">You need to: release it to staging, or hold it.</p>
       <ul className="facts">
         {a && <li>{a.tasks.length} task{a.tasks.length === 1 ? "" : "s"} assembled{a.allGreen ? ", all green" : ""}.</li>}
-        {a && a.cases.length > 0 && <li>{a.cases.length - a.testsOutstanding} of {a.cases.length} tests passed{a.testsOutstanding > 0 ? `, ${a.testsOutstanding} outstanding` : ""}.</li>}
-        {a && a.bugsOpen > 0 && <li>{a.bugsOpen} bug{a.bugsOpen === 1 ? "" : "s"} still open.</li>}
-        {gate && gate.openQuestions.length > 0 && (
+        {a && a.cases.length > 0 && (
           <li>
-            {gate.openQuestions.length} question{gate.openQuestions.length === 1 ? " is" : "s are"} still open on this item.{" "}
-            <label>
-              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> Release anyway
-            </label>
+            {a.cases.filter((c) => c.verdict === "passed").length} of {a.cases.length} tests passed
+            {a.cases.some((c) => c.verdict === "skipped") ? `, ${a.cases.filter((c) => c.verdict === "skipped").length} skipped` : ""}
+            {a.testsOutstanding > 0 ? `, ${a.testsOutstanding} outstanding` : ""}.
           </li>
         )}
+        {a && a.bugsOpen > 0 && <li>{a.bugsOpen} bug{a.bugsOpen === 1 ? "" : "s"} still open.</li>}
         <li>Releasing merges the epic onto the staging branch. You are asked again before production.</li>
       </ul>
+      {gate && <OpenQuestions questions={gate.openQuestions} ack={ack} onAck={setAck} ackLabel="Release anyway, with this question open" />}
       {approve.isSuccess ? (
         <p className="muted">Released. The factory is moving it to staging.</p>
       ) : canDecide ? (
         <div className="decision-actions">
-          <button type="button" className="primary" disabled={approve.isPending} onClick={() => approve.mutate()}>
+          <button type="button" className="primary" disabled={approve.isPending || ((gate?.openQuestions.length ?? 0) > 0 && !ack)} onClick={() => approve.mutate()}>
             {approve.isPending ? "Releasing…" : "Release to staging"}
           </button>
           <Link to="/" className="button">

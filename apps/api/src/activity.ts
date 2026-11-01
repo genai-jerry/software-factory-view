@@ -43,7 +43,15 @@ export function lineFor(m: Move): ActivityLine | null {
   const { who, person } = nameOf(m.actor);
   const item = m.epicTitle ?? m.title;
   const isEpic = m.kind === "epic" || m.epicTitle === null;
-  const sub = m.kind === "task" ? `task #${m.number}` : m.kind === "test" ? `test ${short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `#${m.number}`}` : m.kind === "bug" ? `bug #${m.number}` : null;
+  const name = short(m.title);
+  const sub =
+    m.kind === "task"
+      ? `the task “${name}”`
+      : m.kind === "test"
+        ? `test ${name.match(/^(ST|TC)-\d+/)?.[0] ?? `“${name}”`}`
+        : m.kind === "bug"
+          ? `the bug “${name}”`
+          : null;
   const on = sub ? `${sub} of ${item}` : item;
   const s = m.toState ?? "";
   switch (s) {
@@ -73,7 +81,7 @@ export function lineFor(m: Move): ActivityLine | null {
     case "factory:blocked":
       return { who: "The factory", person: false, text: `The factory stopped on ${on} and asked a question.`, stage: "build" };
     case "factory:manual-test": {
-      const caseId = short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `#${m.number}`;
+      const caseId = short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `“${short(m.title)}”`;
       // A case with no parent link has no epic title to name; its own title
       // says what it checks, so say that rather than the raw `test(34): …`.
       if (m.epicTitle === null) {
@@ -86,6 +94,16 @@ export function lineFor(m: Move): ActivityLine | null {
       return { who, person, text: `${who} ran ${on}: passed.`, stage: "test" };
     case "factory:test-failed":
       return { who, person, text: `${who} ran ${on}: failed. The fix is being built.`, stage: "test" };
+    case "factory:test-skipped": {
+      // Skipped by a staging approver (`Skip tests`): not run, closed, and
+      // said as such so the feed never reads it as a pass.
+      const caseId = short(m.title).match(/^(ST|TC)-\d+/)?.[0] ?? `“${short(m.title)}”`;
+      if (m.epicTitle === null) {
+        const what = short(m.title).replace(/^(ST|TC)-\d+\s*/, "");
+        return { who, person, text: `${who} skipped test ${caseId}: ${what}.`, stage: "test" };
+      }
+      return { who, person, text: `${who} skipped test ${caseId} of ${item}.`, stage: "test" };
+    }
     case "factory:bug-open":
       return { who, person, text: `${who} reported ${on}. The fix is being built.`, stage: "test" };
     case "factory:bug-retest":

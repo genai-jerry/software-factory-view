@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
+import { plainTitle } from "../lib/labels.js";
 import { roleName } from "../lib/runs.js";
 import { STAGE_LABEL } from "../lib/work.js";
 import type { FactoryUsage, RunningItem } from "../types.js";
@@ -82,7 +83,7 @@ export function ActivityPage() {
             <ul className="facts">
               {running.data?.running.map((r) => (
                 <li key={r.issueId}>
-                  {roleName(r.role)} on {r.kind === "task" ? `task #${r.number} of ${r.epicTitle}` : r.epicTitle}
+                  {roleName(r.role)} on {r.kind === "task" ? `the task “${plainTitle(r.title) || "untitled"}” of ${r.epicTitle}` : r.epicTitle}
                   {r.runId && (
                     <>
                       {" · "}

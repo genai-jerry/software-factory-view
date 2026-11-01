@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
-import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel } from "../lib/labels.js";
+import { EXPEDITE_BADGE, EXPEDITE_TITLE, namesOf, peopleLabel, plainTitle } from "../lib/labels.js";
 import { STAGES, STAGE_LABEL, stageOf, type Stage } from "../lib/work.js";
 import { caseIdOf, parseTestPlan, plain, type PlanCase, type TestPlan } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, Me } from "../types.js";
@@ -32,16 +32,17 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
   if (ws.isError) return <div className="banner error">{(ws.error as ApiError).message}</div>;
   if (!ws.data) return <p className="muted">Loading…</p>;
   const data = ws.data;
+  if (/^test\(\d+\)/i.test(data.epic.title)) return <CaseItemPage data={data} />;
   const cases = data.tasks.filter((t) => t.kind === "test");
   const stage = stageFor(data, cases);
 
   return (
     <div className="work-item">
       <p className="crumb">
-        <Link to="/">Work</Link> › {data.epic.title}
+        <Link to="/">Work</Link> › {plainTitle(data.epic.title)}
       </p>
       <header className="wi-head">
-        <h1>{data.epic.title}</h1>
+        <h1>{plainTitle(data.epic.title)}</h1>
         <p className="muted wi-meta">
           <RepoChip fullName={data.repo.fullName} />
           {data.epic.author && <> · added by {data.epic.author}</>}
@@ -130,11 +131,131 @@ function StageRail({ current, state }: { current: Stage | null; state: string | 
 
 type CaseRow = EpicWorkspace["tasks"][number];
 
-function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" {
+function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" | "skipped" {
+  // Skipped is done, not passed: it never counts as proof.
+  if (c.state === "factory:test-skipped") return "skipped";
   if (c.state === "factory:test-passed" || (!c.open && c.state !== "factory:test-failed")) return "passed";
   if (c.state === "factory:test-failed") return "failed";
   if (c.state === "factory:manual-test") return "runnable";
   return "pending";
+}
+
+/**
+ * One test case opened on its own — from the Work list, where a case whose
+ * epic the Console could not link is filed by its title. The page is the
+ * case's own card: its steps from the epic's plan (found by the epic number
+ * in the title) and the Pass / Fail verdict, with a way to the epic's Test
+ * board.
+ */
+export function CaseItemPage({ data }: { data: EpicWorkspace }) {
+  const m = data.epic.title.match(/^test\((\d+)\)/i);
+  const epicNumber = m ? Number(m[1]) : null;
+  const board = useQuery({
+    queryKey: ["board-cards"],
+    queryFn: () => api.get<{ cards: Array<{ epicId: string; number: number; repo: string; title: string }> }>("/api/board"),
+    enabled: epicNumber !== null,
+  });
+  const parentCard = board.data?.cards.find((c) => c.repo === data.repo.fullName && c.number === epicNumber) ?? null;
+  const parent = useQuery({
+    queryKey: ["epic", parentCard?.epicId],
+    queryFn: () => api.get<EpicWorkspace>(`/api/epics/${parentCard!.epicId}`),
+    enabled: parentCard !== null,
+  });
+  const planPath = parent.data?.systemTests.plan?.path ?? null;
+  const planDoc = useQuery({
+    queryKey: ["artifact", parentCard?.epicId, planPath],
+    queryFn: () => api.get<ArtifactView>(`/api/epics/${parentCard!.epicId}/artifact?path=${encodeURIComponent(planPath!)}`),
+    enabled: parentCard !== null && planPath !== null,
+    retry: false,
+  });
+  const plan: TestPlan | null = planDoc.data ? parseTestPlan(planDoc.data.markdown) : null;
+  const row: CaseRow = {
+    id: data.epic.id,
+    number: data.epic.number,
+    title: data.epic.title,
+    kind: "test",
+    caseId: caseIdOf(data.epic.title, null) ?? null,
+    state: data.epic.state,
+    open: data.epic.open,
+    htmlUrl: data.epic.htmlUrl,
+    blockedBy: [],
+    blocks: [],
+    nextStep: data.epic.nextStep,
+    startStatus: "none" as CaseRow["startStatus"],
+    approvable: false,
+  };
+  const verdict = verdictOf(row);
+  const title = plainTitle(data.epic.title).replace(/^(?:ST|TC)-\d+\s*/, "");
+  return (
+    <div className="work-item">
+      <p className="crumb">
+        <Link to="/">Work</Link>
+        {parentCard && (
+          <>
+            {" › "}
+            <Link to={`/work/${parentCard.epicId}`}>{parentCard.title}</Link>
+          </>
+        )}
+        {" › "}
+        {title}
+      </p>
+      <header className="wi-head">
+        <h1>
+          {row.caseId && <span className="tc-id">{row.caseId}</span>} {title}
+        </h1>
+        <p className="muted wi-meta">
+          <RepoChip fullName={data.repo.fullName} />
+          {parentCard && <> · a test of {parentCard.title}</>}
+          {" · "}
+          <a href={data.epic.htmlUrl} target="_blank" rel="noreferrer">
+            Open on GitHub
+          </a>
+        </p>
+      </header>
+      <div className="wi-body">
+        <div className="wi-main">
+          <section className="card tc-page" aria-labelledby="case">
+            <h2 id="case">{verdict === "runnable" ? "Run this test" : verdict === "passed" ? "Passed" : verdict === "failed" ? "Failed" : verdict === "skipped" ? "Skipped" : "Not ready yet"}</h2>
+            {verdict === "runnable" && <p className="muted">Run it on the environment below, then press Pass or Fail. A fail files the fix for you.</p>}
+            {verdict === "pending" && <p className="muted">The code this test checks is not built yet. It becomes runnable when it is.</p>}
+            {parentCard && planPath && planDoc.isError && <p className="muted">The test plan could not be read; the steps are on GitHub.</p>}
+            {!parentCard && board.data && <p className="muted">The epic this test belongs to is not in the Work list, so its steps are on GitHub.</p>}
+            <TestCase c={row} plan={plan} />
+            {plan?.environment && (
+              <>
+                <h3>Before you start</h3>
+                {plan.environment.notes.slice(0, 2).map((n, i) => (
+                  <p key={i}>{plain(n)}</p>
+                ))}
+                {plan.environment.rows.length > 0 && (
+                  <dl className="tc-env">
+                    {plan.environment.rows.map(([k, v]) => (
+                      <div key={k}>
+                        <dt>{plain(k)}</dt>
+                        <dd>{plain(v)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </>
+            )}
+            {parentCard && (
+              <p>
+                <Link to={`/work/${parentCard.epicId}`}>All the tests for {parentCard.title}</Link>
+              </p>
+            )}
+          </section>
+        </div>
+        <aside className="wi-side">
+          <section className="card">
+            <h2>Ask the factory</h2>
+            <p className="muted">About this test, from the plan and the conversation around it.</p>
+            <QaPanel scope={{ kind: "epic", id: parentCard?.epicId ?? data.epic.id }} />
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 /** Test — the cases a person runs (redesign board 7). */
@@ -149,20 +270,25 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
   const plan: TestPlan | null = planDoc.data ? parseTestPlan(planDoc.data.markdown) : null;
   const [showPassed, setShowPassed] = useState(false);
 
-  const byVerdict = { runnable: [] as CaseRow[], failed: [] as CaseRow[], pending: [] as CaseRow[], passed: [] as CaseRow[] };
+  const byVerdict = { runnable: [] as CaseRow[], failed: [] as CaseRow[], pending: [] as CaseRow[], passed: [] as CaseRow[], skipped: [] as CaseRow[] };
   for (const c of cases) byVerdict[verdictOf(c)].push(c);
   const total = cases.length;
   const passed = byVerdict.passed.length;
+  const skipped = byVerdict.skipped.length;
+  const done = passed + skipped;
   const toRun = byVerdict.runnable.length;
   const failed = byVerdict.failed.length;
+  const openCases = toRun + failed + byVerdict.pending.length;
   const retests = data.bugs.rows.filter((b) => b.open && b.state === "factory:bug-retest");
+  const skippable =
+    openCases > 0 && ["factory:design-approved", "factory:epic-ready", "factory:in-staging"].includes(data.epic.state ?? "");
 
   return (
     <>
       <section className="card" aria-labelledby="cases">
         <div className="spread">
           <h2 id="cases">
-            Test cases <span className="muted">{total > 0 ? `${passed} of ${total} passed` : ""}</span>
+            Test cases <span className="muted">{total > 0 ? `${passed} of ${total} passed${skipped > 0 ? ` · ${skipped} skipped` : ""}` : ""}</span>
           </h2>
           <span className="muted">
             {[failed > 0 && `${failed} failed`, toRun > 0 && `${toRun} to run`, byVerdict.pending.length > 0 && `${byVerdict.pending.length} not ready`]
@@ -180,14 +306,15 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
         {byVerdict.pending.map((c) => (
           <TestCase key={c.id} c={c} plan={plan} />
         ))}
-        {passed > 0 && (
+        {done > 0 && (
           <div className="tc-passed">
             <button type="button" className="link" onClick={() => setShowPassed((v) => !v)}>
-              {showPassed ? "Hide" : "Show"} the {passed} passed test{passed === 1 ? "" : "s"}
+              {showPassed ? "Hide" : "Show"} the {done} {skipped > 0 && passed > 0 ? "passed and skipped" : skipped > 0 ? "skipped" : "passed"} test{done === 1 ? "" : "s"}
             </button>
-            {showPassed && byVerdict.passed.map((c) => <TestCase key={c.id} c={c} plan={plan} />)}
+            {showPassed && [...byVerdict.passed, ...byVerdict.skipped].map((c) => <TestCase key={c.id} c={c} plan={plan} />)}
           </div>
         )}
+        {skippable && <SkipTests epicId={data.epic.id} count={openCases} />}
       </section>
 
       {retests.length > 0 && (
@@ -197,9 +324,9 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
           {retests.map((b) => (
             <div className="tc" key={b.id}>
               <div className="tc-head">
-                <strong>#{b.number}</strong> {b.title.replace(/^bug\(\d+\):\s*/i, "")}
+                <strong>{plainTitle(b.title)}</strong>
               </div>
-              <TestVerdict caseId={b.id} label={`#${b.number}`} bug />
+              <TestVerdict caseId={b.id} label={plainTitle(b.title)} bug />
             </div>
           ))}
         </section>
@@ -231,7 +358,7 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
       </section>
 
       <section className="card">
-        <h2>{toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : "All tests passed"}</h2>
+        <h2>{toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : skipped > 0 ? "Tests done" : "All tests passed"}</h2>
         <p className="need">
           {toRun > 0
             ? `A tester needs to: run ${toRun === 1 ? "the remaining case" : `the ${toRun} remaining cases`}.`
@@ -255,6 +382,48 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
   );
 }
 
+/**
+ * Skip the tests: close every open case as skipped so the release goes ahead
+ * without them. The factory takes it as the comment `Skip tests` on the epic
+ * (authorised against the staging approvers); bugs already raised stay open.
+ */
+function SkipTests({ epicId, count }: { epicId: string; count: number }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const skip = useMutation({
+    mutationFn: () => api.post(`/api/issues/${epicId}/reply`, { body: "Skip tests" }),
+    onSuccess: () => {
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: ["epic", epicId] });
+    },
+  });
+  const failure = skip.error instanceof ApiError ? skip.error.message : skip.isError ? "That did not go through. Try again." : null;
+  return (
+    <div className="tc-skip">
+      {skip.isSuccess ? (
+        <p className="muted">Skipping. The factory is closing the open cases as skipped.</p>
+      ) : !confirming ? (
+        <button type="button" className="link" onClick={() => setConfirming(true)}>
+          Skip the tests
+        </button>
+      ) : (
+        <div className="decision-actions">
+          <span className="muted">
+            Close {count === 1 ? "the open case" : `every open case (${count})`} as skipped. Bugs already raised stay open. The release goes ahead without these tests.
+          </span>
+          <button type="button" onClick={() => skip.mutate()} disabled={skip.isPending}>
+            {skip.isPending ? "Posting…" : "Skip them"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(false)} disabled={skip.isPending}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {failure && <p className="decision-failure">{failure}</p>}
+    </div>
+  );
+}
+
 function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
   const verdict = verdictOf(c);
   const id = caseIdOf(c.title, c.caseId);
@@ -263,17 +432,17 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
   const [open, setOpen] = useState(verdict === "runnable");
   const after = c.blockedBy.filter((d) => d.open);
   return (
-    <article className={`tc ${verdict}`} aria-label={`${id ?? `#${c.number}`}: ${title}`}>
+    <article className={`tc ${verdict}`} aria-label={`${id ?? title}: ${title}`}>
       <div className="tc-head">
-        <span className="tc-id">{id ?? `#${c.number}`}</span>
+        {id && <span className="tc-id">{id}</span>}
         <span className="tc-title">{title}</span>
         <span className={`stage-chip ${verdict === "runnable" ? "decide" : verdict === "failed" ? "halt" : verdict === "passed" ? "done" : ""}`}>
-          {verdict === "runnable" ? "Run it" : verdict === "failed" ? "Failed · fix being built" : verdict === "passed" ? "Passed" : "Not ready"}
+          {verdict === "runnable" ? "Run it" : verdict === "failed" ? "Failed · fix being built" : verdict === "passed" ? "Passed" : verdict === "skipped" ? "Skipped · not run" : "Not ready"}
         </span>
       </div>
       {verdict === "pending" && after.length > 0 && (
         <p className="muted">
-          After {after.map((d) => `#${d.number}`).join(", ")} {after.length === 1 ? "is" : "are"} built.
+          After {namesOf(after)} {after.length === 1 ? "is" : "are"} built.
         </p>
       )}
       {planned && (planned.steps.length > 0 || planned.expected) && (
@@ -313,7 +482,7 @@ function TestCase({ c, plan }: { c: CaseRow; plan: TestPlan | null }) {
           .
         </p>
       )}
-      {verdict === "runnable" && <TestVerdict caseId={c.id} label={id ?? `#${c.number}`} />}
+      {verdict === "runnable" && <TestVerdict caseId={c.id} label={id ?? title} />}
     </article>
   );
 }

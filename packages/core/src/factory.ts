@@ -33,6 +33,7 @@ export const FACTORY_LABELS = [
   { name: "factory:manual-test", color: "D96C1F", description: "System test case ready for a human to run (test sub-issue)" },
   { name: "factory:test-passed", color: "1F7A4D", description: "System test case passed (test sub-issue; terminal)" },
   { name: "factory:test-failed", color: "C0392B", description: "System test case failed; a fix task is in flight (test sub-issue)" },
+  { name: "factory:test-skipped", color: "6C757D", description: "System test case skipped by a staging approver (test sub-issue; terminal)" },
   // Bug reports (FACTORY.md §4c). The same shape as the case states above and
   // for the same reason: a human found something, the factory filed an
   // ordinary task to fix it, and the same human confirms the repair. They sit
@@ -117,6 +118,12 @@ export const DESIGN_APPROVED_STATE = "factory:design-approved";
 export const MANUAL_TEST_STATE = "factory:manual-test";
 export const TEST_PASSED_STATE = "factory:test-passed";
 export const TEST_FAILED_STATE = "factory:test-failed";
+/**
+ * A case a staging approver chose not to run (`Skip tests` on the epic or on
+ * the case). Terminal like a pass, but it is not one: the counts say
+ * "skipped", and the release carries it as evidence rather than proof.
+ */
+export const TEST_SKIPPED_STATE = "factory:test-skipped";
 
 /** Exact comment body the router accepts as a passing system test verdict. */
 export const TEST_PASSED_BODY = "Test Passed";
@@ -221,6 +228,7 @@ export const TEST_STATE_ORDER: readonly string[] = [
   MANUAL_TEST_STATE,
   TEST_FAILED_STATE,
   TEST_PASSED_STATE,
+  TEST_SKIPPED_STATE,
 ];
 
 export function isTestState(label: string | null | undefined): boolean {

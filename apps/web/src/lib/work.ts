@@ -1,5 +1,5 @@
 import type { AttentionEntry, BoardCard, RunningItem, TaskRollup } from "../types.js";
-import { peopleLabel } from "./labels.js";
+import { peopleLabel, plainTitle } from "./labels.js";
 
 /**
  * The Work list (redesign board 1): one row per work item, grouped by whether
@@ -137,7 +137,7 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
     case "ship":
       return "Ship: on staging and green. Ship to production?";
     case "release":
-      return `Release: ${tasks.total} task${tasks.total === 1 ? "" : "s"} built${tasks.tests ? ` and ${tasks.tests.passed} of ${tasks.tests.total} tests passed` : ""}. Release to staging?`;
+      return `Release: ${tasks.total} task${tasks.total === 1 ? "" : "s"} built${tasks.tests ? ` and ${tasks.tests.passed} of ${tasks.tests.total} tests passed${tasks.tests.skipped ? `, ${tasks.tests.skipped} skipped` : ""}` : ""}. Release to staging?`;
     case "decide":
       if (entry.state === "factory:spec-ready") return "Decide: approve the plan.";
       if (entry.state === "factory:design-ready") return "Decide: approve the design.";
@@ -158,7 +158,7 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
 function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[]): string {
   const tasks = card.tasks;
   const live = running[0];
-  const now = live ? (live.kind === "task" ? `Task #${live.number} is ${roleVerb(live.role)} now.` : `It is ${roleVerb(live.role)} now.`) : "";
+  const now = live ? (live.kind === "task" ? `${plainTitle(live.title) ? `“${plainTitle(live.title)}”` : "A task"} is ${roleVerb(live.role)} now.` : `It is ${roleVerb(live.role)} now.`) : "";
   switch (stage) {
     case "clarify":
       return now || "The plan is being written. You will be asked to approve it.";

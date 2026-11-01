@@ -39,6 +39,7 @@ const PHASE_MAP: Record<string, Phase> = {
   "factory:manual-test": "building",
   "factory:test-failed": "building",
   "factory:test-passed": "shipping",
+  "factory:test-skipped": "shipping",
   // A bug report (FACTORY.md §4c) is work still to be done on the change, the
   // same as an unrun case: somebody has to fix it and somebody has to confirm
   // the fix. Verified is the one that has stopped asking for anything.
@@ -82,6 +83,7 @@ export const STATE_SENTENCE: Record<string, string> = {
   "factory:manual-test": "A system test case ready for a human to run — testers: {approvers}.",
   "factory:test-failed": "A system test case that failed; the fix task named on it is in flight.",
   "factory:test-passed": "A system test case that passed.",
+  "factory:test-skipped": "A system test case a staging approver skipped; it was not run.",
   "factory:bug-open": "A bug raised in testing; the task fixing it is in flight.",
   "factory:bug-retest": "A bug whose fix is assembled, waiting for a tester to confirm the repair — testers: {approvers}.",
   "factory:bug-verified": "A bug whose repair a tester confirmed.",
@@ -114,6 +116,7 @@ export const NEXT_MOVER: Record<string, string> = {
   "factory:manual-test": "A tester runs the case and comments Test Passed or Test Failed on it.",
   "factory:test-failed": "The fix task lands; the Dispatcher then returns the case to manual-test for a re-run.",
   "factory:test-passed": "Nothing — the case is done. The epic waits on its remaining cases and tasks.",
+  "factory:test-skipped": "Nothing — the case was skipped and is closed. The release carries it as not run.",
   "factory:bug-open": "The task fixing it lands; the Dispatcher then asks a tester to confirm the repair.",
   "factory:bug-retest": "A tester re-runs it and comments Test Passed or Test Failed on the report.",
   "factory:bug-verified": "Nothing — the repair is confirmed. The epic waits on its remaining bugs, cases and tasks.",

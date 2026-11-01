@@ -121,12 +121,12 @@ describe("buildWork", () => {
 
   it("says what the factory is doing when nothing waits on me", () => {
     const running: RunningItem[] = [
-      { issueId: "t4", number: 64, title: "task(35)", repo: "genai-jerry/beacon-api", kind: "task", role: "reviewer", epicId: "e1", epicNumber: 35, epicTitle: "" },
+      { issueId: "t4", number: 64, title: "task(35): status column", repo: "genai-jerry/beacon-api", kind: "task", role: "reviewer", epicId: "e1", epicNumber: 35, epicTitle: "" },
     ];
     const building = card({ tasks: rollup({ total: 5, done: 3, inReview: 1, ready: 1, inFlight: 1 }) });
     const lists = buildWork([building], [], running);
     expect(lists.needsDecision).toHaveLength(0);
-    expect(lists.working[0]!.pointer).toBe("3 of 5 tasks built. Task #64 is being reviewed now.");
+    expect(lists.working[0]!.pointer).toBe("3 of 5 tasks built. “status column” is being reviewed now.");
     expect(lists.working[0]!.who).toBe("running now");
     expect(lists.counts.working).toBe(1);
   });

@@ -13,6 +13,7 @@ import {
   MANUAL_TEST_STATE,
   TEST_FAILED_STATE,
   TEST_PASSED_STATE,
+  TEST_SKIPPED_STATE,
   PIPELINE_ORDER,
   planTestsAvailability,
   READY_STATE,
@@ -907,7 +908,9 @@ export interface TestRollup {
   passed: number;
   runnable: number;
   failed: number;
-  /** Cases neither passed nor abandoned: what the epic still waits on. */
+  /** Skipped by a staging approver (`Skip tests`): closed, not run, not passed. */
+  skipped: number;
+  /** Cases neither passed, skipped nor abandoned: what the epic still waits on. */
   outstanding: number;
 }
 
@@ -965,14 +968,17 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
   const tasks = children.filter((c) => c.kind !== "test" && c.kind !== "bug");
   const cases = children.filter((c) => c.kind === "test");
   const bugRows = children.filter((c) => c.kind === "bug");
-  const tests: TestRollup = { total: cases.length, passed: 0, runnable: 0, failed: 0, outstanding: 0 };
+  const tests: TestRollup = { total: cases.length, passed: 0, runnable: 0, failed: 0, skipped: 0, outstanding: 0 };
   for (const c of cases) {
-    if (c.factoryState === TEST_PASSED_STATE || (c.state === "closed" && c.factoryState !== TEST_FAILED_STATE)) {
+    // A skipped case is done but not passed: it holds nothing, and it is
+    // never counted as proof.
+    if (c.factoryState === TEST_SKIPPED_STATE) tests.skipped++;
+    else if (c.factoryState === TEST_PASSED_STATE || (c.state === "closed" && c.factoryState !== TEST_FAILED_STATE)) {
       tests.passed++;
     } else if (c.factoryState === TEST_FAILED_STATE) tests.failed++;
     else if (c.factoryState === MANUAL_TEST_STATE) tests.runnable++;
   }
-  tests.outstanding = tests.total - tests.passed;
+  tests.outstanding = tests.total - tests.passed - tests.skipped;
   const bugs: BugRollup = { total: bugRows.length, fixing: 0, retest: 0, verified: 0, open: 0 };
   for (const b of bugRows) {
     // A report closed by hand — "not a defect", a duplicate — holds nothing,

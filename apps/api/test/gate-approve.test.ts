@@ -3,6 +3,7 @@ import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@cons
 import {
   changeArtifacts,
   changes,
+  comments,
   estates,
   issues,
   memberships,
@@ -117,6 +118,7 @@ beforeAll(async () => {
     (await d.insert(threads).values({ orgId: org.id, epicIssueId: epic.id, topicKind, topicRef, title }).returning())[0]!;
   id.proposalThread = (await mkThread("artifact", "artifact/proposal", "Proposal")).id;
   id.designThread = (await mkThread("artifact", "artifact/design", "Design")).id;
+  id.gateThread = (await mkThread("gate", "gate/spec", "Gate G1 — spec")).id;
   id.org = org.id;
   id.epic = epic.id;
 });
@@ -159,6 +161,34 @@ describe("the gate panel and the approve guard agree on open questions", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, commentUrl: "https://gh/1#c1" });
     expect(calls).toEqual([`${API_URL}/repos/acme/app/issues/1/comments`]);
+  });
+
+  it("does not count the factory's notices or the approver's own control words as questions", async () => {
+    // The gate thread mirrors every comment on the gate: the hand-off notice,
+    // the `Approved`, the run-start line. None of them asks anything.
+    const d = deps.dbh.db;
+    const mkComment = async (author: string, body: string, n: number) =>
+      (
+        await d
+          .insert(comments)
+          .values({ orgId: id.org!, issueId: id.epic!, ghNodeId: `GC${n}`, ghId: 9000 + n, author, body, ghCreatedAt: new Date(), ghUpdatedAt: new Date() })
+          .returning()
+      )[0]!;
+    const notice = await mkComment("acme-console[bot]", "@boss — **Gate G1 (spec approval)** is waiting on you.\n\n<!-- factory-agent -->", 1);
+    const approved = await mkComment("boss", "Approved", 2);
+    await d.insert(threadEntries).values([
+      { orgId: id.org!, threadId: id.gateThread!, source: "gh_comment", commentId: notice.id, author: "acme-console[bot]" },
+      { orgId: id.org!, threadId: id.gateThread!, source: "gh_comment", commentId: approved.id, author: "boss" },
+    ]);
+    const panel = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
+    expect(panel.json().openQuestions).toEqual([]);
+
+    // A person's real question on the same thread does count.
+    const asked = await mkComment("alice", "Which time zone groups the days?", 3);
+    await d.insert(threadEntries).values({ orgId: id.org!, threadId: id.gateThread!, source: "gh_comment", commentId: asked.id, author: "alice" });
+    const again = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
+    expect(again.json().openQuestions).toMatchObject([{ topicRef: "gate/spec", entryCount: 1 }]);
+    await d.delete(threadEntries).where(eq(threadEntries.threadId, id.gateThread!));
   });
 
   it("blocks on a question the panel does list, and says how many", async () => {

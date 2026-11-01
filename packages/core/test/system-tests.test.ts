@@ -16,6 +16,7 @@ import {
   resolveGateApprovers,
   TEST_FAILED_STATE,
   TEST_PASSED_STATE,
+  TEST_SKIPPED_STATE,
   testsHoldTheGate,
   testsOutstanding,
   testVerdictStatus,
@@ -45,7 +46,7 @@ describe("the test issue kind", () => {
 
 describe("the case states", () => {
   it("are states, but never rail columns", () => {
-    for (const s of [MANUAL_TEST_STATE, TEST_PASSED_STATE, TEST_FAILED_STATE]) {
+    for (const s of [MANUAL_TEST_STATE, TEST_PASSED_STATE, TEST_FAILED_STATE, TEST_SKIPPED_STATE]) {
       expect(isTestState(s)).toBe(true);
       // The rail is the path a change takes; a case hangs off one point of it.
       expect(PIPELINE_ORDER).not.toContain(s);
@@ -55,6 +56,12 @@ describe("the case states", () => {
   it("place a runnable case in the building phase", () => {
     expect(phaseOfState(MANUAL_TEST_STATE)).toBe("building");
     expect(phaseOfState(TEST_FAILED_STATE)).toBe("building");
+  });
+
+  it("count a skipped case as done, never as passed", () => {
+    expect(phaseOfState(TEST_SKIPPED_STATE)).toBe("shipping");
+    expect(testsOutstanding({ total: 4, passed: 2, runnable: 1, failed: 0, skipped: 1 })).toBe(1);
+    expect(testVerdictStatus({ state: TEST_SKIPPED_STATE, verdictAt: null, runnableSince: null })).toBe("none");
   });
 });
 

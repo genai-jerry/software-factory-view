@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { plainTitle } from "../lib/labels.js";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { OrchestratorRunDetail, useLiveOrchestratorRun } from "../components/OrchestratorRunView.js";
@@ -20,7 +21,7 @@ export function OrchestratorRunPage() {
   const past = recent.data?.runs.find((r) => r.runId === runId);
   const title = live?.title ?? past?.title ?? null;
   const epicId = live?.epicId ?? past?.epicId ?? null;
-  const epicTitle = live?.epicTitle ?? (past?.epicNumber ? `#${past.epicNumber}` : null);
+  const epicTitle = live?.epicTitle ?? null;
   const story = run.data ? storyOf(run.data) : null;
 
   return (
@@ -48,7 +49,7 @@ export function OrchestratorRunPage() {
               </span>
             </p>
             <h1>
-              {title ? title.replace(/^(?:task|test|bug)\(\d+\):\s*/i, "") : `${run.data?.repo ?? ""} #${run.data?.issue ?? ""}`}
+              {title ? plainTitle(title) : "This item"}
             </h1>
             {epicTitle && <p className="muted">Part of {epicTitle}.</p>}
           </header>
