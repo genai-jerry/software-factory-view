@@ -115,7 +115,7 @@ describe("ShapePage", () => {
     expect(screen.getByText(/reads the latest main of every repository in Beacon/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open as work" }));
-    const form = screen.getByRole("region", { name: "Open as work" });
+    const form = screen.getByRole("dialog", { name: "Open as work" });
     await userEvent.selectOptions(within(form).getByLabelText("Where it opens"), "beacon-web");
     await userEvent.click(within(form).getByRole("button", { name: "Open it" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: false, repoId: "r1" }));
@@ -189,7 +189,7 @@ describe("ShapePage", () => {
     renderAt("/shape/c1");
     await screen.findByText("Here is the page with the panel.");
     await userEvent.click(screen.getByRole("button", { name: "Open as work" }));
-    const form = screen.getByRole("region", { name: "Open as work" });
+    const form = screen.getByRole("dialog", { name: "Open as work" });
     await userEvent.click(within(form).getByRole("checkbox"));
     await userEvent.click(within(form).getByRole("button", { name: "Open it" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: true }));

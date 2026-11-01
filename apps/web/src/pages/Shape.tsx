@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type 
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
+import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
 
@@ -497,18 +498,20 @@ function Conversation({ id }: { id: string }) {
       </div>
 
       {opening && (
-        <OpenAsWork
-          id={id}
-          defaultTitle={conversation.title}
-          homes={acrossProject ? (conversation.project?.repos ?? []) : []}
-          defaultRepoId={conversation.repoId}
-          onCancel={() => setOpening(false)}
-          onDone={(r) => {
-            setOpening(false);
-            setOpened(r);
-            refresh();
-          }}
-        />
+        <Sheet title="Open as work" onClose={() => setOpening(false)}>
+          <OpenAsWork
+            id={id}
+            defaultTitle={conversation.title}
+            homes={acrossProject ? (conversation.project?.repos ?? []) : []}
+            defaultRepoId={conversation.repoId}
+            onCancel={() => setOpening(false)}
+            onDone={(r) => {
+              setOpening(false);
+              setOpened(r);
+              refresh();
+            }}
+          />
+        </Sheet>
       )}
     </div>
   );
@@ -733,9 +736,9 @@ function OpenAsWork({
       api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, { title: title.trim(), fast, ...(homes.length ? { repoId } : {}) }),
     onSuccess: (r) => onDone({ title: title.trim(), htmlUrl: r.htmlUrl, epicId: r.epicId }),
   });
+  // Shown in a Sheet, which carries the title and the dialog role.
   return (
-    <section className="card shape-open" aria-label="Open as work">
-      <h2>Open as work</h2>
+    <div className="shape-open">
       <p className="muted">The requirement becomes an item in Work. The factory reads it and comes back with a plan for you to approve.</p>
       <label htmlFor="shape-title">Name it</label>
       <input id="shape-title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -764,6 +767,6 @@ function OpenAsWork({
         </button>
       </div>
       {open.isError && <p className="decision-failure">{failureText(open.error)}</p>}
-    </section>
+    </div>
   );
 }
