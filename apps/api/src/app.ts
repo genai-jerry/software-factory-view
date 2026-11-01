@@ -1,3 +1,4 @@
+import { apiErrors } from "@console/db";
 import cookie from "@fastify/cookie";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import { registerAuthRoutes } from "./auth.js";
@@ -46,6 +47,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     req.log.error({ err }, "unhandled route error");
     const status = typeof err.statusCode === "number" && err.statusCode >= 400 ? err.statusCode : 500;
+    if (status === 500) {
+      // Kept in the database because a deploy replaces the container and its
+      // log with it; what the operator reads later is this row.
+      void deps.dbh.db
+        .insert(apiErrors)
+        .values({
+          method: req.method,
+          path: req.url.slice(0, 500),
+          status,
+          name: err.name ?? null,
+          message: String(err.message ?? err).slice(0, 2000),
+          stack: typeof err.stack === "string" ? err.stack.slice(0, 4000) : null,
+          actor: (req as { ctxLogin?: string }).ctxLogin ?? null,
+        })
+        .catch((e: unknown) => req.log.warn({ err: e }, "could not record the error"));
+    }
     return reply.code(status).send({ error: status === 500 ? "internal error" : err.message });
   });
 

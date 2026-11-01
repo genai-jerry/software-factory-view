@@ -592,3 +592,24 @@ export const gateViews = pgTable(
   },
   (t) => [uniqueIndex("gate_views_key").on(t.userId, t.epicIssueId, t.gate)],
 );
+
+/**
+ * Unhandled route errors, kept so an operator can read them after the
+ * container that logged them has been replaced by a deploy. Container logs
+ * are gone with the container; this is not. Read by `/api/ops/errors`.
+ */
+export const apiErrors = pgTable(
+  "api_errors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    status: integer("status").notNull(),
+    name: text("name"),
+    message: text("message").notNull(),
+    stack: text("stack"),
+    actor: text("actor"),
+  },
+  (t) => [index("api_errors_at").on(t.at)],
+);
