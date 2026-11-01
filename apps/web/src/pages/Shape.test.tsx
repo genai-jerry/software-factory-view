@@ -84,6 +84,48 @@ describe("ShapePage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { repoId: "r1" }));
   });
 
+  it("offers the whole project when it has more than one repository, and opens the work where the person picks", async () => {
+    const two = {
+      targets: [
+        { id: "r1", fullName: "genai-jerry/beacon-web", projectId: "p", projectName: "Beacon", factoryEnabled: true },
+        { id: "r2", fullName: "genai-jerry/beacon-api", projectId: "p", projectName: "Beacon", factoryEnabled: true },
+      ],
+    };
+    const spanning: ShapeConversation = {
+      ...conversation,
+      conversation: {
+        ...conversation.conversation,
+        scope: "project",
+        repoId: "r2",
+        project: { id: "p", name: "Beacon", repos: [{ id: "r2", fullName: "genai-jerry/beacon-api" }, { id: "r1", fullName: "genai-jerry/beacon-web" }] },
+        spec: "## What should be built?\n- A shared status.",
+      },
+    };
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: [{ ...summaries[0]!, scope: "project", projectName: "Beacon" }] };
+      if (p === "/api/work/targets") return two;
+      if (p === "/api/shape/c1") return spanning;
+      if (p.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (p: string) => (p === "/api/shape" ? { id: "c9" } : { number: 121, htmlUrl: "https://github.com/genai-jerry/beacon-web/issues/121" }));
+    renderAt("/shape/c1");
+    expect(await screen.findByText("Here is the page with the panel.")).toBeInTheDocument();
+    expect(screen.getAllByText("All of Beacon").length).toBeGreaterThan(0);
+    expect(screen.getByText(/reads the latest main of every repository in Beacon/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open as work" }));
+    const form = screen.getByRole("region", { name: "Open as work" });
+    await userEvent.selectOptions(within(form).getByLabelText("Where it opens"), "beacon-web");
+    await userEvent.click(within(form).getByRole("button", { name: "Open it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: false, repoId: "r1" }));
+
+    // A new idea across the whole project (this navigates away from the conversation).
+    await userEvent.selectOptions(screen.getByLabelText("Which product"), "All of Beacon");
+    await userEvent.click(screen.getByRole("button", { name: "New idea" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { projectId: "p" }));
+  });
+
   it("renders an answer's mock in a sandboxed preview, with the code one toggle away", async () => {
     renderAt("/shape/c1");
     expect(await screen.findByText("Here is the page with the panel.")).toBeInTheDocument();

@@ -647,6 +647,10 @@ textarea { min-height: 5rem; resize: vertical; }
   flex-shrink: 0;
   display: inline-block;
 }
+/* An idea that spans a project: every repository's colour at once. */
+.repo-dot-all {
+  background: conic-gradient(hsl(200deg 55% 45%), hsl(320deg 55% 45%), hsl(40deg 55% 45%), hsl(120deg 55% 45%), hsl(200deg 55% 45%));
+}
 
 .badge.focus-active {
   display: inline-flex;
@@ -1418,7 +1422,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-spec-view h3 { margin: 0.9rem 0 0.3rem; font-size: 1rem; }
 .shape-spec-view p, .shape-spec-view li { margin: 0.2rem 0; }
 .shape-open { margin-top: 1rem; }
-.shape-open input[type="text"], .shape-open input:not([type]) { width: 100%; margin: 0.25rem 0 0.6rem; }
+.shape-open input[type="text"], .shape-open input:not([type]), .shape-open select { width: 100%; margin: 0.25rem 0 0.6rem; }
 .shape-fast { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.25rem 0 0.75rem; }
 .shape-fast input { width: auto; margin-top: 0.2rem; }
 @media (max-width: 900px) {

@@ -1,6 +1,6 @@
 import { sourcesBlock } from "@console/insight";
-import { issues, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
-import { and, asc, desc, eq, inArray, isNotNull, lt, ne } from "drizzle-orm";
+import { issues, projects, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
+import { and, asc, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "@console/db";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
@@ -22,7 +22,11 @@ import { artifactSources, claudeTokenFor } from "./qa.js";
  * Read tool. Conversations are private to their author.
  *
  * A fresh idea runs against the latest default branch of its repository,
- * with the project's other repositories checked out beside it. An idea about
+ * with the project's other repositories checked out beside it. An idea that
+ * spans the project (scope `project`) is the same checkout told so: one home
+ * repository is the working directory, the rest sit beside it, and the person
+ * picks which repository holds the epic when they open it as work — the
+ * factory's cross-repo epics live in one coordination repo. An idea about
  * an epic runs on the epic's branch, with its documents (proposal, specs,
  * design, tasks, test plan) in front of the session — the Ask panel's
  * grounding, in a conversation that can also draw and write the requirement.
@@ -130,6 +134,7 @@ function transcript(messages: Message[], budget = MAX_CONTEXT_CHARS): string {
 }
 
 type EpicRef = { id: string; number: number; title: string; state: string | null; repoId: string };
+type Owned = Conversation & { repoFullName: string; projectId: string | null; projectName: string | null };
 
 export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
   const db = deps.dbh.db;
@@ -152,19 +157,39 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return e ? { id: e.id, number: e.number, title: e.title, state: e.state } : null;
   }
 
+  /** The project's factory-enabled repositories, by name. */
+  async function projectRepos(projectId: string | null): Promise<Array<{ id: string; fullName: string }>> {
+    if (!projectId) return [];
+    return db
+      .select({ id: repos.id, fullName: repos.fullName })
+      .from(repos)
+      .where(and(eq(repos.projectId, projectId), eq(repos.factoryEnabled, true), isNotNull(repos.projectId)))
+      .orderBy(repos.fullName);
+  }
+
   /** The project's other factory-enabled repositories, checked out beside the primary one. */
   async function siblings(repoId: string, projectId: string | null, branch: string | null) {
-    if (!projectId) return [];
-    const rows = await db
-      .select({ fullName: repos.fullName })
-      .from(repos)
-      .where(and(eq(repos.projectId, projectId), eq(repos.factoryEnabled, true), ne(repos.id, repoId), isNotNull(repos.projectId)))
-      .orderBy(repos.fullName)
-      .limit(MAX_SIBLINGS);
+    const rows = (await projectRepos(projectId)).filter((r) => r.id !== repoId).slice(0, MAX_SIBLINGS);
     return rows.map((r) => {
       const [owner, repo] = r.fullName.split("/") as [string, string];
       return { owner, repo, branch };
     });
+  }
+
+  /**
+   * The first line of what the session is told: which repository it sits in,
+   * and — for an idea that spans the project — that the others are beside it
+   * and the idea may land in any of them.
+   */
+  async function whereItRuns(conv: Owned): Promise<string> {
+    if (conv.scope !== "project" || !conv.projectId) return `Repository: ${conv.repoFullName}.`;
+    const names = (await projectRepos(conv.projectId)).map((r) => r.fullName);
+    const others = names.filter((n) => n !== conv.repoFullName);
+    return (
+      `Project: ${conv.projectName ?? "the project"}, repositories ${names.join(", ")}. ` +
+      `The idea may span any of them. Your working directory is the checkout of ${conv.repoFullName}` +
+      (others.length ? `; ${others.join(", ")} are checked out beside it (../<repo name>), read them too.` : ".")
+    );
   }
 
   /**
@@ -188,16 +213,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return epic ? `factory/epic-${epic.number}` : null;
   }
 
-  async function own(
-    ctx: RequestCtx,
-    id: string,
-    reply: FastifyReply,
-  ): Promise<(Conversation & { repoFullName: string; projectId: string | null }) | null> {
+  async function own(ctx: RequestCtx, id: string, reply: FastifyReply): Promise<Owned | null> {
     const row = (
       await db
-        .select({ conv: shapeConversations, repoFullName: repos.fullName, projectId: repos.projectId })
+        .select({ conv: shapeConversations, repoFullName: repos.fullName, projectId: repos.projectId, projectName: projects.name })
         .from(shapeConversations)
         .innerJoin(repos, eq(repos.id, shapeConversations.repoId))
+        .leftJoin(projects, eq(projects.id, repos.projectId))
         .where(and(eq(shapeConversations.id, id), eq(shapeConversations.userId, ctx.userId), inArray(shapeConversations.orgId, ctx.orgIds)))
         .limit(1)
     )[0];
@@ -205,7 +227,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       void reply.code(404).send({ error: "conversation not found" });
       return null;
     }
-    return { ...row.conv, repoFullName: row.repoFullName, projectId: row.projectId };
+    return { ...row.conv, repoFullName: row.repoFullName, projectId: row.projectId, projectName: row.projectName };
+  }
+
+  /** What the page shows about where an idea runs: its project, and the repositories it may land in. */
+  async function projectDto(conv: Owned) {
+    if (!conv.projectId) return null;
+    return { id: conv.projectId, name: conv.projectName ?? "", repos: await projectRepos(conv.projectId) };
   }
 
   async function messagesOf(conversationId: string): Promise<Message[]> {
@@ -216,9 +244,17 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const rows = await db
-      .select({ conv: shapeConversations, repo: repos.fullName, epicNumber: issues.number, epicTitle: issues.title, epicState: issues.factoryState })
+      .select({
+        conv: shapeConversations,
+        repo: repos.fullName,
+        projectName: projects.name,
+        epicNumber: issues.number,
+        epicTitle: issues.title,
+        epicState: issues.factoryState,
+      })
       .from(shapeConversations)
       .innerJoin(repos, eq(repos.id, shapeConversations.repoId))
+      .leftJoin(projects, eq(projects.id, repos.projectId))
       .leftJoin(issues, eq(issues.id, shapeConversations.epicIssueId))
       .where(
         and(
@@ -230,11 +266,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       )
       .orderBy(desc(shapeConversations.updatedAt));
     return {
-      conversations: rows.map(({ conv, repo, epicNumber, epicTitle, epicState }) => ({
+      conversations: rows.map(({ conv, repo, projectName, epicNumber, epicTitle, epicState }) => ({
         id: conv.id,
         title: conv.title,
         repo,
         repoId: conv.repoId,
+        scope: conv.scope,
+        projectName,
         updatedAt: conv.updatedAt,
         hasSpec: Boolean(conv.spec),
         issueUrl: conv.issueUrl,
@@ -243,12 +281,23 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     };
   });
 
-  app.post<{ Body: { repoId?: string; epicId?: string; title?: string } }>("/api/shape", async (req, reply) => {
+  app.post<{ Body: { repoId?: string; projectId?: string; epicId?: string; title?: string } }>("/api/shape", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     // About an epic: the repository is the epic's own, and the title starts as the epic's.
     let epic: EpicRef | null = null;
     let repoId = req.body?.repoId ?? "";
+    let scope: "repo" | "project" = "repo";
+    if (req.body?.projectId && !req.body.epicId) {
+      // Across the project: the first factory-enabled repository is home;
+      // the person picks where the work opens later.
+      const project = (await db.select().from(projects).where(and(eq(projects.id, req.body.projectId), inArray(projects.orgId, ctx.orgIds))).limit(1))[0];
+      if (!project) return reply.code(404).send({ error: "project not found" });
+      const first = (await projectRepos(project.id))[0];
+      if (!first) return reply.code(400).send({ error: "no repository in this project is set up for the factory yet" });
+      repoId = first.id;
+      scope = "project";
+    }
     if (req.body?.epicId) {
       const e = (
         await db
@@ -267,7 +316,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const row = (
       await db
         .insert(shapeConversations)
-        .values({ orgId: repo.orgId, userId: ctx.userId, repoId: repo.id, title, epicIssueId: epic?.id ?? null })
+        .values({ orgId: repo.orgId, userId: ctx.userId, repoId: repo.id, scope, title, epicIssueId: epic?.id ?? null })
         .returning()
     )[0]!;
     return { id: row.id };
@@ -300,6 +349,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         title: conv.title,
         repoId: conv.repoId,
         repo: conv.repoFullName,
+        scope: conv.scope,
+        project: await projectDto(conv),
         spec: conv.spec,
         specUpdatedAt: conv.specUpdatedAt,
         specStatus: conv.specStatus,
@@ -362,7 +413,6 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   type Attachment = typeof shapeAttachments.$inferSelect;
-  type Owned = Conversation & { repoFullName: string; projectId: string | null };
 
   /**
    * Answer one user message into its pending assistant row. Runs after the
@@ -374,9 +424,10 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     try {
       const [owner, name] = conv.repoFullName.split("/") as [string, string];
       const epic = await epicRef(conv.epicIssueId);
+      const where = await whereItRuns(conv);
       const header = epic
-        ? `Repository: ${conv.repoFullName}. This is a Shape conversation about epic #${epic.number}, "${epic.title}" (${epic.state ?? "no state"}): the person is discussing work the factory has in progress. Your checkout is the epic's branch where it exists.`
-        : `Repository: ${conv.repoFullName}. This is a Shape conversation: the person is shaping an idea for this product. Your checkout is the latest default branch.`;
+        ? `${where} This is a Shape conversation about epic #${epic.number}, "${epic.title}" (${epic.state ?? "no state"}): the person is discussing work the factory has in progress. Your checkout is the epic's branch where it exists.`
+        : `${where} This is a Shape conversation: the person is shaping an idea for this product. Your checkout is the latest default branch.`;
       const branch = branchOf(epic);
       // A session less than a day old is resumed: the model keeps what it
       // already read and the transcript is not sent again. Older than that,
@@ -511,9 +562,12 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const [owner, name] = conv.repoFullName.split("/") as [string, string];
       const epic = await epicRef(conv.epicIssueId);
       const branch = branchOf(epic);
+      const where = await whereItRuns(conv);
       const header = epic
-        ? `Repository: ${conv.repoFullName}. The conversation is about epic #${epic.number}, "${epic.title}"; the requirement is for a change to it.`
-        : `Repository: ${conv.repoFullName}.`;
+        ? `${where} The conversation is about epic #${epic.number}, "${epic.title}"; the requirement is for a change to it.`
+        : conv.scope === "project"
+          ? `${where} In Context / constraints, say which repositories change and what each one takes on.`
+          : where;
       const got = await askOrchestrator(deps.cfg, {
         owner,
         repo: name,
@@ -573,7 +627,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return { spec };
   });
 
-  app.post<{ Params: { id: string }; Body: { title?: string; fast?: boolean } }>("/api/shape/:id/work", async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { title?: string; fast?: boolean; repoId?: string } }>("/api/shape/:id/work", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const conv = await own(ctx, req.params.id, reply);
@@ -581,6 +635,16 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const title = (req.body?.title ?? conv.title).trim();
     if (!title) return reply.code(400).send({ error: "give the work a title" });
     if (!conv.spec) return reply.code(400).send({ error: "write the requirement first" });
+    // An idea that spans the project opens in the repository the person
+    // picks, which becomes its home: the epic lives there and the next
+    // message runs on that repo's branch of it.
+    if (req.body?.repoId && req.body.repoId !== conv.repoId) {
+      if (conv.scope !== "project") return reply.code(400).send({ error: "this idea is about one repository" });
+      const pick = (await projectRepos(conv.projectId)).find((r) => r.id === req.body?.repoId);
+      if (!pick) return reply.code(400).send({ error: "that repository is not in this project, or is not set up for the factory" });
+      conv.repoId = pick.id;
+      conv.repoFullName = pick.fullName;
+    }
     const messages = await messagesOf(conv.id);
     const mocks = messages.filter((m) => m.role === "assistant" && m.status === "done").flatMap((m) => splitMocks(m.body).mocks);
     const attachments = messages.flatMap((m) => m.attachments ?? []);
@@ -609,6 +673,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       .update(shapeConversations)
       .set({
         title,
+        repoId: conv.repoId,
         issueUrl: issue.html_url,
         issueId: existing?.id ?? null,
         // From here the idea is about the epic it became; the next message runs on its branch.

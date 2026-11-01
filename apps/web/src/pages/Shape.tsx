@@ -60,6 +60,37 @@ function shortRepo(fullName: string): string {
   return fullName.split("/").pop() ?? fullName;
 }
 
+/** The chip for an idea that spans a project: every repository, not one. */
+function ProjectChip({ name }: { name: string }) {
+  return (
+    <span className="repo-chip" title={`Every repository in ${name}`}>
+      <span className="repo-dot repo-dot-all" />
+      All of {name}
+    </span>
+  );
+}
+
+/**
+ * What the "Which product" select offers: each project's repositories, led
+ * by "All of <project>" when the project has more than one, so an idea can
+ * span them. Repositories outside a project come last.
+ */
+function targetOptions(enabled: Target[]): Array<{ value: string; label: string }> {
+  const byProject = new Map<string, { name: string; repos: Target[] }>();
+  const loose: Target[] = [];
+  for (const t of enabled) {
+    if (!t.projectId) loose.push(t);
+    else (byProject.get(t.projectId) ?? byProject.set(t.projectId, { name: t.projectName ?? "the project", repos: [] }).get(t.projectId)!).repos.push(t);
+  }
+  const out: Array<{ value: string; label: string }> = [];
+  for (const [projectId, g] of byProject) {
+    if (g.repos.length > 1) out.push({ value: `project:${projectId}`, label: `All of ${g.name}` });
+    for (const t of g.repos) out.push({ value: t.id, label: shortRepo(t.fullName) });
+  }
+  for (const t of loose) out.push({ value: t.id, label: shortRepo(t.fullName) });
+  return out;
+}
+
 function failureText(e: unknown): string {
   return e instanceof ApiError ? e.message : "That did not go through. Try again.";
 }
@@ -76,12 +107,21 @@ export function ShapePage() {
   const [repoId, setRepoId] = useState("");
   const [start, setStart] = useState<"fresh" | "epic">("fresh");
   const [epicId, setEpicId] = useState("");
-  const chosen = repoId || (enabled.some((t) => t.id === focus.repo) ? focus.repo : "") || enabled[0]?.id || "";
+  const options = targetOptions(enabled);
+  // The focus filter picks the default: its repo, else "All of" its project when that is on offer, else the first choice.
+  const chosen =
+    repoId ||
+    (enabled.some((t) => t.id === focus.repo) ? focus.repo : "") ||
+    (options.some((o) => o.value === `project:${focus.project}`) ? `project:${focus.project}` : "") ||
+    options[0]?.value ||
+    "";
+  const spanning = chosen.startsWith("project:");
   const epics = openEpics(board.data?.cards ?? []);
   const chosenEpic = epicId || epics[0]?.epicId || "";
 
   const create = useMutation({
-    mutationFn: () => api.post<{ id: string }>("/api/shape", start === "epic" ? { epicId: chosenEpic } : { repoId: chosen }),
+    mutationFn: () =>
+      api.post<{ id: string }>("/api/shape", start === "epic" ? { epicId: chosenEpic } : spanning ? { projectId: chosen.slice("project:".length) } : { repoId: chosen }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["shape"] });
       navigate(`/shape/${r.id}`);
@@ -117,14 +157,16 @@ export function ShapePage() {
               </p>
             ) : (
               <select id="shape-repo" value={chosen} onChange={(e) => setRepoId(e.target.value)}>
-                {enabled.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {shortRepo(t.fullName)}
+                {options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
             )}
-            <p className="muted shape-hint">Runs against the latest main of every repository in the project.</p>
+            <p className="muted shape-hint">
+              {spanning ? "The idea can span every repository in the project. You pick where the work opens." : "Runs against the latest main of every repository in the project."}
+            </p>
           </>
         ) : (
           <>
@@ -163,7 +205,7 @@ export function ShapePage() {
                   <span className="shape-conv-title">{c.title}</span>
                   {c.epic && <span className="shape-conv-epic muted">About {c.epic.title}</span>}
                   <span className="shape-conv-meta">
-                    <RepoChip fullName={c.repo} />
+                    {c.scope === "project" && !c.epic ? <ProjectChip name={c.projectName ?? "the project"} /> : <RepoChip fullName={c.repo} />}
                     {c.issueUrl ? <span className="stage-chip done">opened</span> : c.hasSpec ? <span className="stage-chip decide">spec</span> : null}
                   </span>
                 </Link>
@@ -296,6 +338,8 @@ function Conversation({ id }: { id: string }) {
   const noClaude = sendErr?.status === 503;
   const specPending = conversation.specStatus === "pending";
   const composerBusy = send.isPending || answering;
+  // Spanning the project until it becomes an epic, which lives in one repository.
+  const acrossProject = conversation.scope === "project" && !conversation.epic;
 
   return (
     <div className="shape-conv">
@@ -306,11 +350,13 @@ function Conversation({ id }: { id: string }) {
           </p>
           <h1>{conversation.title}</h1>
           <p className="muted">
-            <RepoChip fullName={conversation.repo} />
+            {acrossProject ? <ProjectChip name={conversation.project?.name ?? "the project"} /> : <RepoChip fullName={conversation.repo} />}
             {conversation.epic ? (
               <>
                 {" · "}About <Link to={`/work/${conversation.epic.id}`}>{conversation.epic.title}</Link> · reads its branch and documents
               </>
+            ) : acrossProject ? (
+              <> · reads the latest main of every repository in {conversation.project?.name ?? "the project"}</>
             ) : (
               <> · reads the latest main of {shortRepo(conversation.repo)} and the project's other repositories</>
             )}
@@ -343,7 +389,9 @@ function Conversation({ id }: { id: string }) {
             {messages.length === 0 && (
               <div className="shape-start">
                 <p className="muted">
-                  {conversation.epic ? `Ask anything about ${conversation.epic.title}, or paste a screenshot. Some ways to start:` : `Ask anything about ${shortRepo(conversation.repo)}, or paste a screenshot. Some ways to start:`}
+                  {conversation.epic
+                    ? `Ask anything about ${conversation.epic.title}, or paste a screenshot. Some ways to start:`
+                    : `Ask anything about ${acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo)}, or paste a screenshot. Some ways to start:`}
                 </p>
                 <div className="shape-chips">
                   {(conversation.epic ? EPIC_SUGGESTIONS : SUGGESTIONS).map((s) => (
@@ -452,6 +500,8 @@ function Conversation({ id }: { id: string }) {
         <OpenAsWork
           id={id}
           defaultTitle={conversation.title}
+          homes={acrossProject ? (conversation.project?.repos ?? []) : []}
+          defaultRepoId={conversation.repoId}
           onCancel={() => setOpening(false)}
           onDone={(r) => {
             setOpening(false);
@@ -662,18 +712,25 @@ function SpecView({ markdown }: { markdown: string }) {
 function OpenAsWork({
   id,
   defaultTitle,
+  homes,
+  defaultRepoId,
   onCancel,
   onDone,
 }: {
   id: string;
   defaultTitle: string;
+  /** For an idea that spans the project: the repositories the work may open in. Empty when the idea is about one. */
+  homes: Array<{ id: string; fullName: string }>;
+  defaultRepoId: string;
   onCancel: () => void;
   onDone: (r: { title: string; htmlUrl: string; epicId?: string }) => void;
 }) {
   const [title, setTitle] = useState(defaultTitle);
   const [fast, setFast] = useState(false);
+  const [repoId, setRepoId] = useState(defaultRepoId);
   const open = useMutation({
-    mutationFn: () => api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, { title: title.trim(), fast }),
+    mutationFn: () =>
+      api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, { title: title.trim(), fast, ...(homes.length ? { repoId } : {}) }),
     onSuccess: (r) => onDone({ title: title.trim(), htmlUrl: r.htmlUrl, epicId: r.epicId }),
   });
   return (
@@ -682,6 +739,19 @@ function OpenAsWork({
       <p className="muted">The requirement becomes an item in Work. The factory reads it and comes back with a plan for you to approve.</p>
       <label htmlFor="shape-title">Name it</label>
       <input id="shape-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      {homes.length > 0 && (
+        <>
+          <label htmlFor="shape-home">Where it opens</label>
+          <select id="shape-home" value={repoId} onChange={(e) => setRepoId(e.target.value)}>
+            {homes.map((h) => (
+              <option key={h.id} value={h.id}>
+                {shortRepo(h.fullName)}
+              </option>
+            ))}
+          </select>
+          <p className="muted shape-hint">The epic lives in this repository. Work in the others is planned from there.</p>
+        </>
+      )}
       <label className="shape-fast">
         <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} /> Fast lane: the factory approves the plan and the design itself. You still release it.
       </label>

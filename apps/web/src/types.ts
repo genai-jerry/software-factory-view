@@ -749,6 +749,9 @@ export interface ShapeConversationSummary {
   title: string;
   repo: string;
   repoId: string;
+  /** `project`: the idea spans every factory-enabled repository of the project; `repo` is the default. */
+  scope?: "repo" | "project";
+  projectName?: string | null;
   updatedAt: string;
   hasSpec: boolean;
   issueUrl: string | null;
@@ -781,6 +784,9 @@ export interface ShapeConversation {
     title: string;
     repoId: string;
     repo: string;
+    scope?: "repo" | "project";
+    /** The project around the idea, with the repositories the work may open in. */
+    project?: { id: string; name: string; repos: Array<{ id: string; fullName: string }> } | null;
     spec: string | null;
     specUpdatedAt: string | null;
     /** The requirement is written in the background. */
