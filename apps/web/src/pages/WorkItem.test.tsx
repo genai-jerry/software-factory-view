@@ -218,3 +218,30 @@ describe("WorkItemPage on one test case", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/c12/test-verdict", { verdict: "passed", evidence: undefined }));
   });
 });
+
+describe("Discuss in Shape", () => {
+  it("opens the epic's existing Shape conversation, or starts one", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return epic;
+      if (path.startsWith("/api/epics/e35/artifact")) return { path: "", ref: "proposed", sha: "s", markdown: PLAN, html: "", otherSha: null };
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      if (path === "/api/shape?epicId=e35") return { conversations: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ id: "c35" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/work/e35"]}>
+          <Routes>
+            <Route path="/work/:id" element={<WorkItemPage me={me} />} />
+            <Route path="/shape/:id" element={<p>Shape page</p>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Discuss in Shape" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { epicId: "e35" }));
+    expect(await screen.findByText("Shape page")).toBeInTheDocument();
+  });
+});

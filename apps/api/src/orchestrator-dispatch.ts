@@ -303,8 +303,20 @@ export async function askOrchestrator(
     instructions?: string;
     anthropicApiKey?: string;
     claudeCodeOauthToken?: string;
+    /** Images the session reads with its Read tool (Shape). */
+    images?: Array<{ name: string; mime: string; dataB64: string }>;
+    /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
+    mode?: "ask" | "shape";
+    /** Other repositories checked out beside the primary one, each on `branch` when it exists there, else its default. */
+    repos?: Array<{ owner: string; repo: string; branch: string | null }>;
+    /** A persistent workspace key (a Shape conversation id): the checkout is kept between messages and reset to the branch each time. */
+    conversation?: string;
+    /** A Claude session id from an earlier answer on the same conversation, to resume instead of starting cold. */
+    session?: string;
   },
-): Promise<{ ok: true; answer: string; model: string; inputTokens: number; outputTokens: number } | OrchestratorProxyError> {
+): Promise<
+  { ok: true; answer: string; model: string; inputTokens: number; outputTokens: number; session?: string; resumed?: boolean } | OrchestratorProxyError
+> {
   const dest = orchestratorBase(cfg);
   if ("error" in dest) return dest;
   let res: Response;
@@ -321,8 +333,15 @@ export async function askOrchestrator(
         ...(body.instructions ? { instructions: body.instructions } : {}),
         ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
         ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
+        ...(body.images && body.images.length > 0
+          ? { images: body.images.map((i) => ({ name: i.name, mime: i.mime, data_b64: i.dataB64 })) }
+          : {}),
+        ...(body.mode && body.mode !== "ask" ? { mode: body.mode } : {}),
+        ...(body.repos && body.repos.length > 0 ? { repos: body.repos } : {}),
+        ...(body.conversation ? { conversation: body.conversation } : {}),
+        ...(body.session ? { session: body.session } : {}),
       }),
-      signal: AbortSignal.timeout(330_000),
+      signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
     });
   } catch (err) {
     return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
@@ -332,6 +351,8 @@ export async function askOrchestrator(
     model?: string;
     detail?: string;
     usage?: { input_tokens?: number; output_tokens?: number };
+    session?: string;
+    resumed?: boolean;
   };
   if (res.status === 404 || res.status === 405 || res.status === 501) {
     return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
@@ -345,6 +366,8 @@ export async function askOrchestrator(
     model: json.model ?? "",
     inputTokens: json.usage?.input_tokens ?? 0,
     outputTokens: json.usage?.output_tokens ?? 0,
+    ...(typeof json.session === "string" && json.session ? { session: json.session } : {}),
+    ...(typeof json.resumed === "boolean" ? { resumed: json.resumed } : {}),
   };
 }
 

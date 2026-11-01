@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE, namesOf, peopleLabel, plainTitle } from "../lib/labels.js";
@@ -88,7 +88,9 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
         <aside className="wi-side">
           <section className="card">
             <h2>Ask the factory</h2>
-            <p className="muted">About this item, from the write-up, the conversation and the code.</p>
+            <p className="muted">
+              About this item, from the write-up, the conversation and the code. <DiscussInShape epicId={data.epic.id} />
+            </p>
             <QaPanel scope={{ kind: "epic", id: data.epic.id }} />
           </section>
         </aside>
@@ -138,6 +140,26 @@ function verdictOf(c: CaseRow): "passed" | "failed" | "runnable" | "pending" | "
   if (c.state === "factory:test-failed") return "failed";
   if (c.state === "factory:manual-test") return "runnable";
   return "pending";
+}
+
+/** The longer conversation: Shape, about this epic — the existing one, or a new one. */
+function DiscussInShape({ epicId }: { epicId: string }) {
+  const navigate = useNavigate();
+  const go = useMutation({
+    mutationFn: async () => {
+      const existing = await api.get<{ conversations: Array<{ id: string }> }>(`/api/shape?epicId=${encodeURIComponent(epicId)}`);
+      const first = existing.conversations[0];
+      if (first) return first.id;
+      const created = await api.post<{ id: string }>("/api/shape", { epicId });
+      return created.id;
+    },
+    onSuccess: (id) => navigate(`/shape/${id}`),
+  });
+  return (
+    <button type="button" className="link" onClick={() => go.mutate()} disabled={go.isPending}>
+      {go.isPending ? "Opening…" : "Discuss in Shape"}
+    </button>
+  );
 }
 
 /**

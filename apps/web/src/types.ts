@@ -734,3 +734,56 @@ export interface FactoryUsage {
   /** Rate-limit detail a run reported, if any (e.g. five_hour.used_percentage). */
   rate_limit: Record<string, unknown> | null;
 }
+
+/* Shape — a chat that turns an idea into work (GET/POST /api/shape…). */
+/** The epic a Shape idea is about, when it is about one. */
+export interface ShapeEpicRef {
+  id: string;
+  number: number;
+  title: string;
+  state: string | null;
+}
+
+export interface ShapeConversationSummary {
+  id: string;
+  title: string;
+  repo: string;
+  repoId: string;
+  updatedAt: string;
+  hasSpec: boolean;
+  issueUrl: string | null;
+  epic?: ShapeEpicRef | null;
+}
+
+export interface ShapeAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  url: string;
+}
+
+export interface ShapeMessage {
+  id: string;
+  role: "user" | "assistant";
+  body: string;
+  bodyHtml: string;
+  mocks: Array<{ html: string }>;
+  attachments: ShapeAttachment[];
+  createdAt: string;
+}
+
+export interface ShapeConversation {
+  conversation: {
+    id: string;
+    title: string;
+    repoId: string;
+    repo: string;
+    spec: string | null;
+    specUpdatedAt: string | null;
+    issueUrl: string | null;
+    issueId: string | null;
+    /** Set when the idea is about an epic: it reads the epic's branch and documents. */
+    epic?: ShapeEpicRef | null;
+  };
+  messages: ShapeMessage[];
+}

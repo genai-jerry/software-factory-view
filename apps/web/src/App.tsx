@@ -19,6 +19,7 @@ import { DecisionsPage } from "./pages/Decisions.js";
 import { OnboardingPage } from "./pages/Onboarding.js";
 import { SettingsPage } from "./pages/Settings.js";
 import { OrchestratorRunPage } from "./pages/OrchestratorRun.js";
+import { ShapePage } from "./pages/Shape.js";
 
 function isOrchestratorRunPath(pathname: string): boolean {
   return /^\/runs\/[^/]+$/.test(pathname);
@@ -131,6 +132,8 @@ export function App() {
         <Route path="/decision-log" element={<DecisionsPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/runs/:runId" element={<OrchestratorRunPage />} />
+        <Route path="/shape" element={<ShapePage />} />
+        <Route path="/shape/:id" element={<ShapePage />} />
         <Route
           path="/settings"
           element={canReachSettings(user!, setup.data) ? <SettingsPage me={user!} /> : <Navigate to="/" replace />}

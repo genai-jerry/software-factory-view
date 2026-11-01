@@ -139,7 +139,7 @@ async function resolveInsight(
  * it, so an org that has one asks through the orchestrator (POST /ask) before
  * anything else is tried.
  */
-async function claudeTokenFor(deps: AppDeps, orgId: string): Promise<string | undefined> {
+export async function claudeTokenFor(deps: AppDeps, orgId: string): Promise<string | undefined> {
   try {
     return (await readRetainedAgentSecrets(deps, orgId)).claudeCodeOauthToken || undefined;
   } catch {
@@ -478,7 +478,7 @@ export async function assembleIssueContext(
 }
 
 /** Cached change-folder artifacts for an epic, optionally filtered by kind. */
-async function artifactSources(deps: AppDeps, epicIssueId: string, kinds?: string[]): Promise<InsightSource[]> {
+export async function artifactSources(deps: AppDeps, epicIssueId: string, kinds?: string[]): Promise<InsightSource[]> {
   const { db } = deps.dbh;
   const out: InsightSource[] = [];
   const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epicIssueId)).limit(1))[0];
