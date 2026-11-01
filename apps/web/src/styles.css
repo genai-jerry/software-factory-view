@@ -1288,6 +1288,10 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .rel-progress li.merged { color: var(--ok-fg); }
 .rel-progress li.failed { color: var(--error-fg); }
 .rel-body p { margin: 0.4rem 0; }
+/* An issue's screenshots are uploaded at full size and carry width/height
+   attributes; they stay inside the card and keep their shape. */
+.rel-body img, .markdown-body img, .oq-entry img { max-width: 100%; height: auto; border-radius: 6px; }
+.rel-body table { display: block; max-width: 100%; overflow-x: auto; }
 .task-list { margin: 0; padding: 0; list-style: none; }
 .task-row { display: grid; grid-template-columns: 2rem minmax(0, 1fr) max-content; gap: 0.6rem; align-items: center; padding: 0.55rem 0; border-top: 1px solid var(--border); }
 .task-row:first-child { border-top: 0; }
