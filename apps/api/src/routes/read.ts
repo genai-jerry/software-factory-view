@@ -95,30 +95,40 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     )[0];
     if (!row) return reply.code(404).send({ error: "repo not found" });
 
-    let token: string;
-    try {
-      const auth = await deps.credentials.auth();
-      if (auth) {
-        token = await auth.installationToken(row.estate.installationId);
-      } else {
-        token = await ctx.userToken();
-      }
-    } catch {
+    // An issue's uploaded images (github.com/user-attachments/…) are served
+    // to a USER with access to the repo and 404 for an App installation
+    // token, so the signed-in person's token goes first; the installation
+    // token is the fallback for hosts that take it (raw, camo) and for a
+    // person whose GitHub sign-in has lapsed.
+    const tokens: Array<() => Promise<string>> = [
+      () => ctx.userToken(),
+      async () => {
+        const auth = await deps.credentials.auth();
+        if (!auth) throw new Error("no app credentials");
+        return auth.installationToken(row.estate.installationId);
+      },
+    ];
+    // What GitHub said is the useful failure; a token that could not be
+    // minted only matters when no token was tried at all.
+    let fetchError: Error | null = null;
+    for (const next of tokens) {
+      let token: string;
       try {
-        token = await ctx.userToken();
+        token = await next();
       } catch {
-        return reply.code(503).send({ error: "no GitHub credentials available to fetch media" });
+        continue;
+      }
+      try {
+        const { body, contentType } = await fetchGitHubMedia(url, token);
+        reply.header("content-type", contentType);
+        reply.header("cache-control", "private, max-age=3600");
+        return reply.send(body);
+      } catch (err) {
+        fetchError = err as Error;
       }
     }
-
-    try {
-      const { body, contentType } = await fetchGitHubMedia(url, token);
-      reply.header("content-type", contentType);
-      reply.header("cache-control", "private, max-age=3600");
-      return reply.send(body);
-    } catch (err) {
-      return reply.code(502).send({ error: (err as Error).message });
-    }
+    if (!fetchError) return reply.code(503).send({ error: "no GitHub credentials available to fetch media" });
+    return reply.code(502).send({ error: fetchError.message });
   });
 
   app.get("/api/estates", async (req, reply) => {
