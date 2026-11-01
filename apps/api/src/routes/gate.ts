@@ -30,7 +30,7 @@ import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { githubMessage, postComment } from "../gh-write.js";
 import { loadApproversForGate, repoApprovers } from "../start-gate.js";
-import { countThreadEntries } from "../threads.js";
+import { countQuestionEntries } from "../threads.js";
 import { renderMarkdown } from "../render.js";
 import { loadEpic } from "./read.js";
 
@@ -504,7 +504,9 @@ async function openGateQuestions(
       .from(threads)
       .where(and(eq(threads.epicIssueId, epicIssueId), eq(threads.status, "open")))
   ).filter((t) => guardRefs.has(t.topicRef));
-  const counts = await countThreadEntries(db, rows.map((t) => t.id));
+  // Only what a person wrote counts; the factory's notices and the gate
+  // controls themselves never hold a gate.
+  const counts = await countQuestionEntries(db, rows.map((t) => t.id));
   return rows
     .map((t) => ({ ...t, entryCount: counts.get(t.id) ?? 0 }))
     .filter((t) => t.entryCount > 0);

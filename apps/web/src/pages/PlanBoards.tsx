@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { OpenQuestions } from "../components/OpenQuestions.js";
 import { bullets, designParts, findSection, paragraphs, scenarios, sections } from "../lib/docs.js";
 import { plain } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, GatePanelData } from "../types.js";
@@ -308,23 +309,16 @@ function GateDecision({
       <h2 id="decision">Your decision</h2>
       <p className="need">You need to: {need}</p>
       <ul className="facts">
-        {gate && gate.openQuestions.length > 0 && (
-          <li>
-            {gate.openQuestions.length} question{gate.openQuestions.length === 1 ? " is" : "s are"} still open.{" "}
-            <label>
-              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> Approve anyway
-            </label>
-          </li>
-        )}
         <li>{after}</li>
       </ul>
+      {gate && <OpenQuestions questions={gate.openQuestions} ack={ack} onAck={setAck} ackLabel="Approve anyway, with this question open" />}
       {approve.isSuccess ? (
         <p className="muted">Approved. The factory has it.</p>
       ) : !canDecide ? (
         <p className="muted">This is decided by {gate!.approvers.map((x) => `@${x}`).join(", ")}.</p>
       ) : changes === null ? (
         <div className="decision-actions">
-          <button type="button" className="primary" disabled={approve.isPending} onClick={() => approve.mutate()}>
+          <button type="button" className="primary" disabled={approve.isPending || ((gate?.openQuestions.length ?? 0) > 0 && !ack)} onClick={() => approve.mutate()}>
             {approve.isPending ? "Approving…" : title}
           </button>
           <button

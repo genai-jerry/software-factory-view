@@ -136,6 +136,26 @@ describe("ReleaseBoard at production", () => {
     expect(screen.getByText("3 tasks, 1 of 3 tests passed, 1 skipped")).toBeInTheDocument();
   });
 
+  it("shows an open question in full, holds the release until it is acknowledged, and can mark it answered", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.endsWith("/gate"))
+        return { ...gate, gate: "staging", state: "factory:epic-ready", releasePrs: [], openQuestions: [{ id: "t1", title: "Which time zone groups the days?", topicRef: "gate/staging", entryCount: 1 }] };
+      if (path === "/api/threads/t1")
+        return { id: "t1", title: "Which time zone groups the days?", topicKind: "gate", topicRef: "gate/staging", status: "open", entries: [{ id: "n1", source: "console", author: "sowmya", bodyHtml: "<p>Is it the workspace zone or UTC?</p>" }] };
+      if (path.endsWith("/timeline")) return { events: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderIn(<ReleaseBoard data={epic({ state: "factory:epic-ready" })} />);
+    expect(await screen.findByText("Is it the workspace zone or UTC?")).toBeInTheDocument();
+    const release = screen.getByRole("button", { name: "Release to staging" });
+    expect(release).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Release anyway/ }));
+    expect(release).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Mark as answered" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/threads/t1/status", { status: "resolved" }));
+  });
+
   it("offers Release to staging at GS", async () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path.endsWith("/gate")) return { ...gate, gate: "staging", state: "factory:epic-ready", releasePrs: [] };
