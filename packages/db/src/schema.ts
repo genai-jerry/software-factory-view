@@ -678,3 +678,25 @@ export const shapeAttachments = pgTable("shape_attachments", {
   size: integer("size").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Images attached to a work item as it is filed from Add work. GitHub's API
+ * takes no uploads, so the issue links to these; a Compass sign-in in the
+ * org opens them. `issueUrl` is set once the issue exists.
+ */
+export const workAttachments = pgTable(
+  "work_attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    repoId: uuid("repo_id").notNull().references(() => repos.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mime: text("mime").notNull(),
+    bytesB64: text("bytes_b64").notNull(),
+    size: integer("size").notNull(),
+    issueUrl: text("issue_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("work_attachments_user_created").on(t.userId, t.createdAt)],
+);

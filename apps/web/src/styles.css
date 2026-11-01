@@ -1330,6 +1330,9 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .new-work form { display: grid; gap: 0.4rem; }
 .new-work form label { font-weight: 600; margin-top: 0.6rem; }
 .new-work input, .new-work textarea, .new-work select { width: 100%; box-sizing: border-box; font: inherit; }
+.nw-images { margin: 0.25rem 0 0.5rem; }
+.nw-images .shape-thumbs { margin: 0.25rem 0 0.6rem; }
+.nw-images > .muted { font-size: 0.85rem; }
 .nw-mode { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.6rem 0 0.4rem; display: grid; gap: 0.5rem; }
 .nw-mode legend { font-weight: 600; padding: 0 0.3rem; }
 .nw-choice { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400 !important; margin: 0 !important; }

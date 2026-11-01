@@ -1,6 +1,7 @@
 import { GitHubHttpError, type GhIssue } from "@console/core";
-import { auditLog, issueStateHistory, issues, projects, repos } from "@console/db";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { auditLog, issueStateHistory, issues, projects, repos, workAttachments } from "@console/db";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { UPLOAD_BODY_LIMIT, attachmentsSection, checkImageUpload } from "../attachments.js";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { alias } from "drizzle-orm/pg-core";
 import { lineFor } from "../activity.js";
@@ -84,16 +85,75 @@ export function registerActivityRoutes(app: FastifyInstance, deps: AppDeps): voi
     return { lines };
   });
 
-  app.post<{ Body: { repoId: string; title: string; body?: string; fast?: boolean } }>("/api/work", async (req, reply) => {
+  app.post<{ Body: { repoId: string; title: string; body?: string; fast?: boolean; attachmentIds?: string[] } }>("/api/work", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const title = req.body?.title?.trim();
     if (!title) return reply.code(400).send({ error: "say what you want done" });
     const repo = (await db.select().from(repos).where(and(eq(repos.id, req.body.repoId ?? ""), inArray(repos.orgId, ctx.orgIds))).limit(1))[0];
     if (!repo) return reply.code(404).send({ error: "repository not found" });
-    const issue = await openWorkIssue(deps, ctx, reply, repo, { title, body: (req.body.body ?? "").trim(), fast: Boolean(req.body.fast) });
+    // The images uploaded for this item: the uploader's own, not yet on an issue.
+    const wanted = (req.body.attachmentIds ?? []).filter((x): x is string => typeof x === "string").slice(0, 6);
+    const attachments = wanted.length
+      ? await db
+          .select({ id: workAttachments.id, name: workAttachments.name })
+          .from(workAttachments)
+          .where(and(inArray(workAttachments.id, wanted), eq(workAttachments.userId, ctx.userId), eq(workAttachments.orgId, repo.orgId), isNull(workAttachments.issueUrl)))
+      : [];
+    const section = attachmentsSection(deps.cfg.PUBLIC_ORIGIN, attachments, "/api/work/attachments");
+    const body = [(req.body.body ?? "").trim(), section].filter(Boolean).join("\n\n");
+    const issue = await openWorkIssue(deps, ctx, reply, repo, { title, body, fast: Boolean(req.body.fast) });
     if (!issue) return;
+    if (attachments.length) {
+      await db
+        .update(workAttachments)
+        .set({ issueUrl: issue.html_url })
+        .where(
+          inArray(
+            workAttachments.id,
+            attachments.map((a) => a.id),
+          ),
+        );
+    }
     return { ok: true, number: issue.number, htmlUrl: issue.html_url, repo: repo.fullName };
+  });
+
+  /** An image for a work item about to be filed: held here, linked from the issue. */
+  app.post<{ Body: { repoId?: string; name?: string; mime?: string; dataB64?: string } }>(
+    "/api/work/attachments",
+    { bodyLimit: UPLOAD_BODY_LIMIT },
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const repo = (await db.select().from(repos).where(and(eq(repos.id, req.body?.repoId ?? ""), inArray(repos.orgId, ctx.orgIds))).limit(1))[0];
+      if (!repo) return reply.code(404).send({ error: "repository not found" });
+      const checked = checkImageUpload(req.body);
+      if ("error" in checked) return reply.code(checked.status).send({ error: checked.error });
+      const row = (
+        await db
+          .insert(workAttachments)
+          .values({ orgId: repo.orgId, userId: ctx.userId, repoId: repo.id, name: checked.name, mime: checked.mime, bytesB64: checked.dataB64, size: checked.size })
+          .returning()
+      )[0]!;
+      return { id: row.id, name: row.name, mime: row.mime, url: `/api/work/attachments/${row.id}` };
+    },
+  );
+
+  /** Anyone in the org may open a work item's image: the issue is theirs to read too. */
+  app.get<{ Params: { id: string } }>("/api/work/attachments/:id", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const row = (
+      await db
+        .select()
+        .from(workAttachments)
+        .where(and(eq(workAttachments.id, req.params.id), inArray(workAttachments.orgId, ctx.orgIds)))
+        .limit(1)
+    )[0];
+    if (!row) return reply.code(404).send({ error: "attachment not found" });
+    reply.header("content-type", row.mime);
+    reply.header("cache-control", "private, max-age=86400");
+    return reply.send(Buffer.from(row.bytesB64, "base64"));
   });
 
   /** The project a repo belongs to, for the Add work form's default. */

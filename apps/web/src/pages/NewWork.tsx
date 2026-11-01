@@ -1,12 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { IMAGE_MIMES, MAX_IMAGES, dataB64Of, pickImages, type PendingImage } from "../lib/images.js";
 
 /**
  * Add work (redesign board 3): what you want done, why and for whom, where
- * it lives, and how to run it. Start opens the GitHub issue with the intake
- * label; the factory reads it and comes back with a plan to approve.
+ * it lives, and how to run it, with screenshots or mock-ups attached. Start
+ * uploads the images to the Console, then opens the GitHub issue with the
+ * intake label and links to them; the factory reads it and comes back with
+ * a plan to approve.
  */
 
 interface Target {
@@ -25,6 +28,8 @@ export function NewWorkPage() {
   const [repoId, setRepoId] = useState("");
   const [fast, setFast] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const enabled = (targets.data?.targets ?? []).filter((t) => t.factoryEnabled);
   const chosen = repoId || enabled[0]?.id || "";
@@ -32,10 +37,42 @@ export function NewWorkPage() {
   for (const t of enabled) projects.set(t.projectName ?? "Other", [...(projects.get(t.projectName ?? "Other") ?? []), t]);
 
   const start = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; number: number; htmlUrl: string; repo: string }>("/api/work", { repoId: chosen, title: title.trim(), body: why.trim(), fast }),
+    mutationFn: async () => {
+      // The images go up first; the issue links to them.
+      const attachmentIds: string[] = [];
+      for (const img of images) {
+        const up = await api.post<{ id: string }>("/api/work/attachments", { repoId: chosen, name: img.name, mime: img.mime, dataB64: dataB64Of(img) });
+        attachmentIds.push(up.id);
+      }
+      return api.post<{ ok: boolean; number: number; htmlUrl: string; repo: string }>("/api/work", {
+        repoId: chosen,
+        title: title.trim(),
+        body: why.trim(),
+        fast,
+        ...(attachmentIds.length ? { attachmentIds } : {}),
+      });
+    },
     onSuccess: (r) => navigate("/", { state: { added: { number: r.number, title: title.trim(), htmlUrl: r.htmlUrl } } }),
     onError: (e) => setFailure(e instanceof ApiError ? e.message : "That did not go through. Try again."),
   });
+
+  const addFiles = async (files: FileList | File[]) => {
+    const picked = await pickImages(files);
+    if (picked.length) setImages((l) => [...l, ...picked].slice(0, MAX_IMAGES));
+  };
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files ?? []).filter((f) => IMAGE_MIMES.has(f.type));
+    if (files.length) {
+      e.preventDefault();
+      void addFiles(files);
+    }
+  };
+  const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
+    if (e.dataTransfer.files.length) {
+      e.preventDefault();
+      void addFiles(e.dataTransfer.files);
+    }
+  };
 
   return (
     <div className="work-item new-work">
@@ -54,7 +91,47 @@ export function NewWorkPage() {
         <input id="nw-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Show day-wise calling performance in the leads page" required />
 
         <label htmlFor="nw-why">Why, and for whom</label>
-        <textarea id="nw-why" rows={5} value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Two or three sentences are enough. The factory asks if something is unclear." />
+        <textarea
+          id="nw-why"
+          rows={5}
+          value={why}
+          onChange={(e) => setWhy(e.target.value)}
+          onPaste={onPaste}
+          onDrop={onDrop}
+          onDragOver={(e) => e.preventDefault()}
+          placeholder="Two or three sentences are enough. Paste or drop a screenshot here. The factory asks if something is unclear."
+        />
+
+        <div className="nw-images">
+          {images.length > 0 && (
+            <div className="shape-thumbs">
+              {images.map((p) => (
+                <span key={p.key} className="shape-thumb">
+                  <img src={p.dataUrl} alt={p.name} />
+                  <button type="button" aria-label={`Remove ${p.name}`} onClick={() => setImages((l) => l.filter((x) => x.key !== p.key))}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            hidden
+            aria-label="Attach images"
+            onChange={(e) => {
+              if (e.target.files) void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button type="button" className="secondary" onClick={() => fileRef.current?.click()} disabled={images.length >= MAX_IMAGES}>
+            Attach image
+          </button>
+          <span className="muted"> Screenshots or mock-ups, up to {MAX_IMAGES}. They are kept in Compass and linked from the item.</span>
+        </div>
 
         <label htmlFor="nw-repo">Where it lives</label>
         {targets.isLoading ? (
