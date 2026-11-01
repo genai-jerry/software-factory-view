@@ -698,5 +698,5 @@ export const workAttachments = pgTable(
     issueUrl: text("issue_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("work_attachments_user_created").on(t.userId, t.createdAt)],
+  (t) => [index("work_attachments_user_created").on(t.userId, t.createdAt), index("work_attachments_repo_issue").on(t.repoId, t.issueUrl)],
 );
