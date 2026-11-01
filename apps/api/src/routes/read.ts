@@ -52,6 +52,7 @@ import { loadApproversForGate, loadGateApprovers, loadTaskStartFacts, nextStepFo
 import { requireAuth, resolveSession, userClient, type AppDeps, type RequestCtx } from "../context.js";
 import { attachmentAssetId, fetchGitHubMedia, fetchSignedMedia, isGitHubMediaUrl, signedAttachmentUrl } from "../media.js";
 import { fetchActiveRuns } from "../orchestrator-dispatch.js";
+import { extractQuestions } from "../questions.js";
 import { renderMarkdown } from "../render.js";
 import { countThreadEntries } from "../threads.js";
 
@@ -715,12 +716,26 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     const commentIssue = alias(issues, "comment_issue");
     const entries = await db
-      .select({ entry: threadEntries, comment: comments, issueNumber: commentIssue.number })
+      .select({ entry: threadEntries, comment: comments, issueNumber: commentIssue.number, issueLabels: commentIssue.labels })
       .from(threadEntries)
       .leftJoin(comments, eq(comments.id, threadEntries.commentId))
       .leftJoin(commentIssue, eq(commentIssue.id, comments.issueId))
       .where(eq(threadEntries.threadId, thread.id))
       .orderBy(threadEntries.createdAt);
+
+    // A blocked issue's questions (FACTORY.md §1a rule 13), read off the
+    // newest agent comment that carries any, so the page can put them
+    // beside the reply box rather than leave the reader to find them.
+    const newestComment = [...entries].reverse().find((e) => e.comment);
+    const blocked = (newestComment?.issueLabels ?? []).includes("factory:blocked");
+    let questions: string[] = [];
+    if (blocked) {
+      for (const e of [...entries].reverse()) {
+        if (!e.comment?.isAgent) continue;
+        questions = extractQuestions(e.comment.body);
+        if (questions.length) break;
+      }
+    }
 
     return {
       id: thread.id,
@@ -728,6 +743,8 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       topicKind: thread.topicKind,
       topicRef: thread.topicRef,
       status: thread.status,
+      blocked,
+      questions,
       entries: entries.map(({ entry, comment, issueNumber }) => ({
         id: entry.id,
         source: entry.source,

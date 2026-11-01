@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, issues, memberships, orgs, repos, sessions, threads, users } from "@console/db";
+import { comments, estates, issues, memberships, orgs, repos, sessions, threadEntries, threads, users } from "@console/db";
+import { and, eq } from "drizzle-orm";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
@@ -169,5 +170,48 @@ describe("a task thread's reply reaches the task issue", () => {
     const res = await post(id.epicThread!, "looks good");
     expect(res.statusCode).toBe(200);
     expect(calls).toEqual([`${API_URL}/repos/acme/backend/issues/261/comments`]);
+  });
+});
+
+describe("a blocked task thread carries the factory's questions", () => {
+  it("reads the list off the newest agent comment, only while the task is blocked", async () => {
+    const d = deps.dbh.db;
+    const task = (await d.select().from(issues).where(eq(issues.title, "task(261): the screen")).limit(1))[0]!;
+    const blockedComment = [
+      "**Round 2 blocked: `unload` deletes nothing on staging.**",
+      "**You need to:** decide below.",
+      "Next: you.",
+      "**Questions for you:**",
+      "1. Allow one more implementer round on this task, or take the fix yourself?",
+      "2. Should `judge_alerts` count as a tenant table?",
+      "",
+      "<details><summary>Factory details</summary>\n\nIs the fold a question? No.\n</details>",
+      "",
+      "<!-- factory-agent -->",
+    ].join("\n");
+    const mkComment = async (ghId: number, body: string, isAgent: boolean, at: string) =>
+      (
+        await d
+          .insert(comments)
+          .values({ orgId: task.orgId, issueId: task.id, ghNodeId: `C${ghId}`, ghId, author: isAgent ? "bot" : "jerry", body, isAgent, ghCreatedAt: new Date(at), ghUpdatedAt: new Date(at) })
+          .returning()
+      )[0]!;
+    const c1 = await mkComment(1, blockedComment, true, "2026-11-01T10:00:00Z");
+    const c2 = await mkComment(2, "**Reviewer** finished — #215 is now at `factory:blocked`.\n\n<!-- factory-next:factory:blocked -->\n<!-- factory-agent -->", true, "2026-11-01T10:01:00Z");
+    for (const [c, at] of [[c1, "2026-11-01T10:00:00Z"], [c2, "2026-11-01T10:01:00Z"]] as const) {
+      await d.insert(threadEntries).values({ orgId: task.orgId, threadId: id.taskThread!, source: "gh_comment", commentId: c.id, createdAt: new Date(at) });
+    }
+
+    // Not blocked: no questions, whatever the comments say.
+    let res = await app.inject({ method: "GET", url: `/api/threads/${id.taskThread}`, headers: { cookie } });
+    expect(res.json()).toMatchObject({ blocked: false, questions: [] });
+
+    await d.update(issues).set({ labels: ["factory:ready", "factory:blocked"], factoryState: "factory:blocked" }).where(and(eq(issues.id, task.id)));
+    res = await app.inject({ method: "GET", url: `/api/threads/${id.taskThread}`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      blocked: true,
+      questions: ["Allow one more implementer round on this task, or take the fix yourself?", "Should `judge_alerts` count as a tenant table?"],
+    });
   });
 });

@@ -42,6 +42,32 @@ describe("ThreadsTab deep link", () => {
   });
 });
 
+describe("A blocked thread", () => {
+  it("lists the factory's questions beside the reply box", async () => {
+    const detail = {
+      id: "t-11", title: "Task #11", topicKind: "task", topicRef: "task/11", status: "open", blocked: true,
+      questions: ["Allow one more implementer round on this task, or take the fix yourself?", "Should judge_alerts count as a tenant table?"],
+      entries: [
+        { id: "a", source: "github_comment", author: "bot", bodyHtml: "<p>Round 2 blocked.</p>", isAgent: true, isApproval: false, htmlUrl: null, createdAt: "2026-11-01T10:00:00Z" },
+      ],
+    };
+    vi.spyOn(api, "get").mockResolvedValue(detail);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><ThreadsTab data={data} thread="task/11" /></QueryClientProvider>);
+    const note = await screen.findByRole("note", { name: "Questions for you" });
+    expect(note.textContent).toContain("needs your answers:");
+    expect(screen.getByText("Should judge_alerts count as a tenant table?")).toBeTruthy();
+    expect(note.textContent).toContain("Your reply clears the block");
+  });
+
+  it("says when the factory listed no questions", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({ id: "t-11", title: "Task #11", topicKind: "task", topicRef: "task/11", status: "open", blocked: true, questions: [], entries: [] });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><ThreadsTab data={data} thread="task/11" /></QueryClientProvider>);
+    expect((await screen.findByRole("note", { name: "Questions for you" })).textContent).toContain("did not list its questions");
+  });
+});
+
 describe("Ask the factory", () => {
   it("sends the box's text as a question and labels the answer", async () => {
     const detail = {
