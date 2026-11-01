@@ -101,8 +101,10 @@ function stubNetwork(answer: string, ask: { session?: string; resumed?: boolean 
           headers: { "content-type": "application/json" },
         });
       }
-      if (String(url).endsWith("/repos/acme/app/issues")) {
-        return new Response(JSON.stringify({ number: 77, html_url: "https://github.com/acme/app/issues/77", node_id: "I77", title: "x", state: "open", labels: [] }), {
+      const repoIssues = /\/repos\/acme\/(app|web)\/issues$/.exec(String(url));
+      if (repoIssues) {
+        const repo = repoIssues[1];
+        return new Response(JSON.stringify({ number: 77, html_url: `https://github.com/acme/${repo}/issues/77`, node_id: "I77", title: "x", state: "open", labels: [] }), {
           status: 201,
           headers: { "content-type": "application/json" },
         });
@@ -345,6 +347,49 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
     expect(freshAsk.body!.repos).toEqual([{ owner: "acme", repo: "web", branch: null }]);
     expect(String(freshAsk.body!.context)).not.toContain("The epic's documents:");
     expect((await app.inject({ method: "GET", url: `/api/shape/${freshId}`, headers: { cookie: jerryCookie } })).json().conversation.epic).toBeNull();
+  });
+
+  it("spans the project: the first repo is home, the session is told about all of them, and the work opens where the person picks", async () => {
+    const d = deps.dbh.db;
+    const project = (await d.select().from(projects).where(eq(projects.name, "Acme")).limit(1))[0]!;
+    const web = (await d.select().from(repos).where(eq(repos.fullName, "acme/web")).limit(1))[0]!;
+
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { projectId: project.id } });
+    expect(created.statusCode).toBe(200);
+    const convId = (created.json() as { id: string }).id;
+    const got = (await view(convId)) as { conversation: { scope: string; repo: string; project: { name: string; repos: Array<{ fullName: string }> } } };
+    expect(got.conversation).toMatchObject({ scope: "project", repo: "acme/app", project: { name: "Acme", repos: [{ fullName: "acme/app" }, { fullName: "acme/web" }] } });
+    const listed = (await app.inject({ method: "GET", url: "/api/shape", headers: { cookie: jerryCookie } })).json() as { conversations: Array<{ id: string; scope: string; projectName: string }> };
+    expect(listed.conversations.find((c) => c.id === convId)).toMatchObject({ scope: "project", projectName: "Acme" });
+
+    let calls = stubNetwork("Both.");
+    await say(convId, { text: "Where do leads live, and which app shows them?" });
+    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(ask.body).toMatchObject({ owner: "acme", repo: "app", repos: [{ owner: "acme", repo: "web", branch: null }] });
+    const context = String(ask.body!.context);
+    expect(context).toContain("Project: Acme, repositories acme/app, acme/web.");
+    expect(context).toContain("acme/web are checked out beside it");
+
+    calls = stubNetwork("## What should be built?\nA shared status across both apps.");
+    await writeSpec(convId);
+    expect(String(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.context)).toContain("say which repositories change");
+
+    // Not a repository of the project → refused; a repository of it → the issue opens there and it becomes home.
+    const elsewhere = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Shared status", repoId: "00000000-0000-0000-0000-000000000000" } });
+    expect(elsewhere.statusCode).toBe(400);
+    calls = stubNetwork("");
+    const opened = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Shared status", repoId: web.id } });
+    expect(opened.statusCode).toBe(200);
+    expect(opened.json()).toMatchObject({ number: 77, htmlUrl: "https://github.com/acme/web/issues/77" });
+    expect(calls.some((c) => c.url.endsWith("/repos/acme/web/issues"))).toBe(true);
+    expect(((await view(convId)) as { conversation: { repo: string } }).conversation.repo).toBe("acme/web");
+
+    // An idea about one repository cannot be sent to another.
+    const single = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    const singleId = (single.json() as { id: string }).id;
+    await d.update(shapeConversations).set({ spec: "## What should be built?\nOne thing." }).where(eq(shapeConversations.id, singleId));
+    const moved = await app.inject({ method: "POST", url: `/api/shape/${singleId}/work`, headers: headers(jerryCookie), payload: { title: "One thing", repoId: web.id } });
+    expect(moved.statusCode).toBe(400);
   });
 });
 

@@ -42,6 +42,8 @@ Who uses it and what it changes for them.
 ## Context / constraints
 What the code already has that this builds on or must not break, named by
 file or module when the conversation established it from the repository.
+When the idea touches more than one repository, name each repository and
+what changes in it.
 
 ## Out of scope
 What the conversation decided not to do.

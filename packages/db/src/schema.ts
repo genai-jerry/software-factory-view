@@ -625,7 +625,10 @@ export const shapeConversations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     userId: uuid("user_id").notNull(),
+    /** The home repository: the session's working directory, and where the issue opens. */
     repoId: uuid("repo_id").notNull().references(() => repos.id, { onDelete: "cascade" }),
+    /** `repo`: about one repository. `project`: spans every factory-enabled repository of the home repo's project. */
+    scope: text("scope").notNull().default("repo"),
     title: text("title").notNull(),
     spec: text("spec"),
     specUpdatedAt: timestamp("spec_updated_at", { withTimezone: true }),
