@@ -153,4 +153,47 @@ describe("POST /api/work", () => {
     const res = await app.inject({ method: "POST", url: "/api/work", headers, payload: { repoId: id.repo, title: "  " } });
     expect(res.statusCode).toBe(400);
   });
+
+  it("keeps the attached images and links the issue to them", async () => {
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64");
+    const bad = await app.inject({ method: "POST", url: "/api/work/attachments", headers, payload: { repoId: id.repo, name: "x.txt", mime: "text/plain", dataB64: png } });
+    expect(bad.statusCode).toBe(400);
+    const up = await app.inject({ method: "POST", url: "/api/work/attachments", headers, payload: { repoId: id.repo, name: "shot.png", mime: "image/png", dataB64: `data:image/png;base64,${png}` } });
+    expect(up.statusCode).toBe(200);
+    const att = up.json() as { id: string; url: string };
+    expect(att.url).toBe(`/api/work/attachments/${att.id}`);
+
+    const calls: Array<{ url: string; body: { body?: string } | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+        return new Response(JSON.stringify({ number: 99, html_url: "https://github.com/acme/app/issues/99", node_id: "I99", title: "x", state: "open", labels: [] }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/work",
+      headers,
+      payload: { repoId: id.repo, title: "Whatsapp flow follows the configured start", body: "The flow starts too early.", attachmentIds: [att.id, "00000000-0000-0000-0000-000000000000"] },
+    });
+    expect(res.statusCode).toBe(200);
+    const create = calls.find((c) => c.url.endsWith("/repos/acme/app/issues"))!;
+    expect(create.body!.body).toMatch(
+      new RegExp(`^The flow starts too early\\.\\n\\n## Attachments\\n\\nThese need a Compass sign-in to open\\.\\n\\n- \\[shot\\.png\\]\\(https?://[^/]+/api/work/attachments/${att.id}\\)$`),
+    );
+
+    // Anyone in the org can open it; the bytes come back as the image.
+    const got = await app.inject({ method: "GET", url: att.url, headers: { cookie: headers.cookie } });
+    expect(got.statusCode).toBe(200);
+    expect(got.headers["content-type"]).toBe("image/png");
+    expect(got.rawPayload.toString("base64")).toBe(png);
+    // Once on an issue, the same image is not attached to a second one.
+    const again = await app.inject({ method: "POST", url: "/api/work", headers, payload: { repoId: id.repo, title: "Another", attachmentIds: [att.id] } });
+    expect(again.statusCode).toBe(200);
+    expect(calls[calls.length - 1]!.body!.body).toBe("");
+  });
 });

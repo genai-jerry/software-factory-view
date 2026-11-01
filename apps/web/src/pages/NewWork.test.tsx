@@ -53,6 +53,25 @@ beforeEach(() => {
 });
 
 describe("NewWorkPage", () => {
+  it("uploads the attached images first, then files the item linking to them", async () => {
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path === "/api/work/attachments") return { id: "a1", name: "shot.png", mime: "image/png", url: "/api/work/attachments/a1" };
+      return { ok: true, number: 99, htmlUrl: "https://github.com/x", repo: "genai-jerry/beacon-api" };
+    });
+    renderAt("/work/new", <NewWorkPage />);
+    await userEvent.type(await screen.findByLabelText("What do you want done?"), "Whatsapp flow follows the configured start");
+    const file = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+    await userEvent.upload(screen.getByLabelText("Attach images"), file);
+    expect(await screen.findByAltText("shot.png")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/work", { repoId: "r1", title: "Whatsapp flow follows the configured start", body: "", fast: false, attachmentIds: ["a1"] }),
+    );
+    const calls = vi.mocked(api.post).mock.calls.map((c) => c[0]);
+    expect(calls.indexOf("/api/work/attachments")).toBeLessThan(calls.indexOf("/api/work"));
+    expect(vi.mocked(api.post).mock.calls.find((c) => c[0] === "/api/work/attachments")?.[1]).toMatchObject({ repoId: "r1", name: "shot.png", mime: "image/png", dataB64: expect.any(String) });
+  });
+
   it("files the item in the chosen repository with the fast lane when asked", async () => {
     vi.mocked(api.post).mockResolvedValue({ ok: true, number: 98, htmlUrl: "https://github.com/x", repo: "genai-jerry/beacon-api" });
     renderAt("/work/new", <NewWorkPage />);
