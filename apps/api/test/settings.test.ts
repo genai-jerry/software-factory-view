@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, decryptSecret, encryptSecret, loadConfig } from "@console/core";
-import { auditLog, estates, githubAppConfig, issues, memberships, orgs, orchestratorSecrets, reconcileRuns, repos, sessions, users, webhookDeliveries } from "@console/db";
+import { apiErrors, auditLog, estates, githubAppConfig, issues, memberships, orgs, orchestratorSecrets, reconcileRuns, repos, sessions, users, webhookDeliveries } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
@@ -565,5 +565,21 @@ describe("org branch defaults", () => {
       payload: { stagingBranch: "integration" },
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("GET /api/ops/errors", () => {
+  it("serves the recorded route errors to the App owner, newest first, and nobody else", async () => {
+    const d = deps.dbh.db;
+    await d.insert(apiErrors).values([
+      { method: "GET", path: "/api/epics/e1/gate", status: 500, name: "Error", message: "Unsupported state or unable to authenticate data", at: new Date("2026-11-01T01:20:00Z") },
+      { method: "GET", path: "/api/epics/e1/artifact?path=x", status: 500, name: "Error", message: "boom", at: new Date("2026-11-01T01:21:00Z") },
+    ]);
+    const denied = await app.inject({ method: "GET", url: "/api/ops/errors", headers: { cookie: memberCookie } });
+    expect(denied.statusCode).toBe(403);
+    const res = await app.inject({ method: "GET", url: "/api/ops/errors", headers: { cookie: ownerCookie } });
+    expect(res.statusCode).toBe(200);
+    const { errors } = res.json() as { errors: Array<{ path: string; message: string }> };
+    expect(errors.map((e) => e.message)).toEqual(["boom", "Unsupported state or unable to authenticate data"]);
   });
 });

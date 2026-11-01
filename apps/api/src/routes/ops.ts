@@ -1,4 +1,4 @@
-import { estates, reconcileRuns, webhookDeliveries } from "@console/db";
+import { apiErrors, estates, reconcileRuns, webhookDeliveries } from "@console/db";
 import { asc, desc, eq, isNull, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { setupAccess } from "../setup.js";
@@ -109,5 +109,18 @@ export function registerOpsRoutes(app: FastifyInstance, deps: AppDeps): void {
       queued++;
     }
     return { ok: true, queued, pending: pending.length };
+  });
+
+  /**
+   * The last unhandled route errors (newest first). Container logs vanish
+   * with the container on every deploy; these rows do not, so a 500 seen
+   * minutes before a deploy can still be read afterwards.
+   */
+  app.get<{ Querystring: { limit?: string } }>("/api/ops/errors", async (req, reply) => {
+    const { allowed, ctx } = await setupAccess(deps, req);
+    if (!allowed || !ctx) return reply.code(403).send({ error: "only the GitHub App owner can view API errors" });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const rows = await db.select().from(apiErrors).orderBy(desc(apiErrors.at)).limit(limit);
+    return { errors: rows };
   });
 }
