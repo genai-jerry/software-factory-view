@@ -11,6 +11,7 @@ import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
 import { PageErrorBoundary } from "./ErrorBoundary.js";
+import { RunsBadge } from "./RunsBadge.js";
 import { UsageBadge } from "./UsageBadge.js";
 
 export interface HaltState {
@@ -62,6 +63,7 @@ export function Shell({
           </NavLink>
           <FocusControls />
           <span className="topbar-who">
+            <RunsBadge />
             <UsageBadge />
             {me.avatarUrl && <img src={me.avatarUrl} alt="" width={28} height={28} />}
             <span className="muted">@{me.login}</span>

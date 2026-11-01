@@ -1347,3 +1347,26 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .open-questions .ack { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
 .open-questions .ack input { width: auto; margin: 0; }
 .tc-page h1 .tc-id { margin-right: 0.4rem; }
+
+/* Header: what the factory is doing right now, one click away on every page. */
+.runs-badge { position: relative; }
+.runs-pill {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.85rem;
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.runs-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.runs-pill.live { color: var(--text); border-color: var(--accent, #2b6cb0); }
+.runs-pill.live .dot { background: var(--accent, #2b6cb0); animation: runs-pulse 1.6s ease-in-out infinite; }
+@keyframes runs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.runs-pop {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 30; min-width: 20rem; max-width: 28rem;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); padding: 0.75rem 0.9rem;
+}
+.runs-pop h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.runs-pop ul { list-style: none; margin: 0; padding: 0; }
+.runs-pop li { padding: 0.3rem 0; border-top: 1px solid var(--border); }
+.runs-pop li:first-child { border-top: 0; }
+.runs-pop p { margin: 0.5rem 0 0; }
+@media (prefers-reduced-motion: reduce) { .runs-pill.live .dot { animation: none; } }
