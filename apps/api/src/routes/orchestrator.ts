@@ -9,8 +9,8 @@ import {
   postOrchestratorGitHubEvent,
   type GhIssue,
 } from "@console/core";
-import { auditLog, estates, orgs } from "@console/db";
-import { eq } from "drizzle-orm";
+import { auditLog, estates, orgs, repos, shapeAttachments, shapeConversations, workAttachments } from "@console/db";
+import { and, desc, eq, like } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
@@ -95,6 +95,60 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     } catch (err) {
       return reply.code(502).send({ error: (err as Error).message });
     }
+  });
+
+  /** The orchestrator's credential: the dispatch token it was given, as on the token route. */
+  function orchestratorAuthorised(authorization: string | undefined): boolean {
+    const expected = deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN.trim();
+    return Boolean(expected) && authorization === `Bearer ${expected}`;
+  }
+
+  /**
+   * The images people attached to an issue in the Compass — from Add work
+   * and from Shape — for the orchestrator to fetch into a role's run so the
+   * agent can view them. GitHub never had the bytes; the links in the issue
+   * body need a Compass sign-in, which an agent does not have. Newest first,
+   * at most twelve.
+   */
+  app.get<{ Querystring: { repo?: string; issue?: string } }>("/api/orchestrator/attachments", async (req, reply) => {
+    if (!orchestratorAuthorised(req.headers.authorization)) return reply.code(401).send({ error: "dispatch token required" });
+    const fullName = (req.query.repo ?? "").trim();
+    const issue = Number(req.query.issue);
+    if (!fullName || !Number.isInteger(issue) || issue < 1) return reply.code(400).send({ error: "repo and issue are required" });
+    const repo = (await deps.dbh.db.select({ id: repos.id }).from(repos).where(eq(repos.fullName, fullName)).limit(1))[0];
+    if (!repo) return reply.code(404).send({ error: "unknown repository" });
+    const suffix = `%/issues/${issue}`;
+    const work = await deps.dbh.db
+      .select({ id: workAttachments.id, name: workAttachments.name, mime: workAttachments.mime, size: workAttachments.size, createdAt: workAttachments.createdAt })
+      .from(workAttachments)
+      .where(and(eq(workAttachments.repoId, repo.id), like(workAttachments.issueUrl, suffix)));
+    const shape = await deps.dbh.db
+      .select({ id: shapeAttachments.id, name: shapeAttachments.name, mime: shapeAttachments.mime, size: shapeAttachments.size, createdAt: shapeAttachments.createdAt })
+      .from(shapeAttachments)
+      .innerJoin(shapeConversations, eq(shapeConversations.id, shapeAttachments.conversationId))
+      .where(and(eq(shapeConversations.repoId, repo.id), like(shapeConversations.issueUrl, suffix)))
+      .orderBy(desc(shapeAttachments.createdAt));
+    const all = [...work.map((a) => ({ ...a, source: "work" as const })), ...shape.map((a) => ({ ...a, source: "shape" as const }))]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 12);
+    return {
+      attachments: all.map((a) => ({ id: a.id, source: a.source, name: a.name, mime: a.mime, size: a.size, url: `/api/orchestrator/attachments/${a.source}/${a.id}` })),
+    };
+  });
+
+  app.get<{ Params: { source: string; id: string } }>("/api/orchestrator/attachments/:source/:id", async (req, reply) => {
+    if (!orchestratorAuthorised(req.headers.authorization)) return reply.code(401).send({ error: "dispatch token required" });
+    const { source, id } = req.params;
+    const row =
+      source === "work"
+        ? (await deps.dbh.db.select({ mime: workAttachments.mime, bytesB64: workAttachments.bytesB64 }).from(workAttachments).where(eq(workAttachments.id, id)).limit(1))[0]
+        : source === "shape"
+          ? (await deps.dbh.db.select({ mime: shapeAttachments.mime, bytesB64: shapeAttachments.bytesB64 }).from(shapeAttachments).where(eq(shapeAttachments.id, id)).limit(1))[0]
+          : undefined;
+    if (!row) return reply.code(404).send({ error: "attachment not found" });
+    reply.header("content-type", row.mime);
+    reply.header("cache-control", "private, max-age=86400");
+    return reply.send(Buffer.from(row.bytesB64, "base64"));
   });
 
   /**
