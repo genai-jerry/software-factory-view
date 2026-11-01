@@ -110,21 +110,63 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
         <h2 id="how">How it got here</h2>
         {timeline.data?.events.filter((e) => e.type === "state").length === 0 && <p className="muted">No moves recorded yet.</p>}
         <ol className="rel-history">
-          {timeline.data?.events
-            .filter((e) => e.type === "state")
-            .slice(0, 10)
-            .reverse()
-            .map((e, i) => (
-              <li key={i}>
-                <span className="muted">{new Date(e.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>{" "}
-                {e.detail}
-                {e.actor && <span className="muted"> · {e.actor}</span>}
-              </li>
-            ))}
+          {historyLines(timeline.data?.events ?? []).map((e, i) => (
+            <li key={i}>
+              <span className="muted">{new Date(e.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span> {e.text}
+              <span className="muted"> · {e.who}</span>
+            </li>
+          ))}
         </ol>
       </section>
     </>
   );
+}
+
+/** What a state move means, in the reader's words; null for a move not worth a line. */
+const MOVE_WORDS: Record<string, string> = {
+  "factory:intake": "Added",
+  "factory:spec-ready": "The plan was written",
+  "factory:spec-approved": "The plan was approved",
+  "factory:planned": "Broken into tasks",
+  "factory:design-ready": "The design was written",
+  "factory:design-approved": "The design was approved; building started",
+  "factory:manual-test": "A test case became ready to run",
+  "factory:test-passed": "A test case passed",
+  "factory:test-failed": "A test case failed",
+  "factory:test-skipped": "A test case was skipped",
+  "factory:bug-open": "A bug was reported",
+  "factory:bug-retest": "A bug fix is ready to re-test",
+  "factory:bug-verified": "A bug fix was confirmed",
+  "factory:epic-ready": "Built; waiting for the release to staging",
+  "factory:in-staging": "Released to staging",
+  "factory:deployed": "Shipped to production",
+  "factory:blocked": "Stopped with a question",
+};
+
+const BOT = /\[bot\]$|^github-actions/;
+
+/**
+ * The epic's moves as sentences, oldest first, at most ten: only moves into a
+ * state (leaving one says nothing on its own), consecutive repeats folded
+ * into one line with a count, and a bot named as the factory.
+ */
+export function historyLines(events: TimelineEvent[]): Array<{ at: string; text: string; who: string }> {
+  const out: Array<{ at: string; text: string; who: string; n: number }> = [];
+  for (const e of events) {
+    if (e.type !== "state") continue;
+    const state = e.detail.match(/^→\s*(factory:[\w-]+)/)?.[1];
+    if (!state) continue;
+    const text = MOVE_WORDS[state] ?? "Moved on";
+    const who = !e.actor || BOT.test(e.actor) ? "the factory" : e.actor;
+    const prev = out[out.length - 1];
+    if (prev && prev.text === text && prev.who === who) {
+      prev.n += 1;
+      continue;
+    }
+    out.push({ at: e.at, text, who, n: 1 });
+    if (out.length >= 10) break;
+  }
+  return out.reverse().map(({ at, text, who, n }) => ({ at, text: n > 1 ? `${text} (${n} times)` : text, who }));
 }
 
 /** The first prose paragraphs of a proposal, before any heading past the title. */
@@ -144,7 +186,8 @@ function Summary({ markdown }: { markdown: string }) {
       if (paras.length >= 3) break;
       continue;
     }
-    if (line.startsWith("|") || line.startsWith("- ") || line.startsWith("* ") || /^\d+\./.test(line)) continue;
+    // Bookkeeping lines such as `Epic: owner/repo#35` are links, not a summary.
+    if (line.startsWith("|") || line.startsWith("- ") || line.startsWith("* ") || /^\d+\./.test(line) || /^\w[\w ]*:\s*\S*#\d+\s*$/.test(line)) continue;
     buf.push(line);
   }
   if (buf.length && paras.length < 3) paras.push(buf.join(" "));
