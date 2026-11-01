@@ -131,6 +131,21 @@ describe("buildWork", () => {
     expect(lists.counts.working).toBe(1);
   });
 
+  it("treats a run on the epic itself as the factory working, not as a decision still pending", () => {
+    // Jerry approved GS; the Release Manager is live on the epic while the
+    // label still reads epic-ready, so the gate entry still exists.
+    const gate = entry({ kind: "gate", rank: 1, epicId: "e1", state: "factory:epic-ready", link: "/epics/e1?tab=gate" });
+    const running: RunningItem[] = [
+      { issueId: "e1", number: 36, title: "Bug : Check issue and find a fix", repo: "genai-jerry/beacon-api", kind: "epic", role: "release", epicId: "e1", epicNumber: 36, epicTitle: "Bug : Check issue and find a fix" },
+    ];
+    const lists = buildWork([card({ state: "factory:epic-ready" })], [gate], running);
+    expect(lists.needsDecision).toHaveLength(0);
+    expect(lists.working).toHaveLength(1);
+    expect(lists.working[0]!.pointer).toBe("Being released to staging now.");
+    expect(lists.working[0]!.who).toBe("running now");
+    expect(lists.counts.working).toBe(1);
+  });
+
   it("counts a gate that waits on someone else, not on me", () => {
     const lists = buildWork([card({ state: "factory:spec-ready" })], [], []);
     expect(lists.working[0]!.who).toBe("Someone else decides");

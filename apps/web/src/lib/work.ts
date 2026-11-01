@@ -173,6 +173,7 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
       return `Tests are waiting on someone else. ${testLine(tasks)}`.trim();
     case "release":
       if (card.state === "factory:deployed") return "In production and soaking.";
+      if (live && live.kind === "epic") return live.role === "release" ? "Being released to staging now." : now;
       return "Waiting on someone else to release it.";
     default:
       if (now) return now;
@@ -226,6 +227,9 @@ function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): strin
     const verb = { decide: "decide", answer: "answer", run: "run the tests", start: "start it", release: "release", ship: "ship" }[ask];
     return `You ${verb}`;
   }
+  // A run on the epic itself is the factory acting on the gate; nobody
+  // decides anything while it runs.
+  if (running.some((r) => r.kind === "epic")) return "running now";
   if (DECISION_STATES.has(card.state ?? "")) return "Someone else decides";
   if (stageOf(card.state, card.tasks) === "test") return "Someone else runs the tests";
   if (running.length > 0) return "running now";
@@ -272,7 +276,12 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     const entries = byEpic.get(card.epicId) ?? [];
     const live = runningByEpic.get(card.epicId) ?? [];
     const stage = stageOf(card.state, card.tasks);
-    const picked = askOf(entries);
+    // A run on the epic itself — the Release Manager after a GS approval,
+    // a planner after a spec approval — is the factory acting on the very
+    // decision the gate entry still asks for (the label flips only when the
+    // run finishes). Nothing to decide while it runs: the item is working.
+    const epicRun = live.find((r) => r.kind === "epic") ?? null;
+    const picked = epicRun ? null : askOf(entries);
     const ask = picked?.ask ?? null;
     const pointer = picked ? pointerFor(picked.ask, picked.entry, card, entries) : workingLine(stage, card, live);
     const who = whoFor(ask, card, live);
