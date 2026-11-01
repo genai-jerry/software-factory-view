@@ -736,6 +736,14 @@ export interface FactoryUsage {
 }
 
 /* Shape — a chat that turns an idea into work (GET/POST /api/shape…). */
+/** The epic a Shape idea is about, when it is about one. */
+export interface ShapeEpicRef {
+  id: string;
+  number: number;
+  title: string;
+  state: string | null;
+}
+
 export interface ShapeConversationSummary {
   id: string;
   title: string;
@@ -744,6 +752,7 @@ export interface ShapeConversationSummary {
   updatedAt: string;
   hasSpec: boolean;
   issueUrl: string | null;
+  epic?: ShapeEpicRef | null;
 }
 
 export interface ShapeAttachment {
@@ -773,6 +782,8 @@ export interface ShapeConversation {
     specUpdatedAt: string | null;
     issueUrl: string | null;
     issueId: string | null;
+    /** Set when the idea is about an epic: it reads the epic's branch and documents. */
+    epic?: ShapeEpicRef | null;
   };
   messages: ShapeMessage[];
 }

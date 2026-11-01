@@ -65,9 +65,15 @@ beforeEach(() => {
     if (path === "/api/shape") return { conversations: summaries };
     if (path === "/api/work/targets") return targets;
     if (path === "/api/shape/c1") return conversation;
+    if (path.startsWith("/api/board")) return { columns: [], cards };
     return {};
   });
 });
+
+const cards = [
+  { epicId: "e35", number: 35, title: "Day-wise calling performance", repo: "genai-jerry/beacon-api", estateId: "s", state: "factory:design-approved", open: true, daysInState: 1, blocked: false, expedited: false, tasks: {} },
+  { epicId: "t62", number: 62, title: "task(35): compute counts", repo: "genai-jerry/beacon-api", estateId: "s", state: "factory:ready", open: true, daysInState: 1, blocked: false, expedited: false, tasks: {} },
+];
 
 describe("ShapePage", () => {
   it("lists the person's ideas and opens a new one in the chosen repository", async () => {
@@ -147,5 +153,35 @@ describe("ShapePage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: true }));
     const banner = await screen.findByRole("status");
     expect(within(banner).getByRole("link", { name: "Day-wise calling panel" })).toHaveAttribute("href", "/work/e120");
+  });
+
+  it("starts an idea about an epic, and says so at the top of the conversation", async () => {
+    vi.mocked(api.post).mockResolvedValue({ id: "c35" });
+    renderAt("/shape");
+    await screen.findByRole("link", { name: /Day-wise calling panel/ });
+    await userEvent.click(screen.getByRole("radio", { name: "About an epic" }));
+    const pick = (await screen.findByLabelText("Which epic")) as HTMLSelectElement;
+    // Only epics are offered, never their tasks.
+    expect(Array.from(pick.options).map((o) => o.textContent)).toEqual(["Day-wise calling performance"]);
+    await userEvent.click(screen.getByRole("button", { name: "New idea" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { epicId: "e35" }));
+  });
+
+  it("shows which epic a conversation is about and offers the epic's questions", async () => {
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: summaries };
+      if (p === "/api/work/targets") return targets;
+      if (p === "/api/shape/c1")
+        return {
+          conversation: { ...conversation.conversation, epic: { id: "e35", number: 35, title: "Day-wise calling performance", state: "factory:design-approved" } },
+          messages: [],
+        };
+      return {};
+    });
+    renderAt("/shape/c1");
+    expect(await screen.findByRole("link", { name: "Day-wise calling performance" })).toHaveAttribute("href", "/work/e35");
+    expect(screen.getByText(/reads its branch and documents/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "What is left before this ships?" })).toBeInTheDocument();
+    expect(screen.queryByText(/reads the latest main/)).toBeNull();
   });
 });

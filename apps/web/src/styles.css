@@ -1426,3 +1426,9 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
   .shape-list, .shape-spec { position: static; }
   .shape-body.with-spec { grid-template-columns: 1fr; }
 }
+.shape-start-pick { display: flex; gap: 0.4rem; margin: 0.25rem 0 0.5rem; }
+.shape-start-pick label { flex: 1; display: flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
+.shape-start-pick label.on { border-color: var(--accent, #2b6cb0); color: var(--text); }
+.shape-start-pick input { width: auto; margin: 0; }
+.shape-hint { font-size: 0.8rem; margin: 0 0 0.5rem; }
+.shape-conv-epic { display: block; font-size: 0.8rem; }

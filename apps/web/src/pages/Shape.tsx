@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
-import type { ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
+import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
 
 /**
  * Shape — a chat that turns an idea into work. A person picks the repository
@@ -36,6 +36,15 @@ const SUGGESTIONS = [
   "Where would a new CRM status field be stored?",
 ];
 
+const EPIC_SUGGESTIONS = ["What is left before this ships?", "Which tests are still to run?", "Visualise the change this epic makes"];
+
+/** Open epics a conversation can be about: the requirement issues on the board, not their tasks. */
+function openEpics(cards: BoardCard[]): BoardCard[] {
+  return cards
+    .filter((c) => c.open && !/^(?:task|test|bug)\(\d+\)/i.test(c.title) && c.title !== "Factory: repo profile" && c.state !== "factory:deployed")
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -62,17 +71,23 @@ export function ShapePage() {
   const list = useQuery({ queryKey: ["shape"], queryFn: () => api.get<{ conversations: ShapeConversationSummary[] }>("/api/shape") });
   const targets = useQuery({ queryKey: ["work-targets"], queryFn: () => api.get<{ targets: Target[] }>("/api/work/targets") });
   const focus = useFocus();
+  const board = useQuery({ queryKey: ["board", focus.key], queryFn: () => api.get<{ cards: BoardCard[] }>(`/api/board${focus.qs}`) });
   const enabled = (targets.data?.targets ?? []).filter((t) => t.factoryEnabled);
   const [repoId, setRepoId] = useState("");
+  const [start, setStart] = useState<"fresh" | "epic">("fresh");
+  const [epicId, setEpicId] = useState("");
   const chosen = repoId || (enabled.some((t) => t.id === focus.repo) ? focus.repo : "") || enabled[0]?.id || "";
+  const epics = openEpics(board.data?.cards ?? []);
+  const chosenEpic = epicId || epics[0]?.epicId || "";
 
   const create = useMutation({
-    mutationFn: () => api.post<{ id: string }>("/api/shape", { repoId: chosen }),
+    mutationFn: () => api.post<{ id: string }>("/api/shape", start === "epic" ? { epicId: chosenEpic } : { repoId: chosen }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["shape"] });
       navigate(`/shape/${r.id}`);
     },
   });
+  const canStart = start === "epic" ? Boolean(chosenEpic) : Boolean(chosen);
 
   const conversations = list.data?.conversations ?? [];
 
@@ -81,25 +96,58 @@ export function ShapePage() {
       <aside className="shape-list card" aria-label="Your ideas">
         <h2>Shape an idea</h2>
         <p className="muted">Talk it through with the factory. It reads the code, draws the screen, then writes the requirement.</p>
-        <label htmlFor="shape-repo" className="muted">
-          Which product
-        </label>
-        {targets.isLoading ? (
-          <p className="muted">Reading the projects…</p>
-        ) : enabled.length === 0 ? (
-          <p className="muted">
-            No repository is set up for the factory yet. <Link to="/onboarding">Finish setup on Onboarding</Link>.
-          </p>
+        <div className="shape-start-pick" role="radiogroup" aria-label="How to start">
+          <label className={start === "fresh" ? "on" : ""}>
+            <input type="radio" name="shape-start" checked={start === "fresh"} onChange={() => setStart("fresh")} /> Start fresh
+          </label>
+          <label className={start === "epic" ? "on" : ""}>
+            <input type="radio" name="shape-start" checked={start === "epic"} onChange={() => setStart("epic")} /> About an epic
+          </label>
+        </div>
+        {start === "fresh" ? (
+          <>
+            <label htmlFor="shape-repo" className="muted">
+              Which product
+            </label>
+            {targets.isLoading ? (
+              <p className="muted">Reading the projects…</p>
+            ) : enabled.length === 0 ? (
+              <p className="muted">
+                No repository is set up for the factory yet. <Link to="/onboarding">Finish setup on Onboarding</Link>.
+              </p>
+            ) : (
+              <select id="shape-repo" value={chosen} onChange={(e) => setRepoId(e.target.value)}>
+                {enabled.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {shortRepo(t.fullName)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="muted shape-hint">Runs against the latest main of every repository in the project.</p>
+          </>
         ) : (
-          <select id="shape-repo" value={chosen} onChange={(e) => setRepoId(e.target.value)}>
-            {enabled.map((t) => (
-              <option key={t.id} value={t.id}>
-                {shortRepo(t.fullName)}
-              </option>
-            ))}
-          </select>
+          <>
+            <label htmlFor="shape-epic" className="muted">
+              Which epic
+            </label>
+            {board.isLoading ? (
+              <p className="muted">Reading the work…</p>
+            ) : epics.length === 0 ? (
+              <p className="muted">No epic is in progress here. Start fresh instead.</p>
+            ) : (
+              <select id="shape-epic" value={chosenEpic} onChange={(e) => setEpicId(e.target.value)}>
+                {epics.map((c) => (
+                  <option key={c.epicId} value={c.epicId}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="muted shape-hint">Reads the epic's branch and its plan, design and tests.</p>
+          </>
         )}
-        <button type="button" className="primary" disabled={!chosen || create.isPending} onClick={() => create.mutate()}>
+        <button type="button" className="primary" disabled={!canStart || create.isPending} onClick={() => create.mutate()}>
           {create.isPending ? "Opening…" : "New idea"}
         </button>
         {create.isError && <p className="decision-failure">{failureText(create.error)}</p>}
@@ -113,6 +161,7 @@ export function ShapePage() {
               <li key={c.id} className={c.id === id ? "current" : ""}>
                 <Link to={`/shape/${c.id}`}>
                   <span className="shape-conv-title">{c.title}</span>
+                  {c.epic && <span className="shape-conv-epic muted">About {c.epic.title}</span>}
                   <span className="shape-conv-meta">
                     <RepoChip fullName={c.repo} />
                     {c.issueUrl ? <span className="stage-chip done">opened</span> : c.hasSpec ? <span className="stage-chip decide">spec</span> : null}
@@ -227,7 +276,9 @@ function Conversation({ id }: { id: string }) {
   if (!q.data?.conversation) return <p className="muted">Loading…</p>;
   const conversation = q.data.conversation;
   const messages = q.data.messages ?? [];
-  const inFactory = Boolean(conversation.issueUrl) || opened !== null;
+  // Once the issue is projected, the idea is about its epic and the chat goes on
+  // (on the epic's branch). Until then there is nothing to talk to yet.
+  const inFactory = (Boolean(conversation.issueUrl) || opened !== null) && !conversation.epic;
   const sendErr = send.error as ApiError | null;
   const noClaude = sendErr?.status === 503;
 
@@ -240,7 +291,14 @@ function Conversation({ id }: { id: string }) {
           </p>
           <h1>{conversation.title}</h1>
           <p className="muted">
-            <RepoChip fullName={conversation.repo} /> · reads the code of {shortRepo(conversation.repo)}
+            <RepoChip fullName={conversation.repo} />
+            {conversation.epic ? (
+              <>
+                {" · "}About <Link to={`/work/${conversation.epic.id}`}>{conversation.epic.title}</Link> · reads its branch and documents
+              </>
+            ) : (
+              <> · reads the latest main of {shortRepo(conversation.repo)} and the project's other repositories</>
+            )}
           </p>
         </div>
         <div className="shape-actions">
@@ -253,7 +311,7 @@ function Conversation({ id }: { id: string }) {
         </div>
       </header>
       {writeSpec.isError && <p className="decision-failure">{failureText(writeSpec.error)}</p>}
-      {(opened || conversation.issueUrl) && (
+      {(opened || conversation.issueUrl) && !conversation.epic && (
         <div className="banner success" role="status">
           Opened as work: {opened?.epicId ? <Link to={`/work/${opened.epicId}`}>{opened.title}</Link> : <a href={opened?.htmlUrl ?? conversation.issueUrl ?? "#"} target="_blank" rel="noreferrer">{opened?.title ?? conversation.title}</a>}. The factory reads it and comes back with a plan.
         </div>
@@ -264,9 +322,11 @@ function Conversation({ id }: { id: string }) {
           <div className="shape-messages">
             {messages.length === 0 && (
               <div className="shape-start">
-                <p className="muted">Ask anything about {shortRepo(conversation.repo)}, or paste a screenshot. Some ways to start:</p>
+                <p className="muted">
+                  {conversation.epic ? `Ask anything about ${conversation.epic.title}, or paste a screenshot. Some ways to start:` : `Ask anything about ${shortRepo(conversation.repo)}, or paste a screenshot. Some ways to start:`}
+                </p>
                 <div className="shape-chips">
-                  {SUGGESTIONS.map((s) => (
+                  {(conversation.epic ? EPIC_SUGGESTIONS : SUGGESTIONS).map((s) => (
                     <button key={s} type="button" className="chip" disabled={send.isPending} onClick={() => send.mutate({ body: s, files: [] })}>
                       {s}
                     </button>
@@ -296,7 +356,7 @@ function Conversation({ id }: { id: string }) {
             </div>
           )}
           {inFactory ? (
-            <p className="muted">This idea is in the factory now. Start a new idea to shape something else.</p>
+            <p className="muted">This idea is in the factory now. The conversation continues here once it has a place in Work.</p>
           ) : (
             <div className="shape-composer">
               {pending.length > 0 && (

@@ -478,7 +478,7 @@ export async function assembleIssueContext(
 }
 
 /** Cached change-folder artifacts for an epic, optionally filtered by kind. */
-async function artifactSources(deps: AppDeps, epicIssueId: string, kinds?: string[]): Promise<InsightSource[]> {
+export async function artifactSources(deps: AppDeps, epicIssueId: string, kinds?: string[]): Promise<InsightSource[]> {
   const { db } = deps.dbh;
   const out: InsightSource[] = [];
   const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epicIssueId)).limit(1))[0];

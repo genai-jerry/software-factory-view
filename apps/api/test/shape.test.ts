@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
+import { artifactCache, changeArtifacts, changes, estates, issues, memberships, orgs, projects, repos, sessions, users } from "@console/db";
+import { eq } from "drizzle-orm";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
@@ -235,7 +236,7 @@ describe("Shape", () => {
   it("says what is missing when the factory has no Claude sign-in", async () => {
     const d = deps.dbh.db;
     const org2 = (await d.insert(orgs).values({ name: "lonely" }).returning())[0]!;
-    const jerry = (await d.select().from(users).where((await import("drizzle-orm")).eq(users.login, "jerry")).limit(1))[0]!;
+    const jerry = (await d.select().from(users).where(eq(users.login, "jerry")).limit(1))[0]!;
     await d.insert(memberships).values({ orgId: org2.id, userId: jerry.id, role: "owner" });
     const estate = (await d.insert(estates).values({ orgId: org2.id, name: "lonely", installationId: 2 }).returning())[0]!;
     const repo = (await d.insert(repos).values({ orgId: org2.id, estateId: estate.id, ghNodeId: "R2", fullName: "lonely/app" }).returning())[0]!;
@@ -245,5 +246,67 @@ describe("Shape", () => {
     expect(res.statusCode).toBe(503);
     expect(res.json().error).toContain("Claude sign-in");
     void issues;
+  });
+});
+
+describe("Shape about an epic, and the project around a fresh idea", () => {
+  it("runs on the epic's branch with its documents in front, and checks the project's other repos out beside it", async () => {
+    const d = deps.dbh.db;
+    const project = (await d.insert(projects).values({ orgId: id.org!, name: "Acme" }).returning())[0]!;
+    await d.update(repos).set({ projectId: project.id, factoryEnabled: true }).where(eq(repos.id, id.repo!));
+    const estate = (await d.select().from(estates).where(eq(estates.orgId, id.org!)).limit(1))[0]!;
+    await d.insert(repos).values({ orgId: id.org!, estateId: estate.id, ghNodeId: "R-web", fullName: "acme/web", projectId: project.id, factoryEnabled: true });
+    await d.insert(repos).values({ orgId: id.org!, estateId: estate.id, ghNodeId: "R-off", fullName: "acme/off", projectId: project.id, factoryEnabled: false });
+    const epic = (
+      await d
+        .insert(issues)
+        .values({ orgId: id.org!, repoId: id.repo!, ghNodeId: "I35", number: 35, title: "Day-wise calling performance", state: "open", kind: "epic", factoryState: "factory:design-approved", ghUpdatedAt: new Date() })
+        .returning()
+    )[0]!;
+    const change = (await d.insert(changes).values({ orgId: id.org!, estateId: estate.id, epicIssueId: epic.id, slug: "35-daywise" }).returning())[0]!;
+    await d.insert(changeArtifacts).values({ orgId: id.org!, changeId: change.id, repoId: id.repo!, kind: "proposal", path: "openspec/changes/35-daywise/proposal.md", latestSha: "abc1234" });
+    await d.insert(artifactCache).values({ orgId: id.org!, repoId: id.repo!, path: "openspec/changes/35-daywise/proposal.md", commitSha: "abc1234", encryptedContent: encryptSecret("## Why\nSetters cannot see the day's bookings.", MASTER_KEY) });
+
+    // About the epic.
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { epicId: epic.id } });
+    expect(created.statusCode).toBe(200);
+    const convId = (created.json() as { id: string }).id;
+    const got = await app.inject({ method: "GET", url: `/api/shape/${convId}`, headers: { cookie: jerryCookie } });
+    expect((got.json() as { conversation: { epic: unknown; repo: string } }).conversation).toMatchObject({
+      repo: "acme/app",
+      epic: { id: epic.id, number: 35, title: "Day-wise calling performance", state: "factory:design-approved" },
+    });
+    const listed = await app.inject({ method: "GET", url: `/api/shape?epicId=${epic.id}`, headers: { cookie: jerryCookie } });
+    expect((listed.json() as { conversations: Array<{ id: string; epic: { number: number } }> }).conversations).toMatchObject([{ id: convId, epic: { number: 35 } }]);
+
+    let calls = stubNetwork("Two tasks are left.");
+    const sent = await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "What is left before this ships?" } });
+    expect(sent.statusCode).toBe(200);
+    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(ask.body).toMatchObject({ branch: "factory/epic-35", mode: "shape", repos: [{ owner: "acme", repo: "web", branch: "factory/epic-35" }] });
+    const context = String(ask.body!.context);
+    expect(context).toContain("The epic's documents:");
+    expect(context).toContain("Setters cannot see the day's bookings.");
+    expect(context.indexOf("The epic's documents:")).toBeLessThan(context.indexOf("(the conversation starts here)"));
+    expect(context).toContain('epic #35, "Day-wise calling performance"');
+
+    // The spec runs on the branch too, with the documents.
+    calls = stubNetwork("## What should be built?\nA change to the epic.");
+    const spec = await app.inject({ method: "POST", url: `/api/shape/${convId}/spec`, headers: headers(jerryCookie), payload: {} });
+    expect(spec.statusCode).toBe(200);
+    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(specAsk.body).toMatchObject({ branch: "factory/epic-35", repos: [{ owner: "acme", repo: "web", branch: "factory/epic-35" }] });
+    expect(String(specAsk.body!.context)).toContain("Setters cannot see the day's bookings.");
+
+    // A fresh idea in the same project: no branch, no documents, the siblings on their default branch.
+    const fresh = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    const freshId = (fresh.json() as { id: string }).id;
+    calls = stubNetwork("From main.");
+    await app.inject({ method: "POST", url: `/api/shape/${freshId}/messages`, headers: headers(jerryCookie), payload: { text: "Where do leads live?" } });
+    const freshAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(freshAsk.body!.branch).toBeUndefined();
+    expect(freshAsk.body!.repos).toEqual([{ owner: "acme", repo: "web", branch: null }]);
+    expect(String(freshAsk.body!.context)).not.toContain("The epic's documents:");
+    expect((await app.inject({ method: "GET", url: `/api/shape/${freshId}`, headers: { cookie: jerryCookie } })).json().conversation.epic).toBeNull();
   });
 });

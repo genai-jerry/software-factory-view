@@ -631,10 +631,12 @@ export const shapeConversations = pgTable(
     specUpdatedAt: timestamp("spec_updated_at", { withTimezone: true }),
     issueId: uuid("issue_id").references(() => issues.id, { onDelete: "set null" }),
     issueUrl: text("issue_url"),
+    /** Set when the conversation is about an epic: the session runs on its branch with its documents in context. */
+    epicIssueId: uuid("epic_issue_id").references(() => issues.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("shape_conversations_user").on(t.userId, t.updatedAt)],
+  (t) => [index("shape_conversations_user").on(t.userId, t.updatedAt), index("shape_conversations_epic").on(t.epicIssueId)],
 );
 
 export const shapeMessages = pgTable(

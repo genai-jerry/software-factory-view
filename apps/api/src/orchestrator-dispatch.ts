@@ -307,6 +307,8 @@ export async function askOrchestrator(
     images?: Array<{ name: string; mime: string; dataB64: string }>;
     /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
     mode?: "ask" | "shape";
+    /** Other repositories checked out beside the primary one, each on `branch` when it exists there, else its default. */
+    repos?: Array<{ owner: string; repo: string; branch: string | null }>;
   },
 ): Promise<{ ok: true; answer: string; model: string; inputTokens: number; outputTokens: number } | OrchestratorProxyError> {
   const dest = orchestratorBase(cfg);
@@ -329,6 +331,7 @@ export async function askOrchestrator(
           ? { images: body.images.map((i) => ({ name: i.name, mime: i.mime, data_b64: i.dataB64 })) }
           : {}),
         ...(body.mode && body.mode !== "ask" ? { mode: body.mode } : {}),
+        ...(body.repos && body.repos.length > 0 ? { repos: body.repos } : {}),
       }),
       signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
     });
