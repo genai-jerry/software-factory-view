@@ -32,6 +32,8 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_CONTEXT_CHARS = 50_000;
 /** The whole context the orchestrator receives: documents first, then the transcript. */
 const MAX_TOTAL_CONTEXT = 60_000;
+/** How long a Claude session is resumed before the next message starts cold again. */
+const SESSION_TTL_MS = 24 * 60 * 60_000;
 const MAX_DOC_CHARS = 6_000;
 const MAX_SIBLINGS = 8;
 const MAX_MOCK_CHARS = 200_000;
@@ -342,22 +344,37 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       ? `Repository: ${conv.repoFullName}. This is a Shape conversation about epic #${epic.number}, "${epic.title}" (${epic.state ?? "no state"}): the person is discussing work the factory has in progress. Your checkout is the epic's branch where it exists.`
       : `Repository: ${conv.repoFullName}. This is a Shape conversation: the person is shaping an idea for this product. Your checkout is the latest default branch.`;
     const branch = branchOf(epic);
+    // A session less than a day old is resumed: the model keeps what it
+    // already read and the transcript is not sent again. Older than that,
+    // or never opened, the message starts cold with the full grounding.
+    const session = conv.askSession && conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? conv.askSession : null;
     const got = await askOrchestrator(deps.cfg, {
       owner,
       repo: name,
       question: text || "Look at the attached image and say what you see.",
-      context: await grounding(conv, epic, earlier, header),
+      context: session ? header : await grounding(conv, epic, earlier, header),
       instructions: SHAPE_INSTRUCTIONS,
       claudeCodeOauthToken: claudeToken,
       mode: "shape",
       images: attachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.bytesB64 })),
       ...(branch ? { branch } : {}),
       repos: await siblings(conv.repoId, conv.projectId, branch),
+      conversation: conv.id,
+      ...(session ? { session } : {}),
     });
     if (!("ok" in got)) {
       // The question stays in the thread; the person can send it again.
       return reply.code(got.status === 429 ? 429 : got.status === 502 ? 502 : 502).send({ error: got.error });
     }
+    // The session to resume next time: the one the orchestrator reports
+    // (new on a cold start, the same when it resumed). An orchestrator that
+    // reports none — or one that could not resume and opened no new session
+    // — leaves the next message to start cold with the full grounding.
+    const nextSession = got.session ?? (got.resumed === true ? session : null);
+    await db
+      .update(shapeConversations)
+      .set(nextSession ? { askSession: nextSession, askSessionAt: new Date() } : { askSession: null, askSessionAt: null })
+      .where(eq(shapeConversations.id, conv.id));
     const assistant = (
       await db
         .insert(shapeMessages)
@@ -409,6 +426,9 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       mode: "shape",
       ...(branch ? { branch } : {}),
       repos: await siblings(conv.repoId, conv.projectId, branch),
+      // The same workspace, so the checkout is reused; a fresh session,
+      // because the spec is a different instruction with the full context.
+      conversation: conv.id,
     });
     if (!("ok" in got)) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
     const spec = got.answer.replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i, "$1").trim();

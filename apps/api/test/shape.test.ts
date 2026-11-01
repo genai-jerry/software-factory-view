@@ -86,7 +86,7 @@ beforeAll(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 /** Answer the orchestrator's /ask and GitHub's issue creation; record every call. */
-function stubNetwork(answer: string) {
+function stubNetwork(answer: string, ask: { session?: string; resumed?: boolean } = {}) {
   const calls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
   vi.stubGlobal(
     "fetch",
@@ -94,7 +94,7 @@ function stubNetwork(answer: string) {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
       calls.push({ url: String(url), body });
       if (String(url) === `${ORCH}/ask`) {
-        return new Response(JSON.stringify({ answer, model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 20 } }), {
+        return new Response(JSON.stringify({ answer, model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 20 }, ...ask }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -174,13 +174,16 @@ describe("Shape", () => {
     expect(bytes.rawPayload.length).toBe(12);
     expect((await app.inject({ method: "GET", url: attachment.url, headers: { cookie: otherCookie } })).statusCode).toBe(404);
 
-    // Second message carries the earlier turns as context.
+    // Second message: the orchestrator reported no session, so it starts
+    // cold again and carries the earlier turns as context.
     calls = stubNetwork("Where it would live: the leads list component.");
     await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "Where would that live in the code?" } });
     const second = calls.find((c) => c.url === `${ORCH}/ask`)!;
     expect(String(second.body!.context)).toContain("Person: Show the calling status on the leads page");
     expect(String(second.body!.context)).toContain("You: I see the leads table.");
     expect(second.body!.images).toBeUndefined();
+    expect(second.body!.session).toBeUndefined();
+    expect(second.body!.conversation).toBe(convId);
 
     // The requirement.
     calls = stubNetwork("## What should be built?\nA calling status column.\n\n## Why / who it is for\nSetters.\n\n## Context / constraints\nNone.\n\n## Out of scope\nNone.\n\n## Open questions\nNone\n\n## Mockups\nMock 1 — the leads page with the column.");
@@ -308,5 +311,57 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
     expect(freshAsk.body!.repos).toEqual([{ owner: "acme", repo: "web", branch: null }]);
     expect(String(freshAsk.body!.context)).not.toContain("The epic's documents:");
     expect((await app.inject({ method: "GET", url: `/api/shape/${freshId}`, headers: { cookie: jerryCookie } })).json().conversation.epic).toBeNull();
+  });
+});
+
+describe("Shape resumes its Claude session", () => {
+  it("sends the session back and only the header, and starts cold again when the orchestrator could not resume", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    const convId = (created.json() as { id: string }).id;
+
+    // First message: no session yet, full grounding; the orchestrator opens s1.
+    let calls = stubNetwork("The leads table has no status column.", { session: "s1", resumed: false });
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "What does the leads page show?" } });
+    const first = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(first.body!.session).toBeUndefined();
+    expect(first.body!.conversation).toBe(convId);
+    expect(String(first.body!.context)).toContain("the conversation starts here");
+
+    // Second message: s1 is resumed, so only the header travels.
+    calls = stubNetwork("It would go beside the name.", { session: "s1", resumed: true });
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "Where would a status column go?" } });
+    const second = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(second.body!.session).toBe("s1");
+    expect(String(second.body!.context)).toContain("Repository: acme/app");
+    expect(String(second.body!.context)).not.toContain("Person:");
+    expect(String(second.body!.context)).not.toContain("What does the leads page show?");
+
+    // Third message: the workspace was gone, the orchestrator started cold
+    // and opened s2 — the next message resumes s2 and carries no transcript.
+    calls = stubNetwork("Starting again: the leads table has no status column.", { session: "s2", resumed: false });
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "And the filters?" } });
+    const third = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(third.body!.session).toBe("s1");
+    calls = stubNetwork("Filters stay.", { session: "s2", resumed: true });
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "Thanks." } });
+    const fourth = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(fourth.body!.session).toBe("s2");
+
+    // An orchestrator that reports no session at all leaves the next message cold with the transcript.
+    calls = stubNetwork("No session here.");
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "Once more." } });
+    calls = stubNetwork("Cold again.");
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text: "Still here?" } });
+    const sixth = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(sixth.body!.session).toBeUndefined();
+    expect(String(sixth.body!.context)).toContain("Person: What does the leads page show?");
+
+    // The spec reuses the workspace but never a session.
+    calls = stubNetwork("## What should be built?\nA column.\n\n## Why / who it is for\nSetters.\n\n## Context / constraints\nNone.\n\n## Out of scope\nNone.\n\n## Open questions\nNone\n\n## Mockups\nNone");
+    await app.inject({ method: "POST", url: `/api/shape/${convId}/spec`, headers: headers(jerryCookie), payload: {} });
+    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(specAsk.body!.conversation).toBe(convId);
+    expect(specAsk.body!.session).toBeUndefined();
+    expect(String(specAsk.body!.context)).toContain("Person: What does the leads page show?");
   });
 });

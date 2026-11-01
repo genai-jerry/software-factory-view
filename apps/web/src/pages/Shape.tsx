@@ -339,7 +339,9 @@ function Conversation({ id }: { id: string }) {
             ))}
             {send.isPending && (
               <div className="shape-msg assistant" aria-live="polite">
-                <div className="shape-bubble muted">Thinking… the factory is reading the code.</div>
+                <div className="shape-bubble muted">
+                  {messages.some((m) => m.role === "assistant") ? "Thinking…" : "Thinking… the factory is reading the code. The first answer takes longer."}
+                </div>
               </div>
             )}
             <div ref={endRef} />

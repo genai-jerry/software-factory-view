@@ -633,6 +633,9 @@ export const shapeConversations = pgTable(
     issueUrl: text("issue_url"),
     /** Set when the conversation is about an epic: the session runs on its branch with its documents in context. */
     epicIssueId: uuid("epic_issue_id").references(() => issues.id, { onDelete: "set null" }),
+    /** The orchestrator's Claude session for this conversation, resumed on the next message so the model keeps what it read. */
+    askSession: text("ask_session"),
+    askSessionAt: timestamp("ask_session_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
