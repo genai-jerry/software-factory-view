@@ -192,4 +192,17 @@ describe("BuildBoard", () => {
     expect(screen.getByText("1 of 4 built")).toBeInTheDocument();
     expect(screen.getByText("Reviewer on task 5.")).toBeInTheDocument();
   });
+
+  it("lists every question when the role asked more than one", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.includes("/peek"))
+        return { blocked: { since: null, question: "Allow one more round, or take the fix yourself?", questions: ["Allow one more round, or take the fix yourself?", "Keep the move message?"] } };
+      return {};
+    });
+    renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, tasks)} />);
+    const card = await screen.findByRole("region", { name: "Needs an answer" });
+    const list = await within(card).findByRole("list", { name: "Questions for you" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Allow one more round, or take the fix yourself?", "Keep the move message?"]);
+    expect(within(card).getByText(/answer the factory's questions\./)).toBeInTheDocument();
+  });
 });

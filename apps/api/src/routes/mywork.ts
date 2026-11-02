@@ -317,10 +317,10 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
         .limit(1)
     )[0];
 
-    let blocked: { since: Date | null; question: string | null } | null = null;
+    let blocked: { since: Date | null; question: string | null; questions: string[] } | null = null;
     if (issue.factoryState === "factory:blocked") {
       const meta = (await loadBlockedMeta(deps, [issue.id])).get(issue.id);
-      blocked = { since: meta?.since ?? null, question: meta?.question ?? null };
+      blocked = { since: meta?.since ?? null, question: meta?.question ?? null, questions: meta?.questions ?? [] };
     }
 
     // Open PRs tied to this issue by the factory's branch naming — for a

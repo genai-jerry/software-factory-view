@@ -113,6 +113,40 @@ beforeAll(async () => {
     ghUpdatedAt: new Date("2026-08-08T00:01:00Z"),
   });
 
+  // #15: blocked under FACTORY.md §1a rule 13 — the role's comment ends with a
+  // `Questions for you:` list and the hand-off notice repeats it; the first
+  // line of neither is the question.
+  const blockedListed = await mkIssue({ number: 21, title: "listed blocked", factoryState: "factory:blocked", assignees: ["alice"] });
+  await d.insert(issueStateHistory).values([
+    { orgId: org.id, issueId: blockedListed.id, toState: "factory:in-review", occurredAt: new Date("2026-08-05T00:00:00Z"), sourceEventId: "e3" },
+    { orgId: org.id, issueId: blockedListed.id, toState: "factory:blocked", occurredAt: new Date("2026-08-08T00:00:00Z"), sourceEventId: "e4" },
+  ]);
+  await d.insert(comments).values([
+    {
+      orgId: org.id,
+      issueId: blockedListed.id,
+      ghNodeId: "C2",
+      ghId: 2,
+      author: "bot",
+      body: "**Round 3 blocked: a lead who cancels is told their appointment moved.**\n- The lead moves, then cancels.\n\n**Questions for you:**\n1. Allow one more round, or take the fix yourself?\n2. Keep the move message?\n\n<details><summary>Factory details</summary>\n\nWhy is the cap spent?\n</details>\n<!-- factory-agent -->",
+      isAgent: true,
+      ghCreatedAt: new Date("2026-08-08T00:01:00Z"),
+      ghUpdatedAt: new Date("2026-08-08T00:01:00Z"),
+    },
+    {
+      orgId: org.id,
+      issueId: blockedListed.id,
+      ghNodeId: "C3",
+      ghId: 3,
+      author: "bot",
+      body: "**Reviewer** finished — #21 is now at `factory:blocked`.\n\n**Next: any owner.** Its questions are listed below.\n\n**Questions for you:**\n1. Allow one more round, or take the fix yourself?\n2. Keep the move message?\n\n<!-- factory-next:factory:blocked -->\n<!-- factory-agent -->",
+      isAgent: true,
+      ghCreatedAt: new Date("2026-08-08T00:01:30Z"),
+      ghUpdatedAt: new Date("2026-08-08T00:01:30Z"),
+    },
+  ]);
+  id.blockedListed = blockedListed.id;
+
   // #11: blocked, nobody's — broadcast, but older than #10.
   await mkIssue({ number: 11, title: "orphan blocked", factoryState: "factory:blocked", author: "someone", ghUpdatedAt: new Date("2026-07-01T00:00:00Z") });
 
@@ -250,7 +284,7 @@ describe("/api/my-work", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { mine: Array<Record<string, unknown>>; waitingOn: Array<Record<string, unknown>> };
     const mineNumbers = body.mine.map((m) => m.number).sort();
-    expect(mineNumbers).toEqual([10, 12, 13]); // assigned, authored, assigned — not #11, not foreign
+    expect(mineNumbers).toEqual([10, 12, 13, 21]); // assigned, authored, assigned — not #11, not foreign
     const epicRow = body.mine.find((m) => m.number === 12)!;
     expect(epicRow.phase).toBe("specifying");
     expect(epicRow.whyMine).toBe("author");
@@ -273,8 +307,19 @@ describe("/api/issues/:id/peek", () => {
     expect((body["deps"] as { blockedBy: unknown[] }).blockedBy).toHaveLength(1);
 
     const blocked = await app.inject({ method: "GET", url: `/api/issues/${id.blockedMine}/peek`, headers: { cookie } });
-    const b = blocked.json() as { blocked: { question: string } };
+    const b = blocked.json() as { blocked: { question: string; questions: string[] } };
     expect(b.blocked.question).toBe("Which currency should refunds use?");
+    expect(b.blocked.questions).toEqual(["Which currency should refunds use?"]);
+  });
+
+  it("reads the Questions for you list, not the first line of the hand-off notice", async () => {
+    const res = await app.inject({ method: "GET", url: `/api/issues/${id.blockedListed}/peek`, headers: { cookie } });
+    const b = res.json() as { blocked: { question: string; questions: string[] } };
+    expect(b.blocked.questions).toEqual(["Allow one more round, or take the fix yourself?", "Keep the move message?"]);
+    expect(b.blocked.question).toBe("Allow one more round, or take the fix yourself?");
+    const attention = await app.inject({ method: "GET", url: "/api/attention", headers: { cookie } });
+    const entry = (attention.json() as { entries: Array<{ title: string; question: string | null }> }).entries.find((e) => e.title === "#21 listed blocked");
+    expect(entry?.question).toBe("Allow one more round, or take the fix yourself?");
   });
 
   it("lists the open PR awaiting merge on a fast-track issue", async () => {

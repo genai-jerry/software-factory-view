@@ -1308,6 +1308,8 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .task-start { grid-column: 2 / -1; }
 .needs-answer { border-color: var(--halt); }
 .needs-answer blockquote.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem; border-left: 3px solid var(--halt); background: var(--bg-raised); font-style: italic; }
+.needs-answer ol.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem 0.6rem 2rem; border-left: 3px solid var(--halt); background: var(--bg-raised); }
+.needs-answer ol.question li { margin: 0.2rem 0; }
 @media (max-width: 720px) { .rel-step { grid-template-columns: 1fr; gap: 0.2rem; } }
 
 /* ---- Redesign: Clarify and Design boards ---- */

@@ -245,7 +245,8 @@ export interface IssuePeekData {
   gate: { gate: string; label: string; approvers: string[] } | null;
   deps: { blockedBy: DepNode[]; blocks: DepNode[] };
   lastEvent: { at: string; detail: string; actor: string | null } | null;
-  blocked: { since: string | null; question: string | null } | null;
+  /** `questions` is the role's `Questions for you:` list (FACTORY.md §1a rule 13); `question` is its first entry or, for older comments, the first line. */
+  blocked: { since: string | null; question: string | null; questions?: string[] } | null;
   /** Open PRs tied to this issue by the factory's branch naming (fast-track: the PR awaiting merge). */
   prs: EpicPr[];
   epicId: string;

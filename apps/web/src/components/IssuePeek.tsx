@@ -50,7 +50,16 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
 
       {data.blocked && (
         <div className="banner error" style={{ marginTop: "0.75rem" }}>
-          {data.blocked.question ? (
+          {(data.blocked.questions?.length ?? 0) > 1 ? (
+            <span>
+              The agent asked:
+              <ol style={{ margin: "0.25rem 0 0 1.25rem", padding: 0 }}>
+                {data.blocked.questions!.map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ol>
+            </span>
+          ) : data.blocked.question ? (
             <span>
               The agent asked: <em>“{data.blocked.question}”</em>
             </span>

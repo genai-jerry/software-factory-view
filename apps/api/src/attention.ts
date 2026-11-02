@@ -3,6 +3,7 @@ import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequ
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
 import { loadExpeditedEpics } from "./expedite.js";
+import { extractQuestions, isRoleComment } from "./questions.js";
 import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
 
 /**
@@ -269,7 +270,10 @@ function caseIdOf(title: string): string | null {
 interface BlockedMeta {
   since: Date | null;
   priorState: string | null;
+  /** The first question, or the first line of the role comment for comments older than rule 13. */
   question: string | null;
+  /** The `Questions for you:` list, in order. */
+  questions: string[];
 }
 
 /**
@@ -283,7 +287,7 @@ export async function loadBlockedMeta(deps: AppDeps, issueIds: string[]): Promis
   const { db } = deps.dbh;
   const meta = new Map<string, BlockedMeta>();
   if (issueIds.length === 0) return meta;
-  for (const id of issueIds) meta.set(id, { since: null, priorState: null, question: null });
+  for (const id of issueIds) meta.set(id, { since: null, priorState: null, question: null, questions: [] });
 
   const history = await db
     .select({ issueId: issueStateHistory.issueId, toState: issueStateHistory.toState, occurredAt: issueStateHistory.occurredAt })
@@ -308,13 +312,28 @@ export async function loadBlockedMeta(deps: AppDeps, issueIds: string[]): Promis
     .from(comments)
     .where(and(inArray(comments.issueId, issueIds), eq(comments.isAgent, true)))
     .orderBy(desc(comments.ghCreatedAt));
+  // Newest-first: the first comment carrying a `Questions for you:` list
+  // (FACTORY.md §1a rule 13) wins — the hand-off notice repeats the role's
+  // list, so it is usually that one. Older comments without the list fall
+  // back to the first line of the newest role comment, never the notice.
+  const fallback = new Map<string, string | null>();
   for (const c of agentComments) {
     const m = meta.get(c.issueId)!;
-    if (m.question) continue; // newest wins; rows arrive newest-first
+    if (m.questions.length) continue;
     // Only a comment from around or after the halt carries the question; a 5
     // minute grace covers the comment landing just before the label did.
     if (m.since && c.ghCreatedAt.getTime() < m.since.getTime() - 5 * 60_000) continue;
-    m.question = extractQuestion(c.body);
+    const questions = extractQuestions(c.body);
+    if (questions.length) {
+      m.questions = questions;
+      m.question = questions[0]!;
+      continue;
+    }
+    if (!fallback.has(c.issueId) && isRoleComment(c.body)) fallback.set(c.issueId, extractQuestion(c.body));
+  }
+  for (const [issueId, line] of fallback) {
+    const m = meta.get(issueId)!;
+    if (!m.question) m.question = line;
   }
   return meta;
 }

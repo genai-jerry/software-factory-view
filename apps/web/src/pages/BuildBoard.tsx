@@ -131,17 +131,29 @@ function NeedsAnswer({ task, epicId }: { task: Task; epicId: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["epic", epicId] }),
     onError: (e) => setFailure(e instanceof ApiError ? e.message : "That did not go through. Try again."),
   });
-  const question = peek.data?.blocked?.question ?? null;
+  const questions = peek.data?.blocked?.questions ?? [];
+  const question = questions[0] ?? peek.data?.blocked?.question ?? null;
+  const several = questions.length > 1;
   return (
     <section className="card needs-answer" aria-labelledby={`answer-${task.id}`}>
       <div className="spread">
         <h2 id={`answer-${task.id}`}>Needs an answer</h2>
         <span className="muted">Task {task.number}</span>
       </div>
-      <p className="need">You need to: answer the builder's question. It continues once you do.</p>
-      {question ? <blockquote className="question">{question}</blockquote> : <p className="muted">{peek.isLoading ? "Reading the question…" : "The builder stopped; its question is in the conversation."}</p>}
+      <p className="need">You need to: answer the factory's question{several ? "s" : ""}. It continues once you do.</p>
+      {several ? (
+        <ol className="question" aria-label="Questions for you">
+          {questions.map((q, i) => (
+            <li key={i}>{q}</li>
+          ))}
+        </ol>
+      ) : question ? (
+        <blockquote className="question">{question}</blockquote>
+      ) : (
+        <p className="muted">{peek.isLoading ? "Reading the question…" : "The factory stopped; its question is in the conversation."}</p>
+      )}
       {reply.isSuccess ? (
-        <p className="muted">Sent. The builder continues from your answer.</p>
+        <p className="muted">Sent. The factory continues from your answer.</p>
       ) : (
         <div className="decision-reply">
           <label htmlFor={`reply-${task.id}`}>Your answer</label>
