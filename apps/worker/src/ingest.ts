@@ -156,7 +156,18 @@ export async function processWebhook(db: Db, cfg: ConsoleConfig, auth: AppAuth, 
     .where(eq(webhookDeliveries.deliveryGuid, job.deliveryGuid));
 }
 
-const FORWARD_EVENTS = new Set(["issues", "issue_comment", "push", "milestone"]);
+const FORWARD_EVENTS = new Set(["issues", "issue_comment", "push", "milestone", "pull_request"]);
+
+/**
+ * Of pull_request events only a merge is the orchestrator's business: a
+ * merged promotion PR is gate G3, and the router moves the epic to
+ * `factory:deployed` on it. Opens, syncs and reviews stay here.
+ */
+function isMergedClose(payload: Record<string, unknown>): boolean {
+  if (payload["action"] !== "closed") return false;
+  const pr = payload["pull_request"] as { merged?: boolean; merged_at?: string | null } | undefined;
+  return pr?.merged === true || typeof pr?.merged_at === "string";
+}
 
 /**
  * GitHub delivers Console App webhooks to PUBLIC_ORIGIN. Under the Software
@@ -170,6 +181,7 @@ async function maybeForwardToOrchestrator(
   job: WebhookJob,
 ): Promise<void> {
   if (!FORWARD_EVENTS.has(job.event)) return;
+  if (job.event === "pull_request" && !isMergedClose(job.payload)) return;
   if (!cfg.ORCHESTRATOR_URL.trim()) return;
   const repository = job.payload["repository"] as { node_id?: string } | undefined;
   if (!repository?.node_id) return;

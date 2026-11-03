@@ -174,7 +174,7 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
     case "test":
       return `Tests are waiting on someone else. ${testLine(tasks)}`.trim();
     case "release":
-      if (card.state === "factory:deployed") return "In production and soaking.";
+      if (card.state === "factory:deployed") return "In production, in its watch period.";
       if (live && live.kind === "epic") return live.role === "release" ? "Being released to staging now." : now;
       return "Waiting on someone else to release it.";
     default:

@@ -136,6 +136,63 @@ describe("orchestrator event forward", () => {
     expect(auth.mintInstallationToken).toHaveBeenCalledWith(INSTALLATION.id, expect.objectContaining({ minRemainingMs: 50 * 60 * 1000 }));
   });
 
+  it("forwards a merged pull request, and only a merged one", async () => {
+    const { db } = await testDb();
+    const cfg = loadConfig({
+      CONSOLE_MASTER_KEY: "",
+      ORCHESTRATOR_URL: "http://127.0.0.1:8080",
+      ORCHESTRATOR_DISPATCH_TOKEN: "op-token",
+    } as never);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ queued: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const install = job("installation", {
+      action: "created",
+      installation: { id: INSTALLATION.id, account: { login: "acme" } },
+      repositories: [{ node_id: REPO.node_id, full_name: REPO.full_name }],
+    }, "fwd-install-3");
+    await ledgerInsert(db, install);
+    await processWebhook(db, cfg, auth, install);
+    const org = (await db.select().from(orgs).limit(1))[0]!;
+    await db.update(orgs).set({ orchestrator: "software-factory" }).where(eq(orgs.id, org.id));
+
+    const pull = (over: Record<string, unknown>) => ({
+      id: 601,
+      node_id: "PR_promo",
+      number: 110,
+      title: "release(34): promote staging to main",
+      state: "open",
+      draft: false,
+      merged: false,
+      merged_at: null,
+      merge_commit_sha: null,
+      head: { ref: "staging", sha: "aaa111" },
+      base: { ref: "main" },
+      user: { login: "github-actions[bot]" },
+      updated_at: "2026-11-03T03:00:00Z",
+      html_url: "https://github.com/acme/insurance-app-base/pull/110",
+      ...over,
+    });
+    const opened = job("pull_request", { action: "opened", pull_request: pull({}), repository: REPO, installation: INSTALLATION }, "fwd-pr-open");
+    await ledgerInsert(db, opened);
+    await processWebhook(db, cfg, auth, opened);
+    const closedUnmerged = job("pull_request", { action: "closed", pull_request: pull({ state: "closed" }), repository: REPO, installation: INSTALLATION }, "fwd-pr-closed");
+    await ledgerInsert(db, closedUnmerged);
+    await processWebhook(db, cfg, auth, closedUnmerged);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const merged = job(
+      "pull_request",
+      { action: "closed", pull_request: pull({ state: "closed", merged: true, merged_at: "2026-11-03T03:37:54Z", merge_commit_sha: "d88ad92" }), repository: REPO, installation: INSTALLATION },
+      "fwd-pr-merged",
+    );
+    await ledgerInsert(db, merged);
+    await processWebhook(db, cfg, auth, merged);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ event: "pull_request", delivery_guid: "fwd-pr-merged", payload: { action: "closed" } });
+  });
+
   it("throws on orchestrator network failure so ingest retries", async () => {
     const { db } = await testDb();
     const cfg = loadConfig({
