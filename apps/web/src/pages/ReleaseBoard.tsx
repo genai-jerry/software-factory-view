@@ -77,7 +77,7 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
           <div className={`rel-step ${atProduction ? "now" : live ? "done" : ""}`}>
             <span className="rel-name">Production</span>
             {atProduction ? <span className="stage-chip decide">Your decision</span> : live ? <span className="stage-chip done">Live</span> : <span className="stage-chip">Not yet</span>}
-            <span className="muted">{live ? "In production and soaking. Ops verifies it and closes the item." : "Goes live for every customer when you ship it."}</span>
+            <span className="muted">{live ? "In production for its watch period: a day of real use while someone watches for new errors. Close it after a clean day, or let Ops do it." : "Goes live for every customer when you ship it."}</span>
           </div>
         </div>
       </section>
