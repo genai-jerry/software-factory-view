@@ -42,6 +42,7 @@ const SESSION_TTL_MS = 24 * 60 * 60_000;
 const MAX_DOC_CHARS = 6_000;
 const MAX_SIBLINGS = 8;
 const MAX_MOCK_CHARS = 200_000;
+const MAX_DIAGRAM_CHARS = 50_000;
 const NO_CLAUDE = "Shape needs the factory's Claude sign-in. Store it in Settings.";
 /** A pending answer older than this is one the process lost (a restart mid-call). */
 const STALE_AFTER_MS = 15 * 60_000;
@@ -92,14 +93,25 @@ export async function settleStale(db: Db, conversationId?: string): Promise<void
     );
 }
 
-/** Split an answer into its prose and the ```html mocks it carried. */
-export function splitMocks(body: string): { text: string; mocks: Array<{ html: string }> } {
+/**
+ * Split an answer into its prose, the ```html mocks and the ```mermaid
+ * diagrams it carried. Both are drawn below the prose by the page; leaving a
+ * diagram in the markdown would send it through the factory-comment renderer,
+ * which flattens a flowchart into a list of chains for phone readers.
+ */
+export function splitMocks(body: string): { text: string; mocks: Array<{ html: string }>; diagrams: Array<{ code: string }> } {
   const mocks: Array<{ html: string }> = [];
-  const text = body.replace(/```html[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
-    mocks.push({ html: inner.slice(0, MAX_MOCK_CHARS) });
-    return `*(Mock ${mocks.length} — shown below.)*`;
-  });
-  return { text: text.trim(), mocks };
+  const diagrams: Array<{ code: string }> = [];
+  const text = body
+    .replace(/```html[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
+      mocks.push({ html: inner.slice(0, MAX_MOCK_CHARS) });
+      return `*(Mock ${mocks.length} — shown below.)*`;
+    })
+    .replace(/```mermaid[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
+      diagrams.push({ code: inner.trim().slice(0, MAX_DIAGRAM_CHARS) });
+      return `*(Diagram ${diagrams.length} — shown below.)*`;
+    });
+  return { text: text.trim(), mocks, diagrams };
 }
 
 function firstLine(text: string): string {
@@ -108,13 +120,14 @@ function firstLine(text: string): string {
 }
 
 function messageDto(m: Message) {
-  const { text, mocks } = m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [] };
+  const { text, mocks, diagrams } = m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [], diagrams: [] };
   return {
     id: m.id,
     role: m.role,
     body: m.body,
     bodyHtml: renderMarkdown(text),
     mocks,
+    diagrams,
     attachments: (m.attachments ?? []).map((a) => ({ ...a, url: `/api/shape/attachments/${a.id}` })),
     status: m.status,
     error: m.error,
@@ -559,6 +572,12 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         .flatMap((m) => splitMocks(m.body).mocks)
         .map((m, i) => `Mock ${i + 1}:\n${m.html.slice(0, 6_000)}`)
         .join("\n\n");
+      const recentDiagrams = messages
+        .filter((m) => m.role === "assistant")
+        .slice(-3)
+        .flatMap((m) => splitMocks(m.body).diagrams)
+        .map((d, i) => `Diagram ${i + 1} (Mermaid):\n${d.code.slice(0, 4_000)}`)
+        .join("\n\n");
       const [owner, name] = conv.repoFullName.split("/") as [string, string];
       const epic = await epicRef(conv.epicIssueId);
       const branch = branchOf(epic);
@@ -572,7 +591,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         owner,
         repo: name,
         question: "Write the requirement from this conversation.",
-        context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}`,
+        context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
         mode: "shape",
@@ -646,7 +665,9 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       conv.repoFullName = pick.fullName;
     }
     const messages = await messagesOf(conv.id);
-    const mocks = messages.filter((m) => m.role === "assistant" && m.status === "done").flatMap((m) => splitMocks(m.body).mocks);
+    const answered = messages.filter((m) => m.role === "assistant" && m.status === "done").map((m) => splitMocks(m.body));
+    const mocks = answered.flatMap((a) => a.mocks);
+    const diagrams = answered.flatMap((a) => a.diagrams);
     const attachments = messages.flatMap((m) => m.attachments ?? []);
     const origin = deps.cfg.PUBLIC_ORIGIN.replace(/\/+$/, "");
     const parts = [conv.spec.trim()];
@@ -655,6 +676,11 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         "## Mockups\n\n" +
           mocks.map((m, i) => `<details><summary>Mock ${i + 1}</summary>\n\n\`\`\`html\n${m.html.trim()}\n\`\`\`\n</details>`).join("\n\n"),
       );
+    }
+    // GitHub draws a ```mermaid fence in an issue body, so the diagrams travel
+    // as diagrams rather than as code.
+    if (diagrams.length > 0) {
+      parts.push("## Diagrams\n\n" + diagrams.map((d, i) => `**Diagram ${i + 1}**\n\n\`\`\`mermaid\n${d.code}\n\`\`\``).join("\n\n"));
     }
     if (attachments.length > 0) {
       parts.push(

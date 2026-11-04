@@ -140,6 +140,15 @@ describe("splitMocks", () => {
     expect(text).toContain("Mock 1 — shown below");
     expect(text).not.toContain("<!doctype");
   });
+
+  it("lifts ```mermaid fences out as diagrams, after the mocks", () => {
+    const { text, mocks, diagrams } = splitMocks("The flow.\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\n```html\n<p>m</p>\n```\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```");
+    expect(mocks).toHaveLength(1);
+    expect(diagrams).toEqual([{ code: "flowchart TD\n  A --> B" }, { code: "sequenceDiagram\n  A->>B: hi" }]);
+    expect(text).toContain("Diagram 1 — shown below");
+    expect(text).toContain("Diagram 2 — shown below");
+    expect(text).not.toContain("flowchart");
+  });
 });
 
 describe("Shape", () => {
@@ -164,7 +173,7 @@ describe("Shape", () => {
 
     // First message: the orchestrator gets the image, shape mode, and the instructions.
     // The answer takes a moment, as a real one does, so the pending state is visible.
-    let calls = stubNetwork("I see the leads table.\n\n```html\n<!doctype html><html><body><h1>Leads</h1></body></html>\n```\n\n- Assumed a 30-day default.", {}, 150);
+    let calls = stubNetwork("I see the leads table.\n\n```html\n<!doctype html><html><body><h1>Leads</h1></body></html>\n```\n\n```mermaid\nflowchart LR\n  A[\"Leads page\"] --> B[\"Status column\"]\n```\n\n- Assumed a 30-day default.", {}, 150);
     // The request comes back at once with a pending answer; the work runs behind it.
     const sent = await app.inject({
       method: "POST",
@@ -189,7 +198,7 @@ describe("Shape", () => {
     const got = await app.inject({ method: "GET", url: `/api/shape/${convId}`, headers: { cookie: jerryCookie } });
     const shown = got.json() as {
       conversation: { title: string; repo: string };
-      messages: Array<{ id: string; role: string; status: string; bodyHtml: string; attachments: Array<{ url: string }>; mocks: Array<{ html: string }> }>;
+      messages: Array<{ id: string; role: string; status: string; bodyHtml: string; attachments: Array<{ url: string }>; mocks: Array<{ html: string }>; diagrams: Array<{ code: string }> }>;
     };
     expect(shown.conversation.repo).toBe("acme/app");
     expect(shown.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
@@ -197,6 +206,10 @@ describe("Shape", () => {
     expect(shown.messages[1]!.id).toBe(accepted.message.id);
     expect(shown.messages[1]!.status).toBe("done");
     expect(shown.messages[1]!.mocks[0]!.html).toContain("<h1>Leads</h1>");
+    // The diagram is drawn by the page, not flattened into chains in the prose.
+    expect(shown.messages[1]!.diagrams).toEqual([{ code: 'flowchart LR\n  A["Leads page"] --> B["Status column"]' }]);
+    expect(shown.messages[1]!.bodyHtml).toContain("Diagram 1 — shown below");
+    expect(shown.messages[1]!.bodyHtml).not.toContain("Status column");
     expect(shown.messages[1]!.bodyHtml).toContain("I see the leads table.");
     expect(shown.messages[1]!.bodyHtml).not.toContain("<h1>Leads</h1>");
 
@@ -246,6 +259,7 @@ describe("Shape", () => {
     expect(body).toContain("## Mockups");
     expect(body).toContain("<details><summary>Mock 1</summary>");
     expect(body).toContain("<h1>Leads</h1>");
+    expect(body).toContain('## Diagrams\n\n**Diagram 1**\n\n```mermaid\nflowchart LR\n  A["Leads page"] --> B["Status column"]\n```');
     expect(body).toContain(`## Attachments`);
     expect(body).toContain(`https://sf.example.com/api/shape/attachments/${attachment.id}`);
 

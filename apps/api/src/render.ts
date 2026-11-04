@@ -53,7 +53,8 @@ const NOISE = /^\s*(?:(?:[\w.-]+(?:\/[\w.-]+)?)?#\d+|T\d+|\d+)\s*$/i;
 function cleanLabel(raw: string, id: string): string {
   const parts = raw
     .replace(/^"(.*)"$/, "$1")
-    .split(/<br\s*\/?>/i)
+    // A literal backslash-n is a line break the writer meant; Mermaid does not read it as one.
+    .split(/<br\s*\/?>|\\n/i)
     .map((p) => p.replace(/^"|"$/g, "").trim())
     .filter((p) => p && !NOISE.test(p))
     .map((p) => p.replace(/^\d+[.)]?\s+/, ""));

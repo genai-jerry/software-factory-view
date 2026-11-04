@@ -1431,6 +1431,12 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-toggle button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .shape-frame { display: block; width: 100%; min-height: 320px; height: 480px; border: 0; background: #fff; resize: vertical; }
 .shape-code { margin: 0; padding: 0.6rem; max-height: 480px; overflow: auto; font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; }
+.shape-diagram figcaption { flex-wrap: wrap; gap: 0.4rem; }
+.shape-diagram-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.shape-diagram-canvas { background: #fff; padding: 0.75rem; overflow: auto; max-height: 640px; text-align: center; }
+.shape-diagram-canvas svg { max-width: 100%; height: auto; }
+.shape-diagram-error { margin: 0; padding: 0.6rem 0.75rem; color: var(--warn-fg); background: var(--warn-bg); }
+.shape-diagram-wait { margin: 0; padding: 0.6rem 0.75rem; }
 .shape-spec { position: sticky; top: 0.5rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
 .shape-spec-edit { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 .shape-spec-view h3 { margin: 0.9rem 0 0.3rem; font-size: 1rem; }
