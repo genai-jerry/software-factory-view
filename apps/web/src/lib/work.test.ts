@@ -110,6 +110,25 @@ describe("buildWork", () => {
     expect(lists.counts).toEqual({ you: 1, others: 0, working: 0 });
   });
 
+  it("asks the reader to start a review when a written task waits for one", () => {
+    const review = (i: number, state = "factory:in-review") => entry({ issueId: `r${i}`, title: `#${190 + i} task(35): written ${i}`, state, link: "/epics/e1?tab=tasks", expedited: false });
+    const building = card({ expedited: false, tasks: rollup({ total: 5, done: 1, inReview: 2, inTest: 1, waiting: 1 }) });
+    const lists = buildWork([building], [review(1), review(2), review(3, "factory:in-test")], []);
+    expect(lists.needsDecision).toHaveLength(1);
+    const row = lists.needsDecision[0]!;
+    expect(row.ask).toBe("review");
+    expect(row.pointer).toBe("Start: the review on 2 tasks and the test on 1 task. The factory does not start it by itself.");
+    expect(row.who).toBe("You start the review");
+    expect(row.link).toBe("/work/e1");
+  });
+
+  it("counts only build starts in a Start row", () => {
+    const start = entry({ issueId: "s1", title: "task(35): ready one", state: "factory:ready", link: "/epics/e1?tab=tasks" });
+    const lists = buildWork([card()], [start], []);
+    expect(lists.needsDecision[0]!.ask).toBe("start");
+    expect(lists.needsDecision[0]!.pointer).toBe("Start: 1 task waits for a start.");
+  });
+
   it("puts a halted builder's question first", () => {
     const halted = entry({ kind: "blocked", rank: 1, state: "factory:blocked", question: "May the status column be the phone column?" });
     const gate = entry({ kind: "gate", rank: 2, epicId: "e2", state: "factory:design-ready", link: "/epics/e2?tab=gate" });

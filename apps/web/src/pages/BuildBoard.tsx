@@ -3,20 +3,46 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { TaskStartGate } from "../components/Approve.js";
+import { StartRoleButton } from "../components/NextStep.js";
 import { namesOf, plainTitle } from "../lib/labels.js";
-import type { EpicWorkspace, IssuePeekData } from "../types.js";
+import type { EpicWorkspace, IssuePeekData, NextStep } from "../types.js";
 
 /**
  * Build — the tasks, and the one thing a person may be asked (redesign
  * board 6). Every pull request, review and merge stays behind the words:
  * a task is waiting, being written, being reviewed, being tested, done, or
  * stopped with a question. The question is answered here; a task that
- * still needs a start approval gets its button here.
+ * still needs a start approval gets its button here — and so does a task
+ * that is written and waits for a person to start its review or its test:
+ * in-review and in-test start nothing on their own (FACTORY.md §3), and
+ * until this board said so it read as "the factory has it".
  */
 
 type Task = EpicWorkspace["tasks"][number];
 
-export type TaskWord = "done" | "writing" | "reviewing" | "testing" | "stopped" | "waiting-start" | "waiting-on" | "queued";
+export type TaskWord = "done" | "writing" | "reviewing" | "testing" | "stopped" | "waiting-start" | "waiting-review" | "waiting-test" | "waiting-on" | "queued";
+
+/** The words this board uses for the role a person starts. */
+const ROLE_WORD: Record<string, { word: TaskWord; noun: string; button: string }> = {
+  reviewer: { word: "waiting-review", noun: "review", button: "Start the review" },
+  qa: { word: "waiting-test", noun: "test", button: "Start the test" },
+};
+
+/**
+ * The next role is one a person has to start, and nobody has: not expedited
+ * (then the factory starts it), not already running (the run marker is on).
+ */
+function roleStartOf(t: Task): { word: TaskWord; noun: string; button: string } | null {
+  const step = t.nextStep;
+  if (!step?.startRole || !step.waitsOnPerson || step.automatic || t.running) return null;
+  return ROLE_WORD[step.startRole] ?? null;
+}
+
+/** The same step with this board's words on the button. */
+function roleStep(t: Task): NextStep {
+  const r = roleStartOf(t);
+  return r ? { ...t.nextStep, startLabel: r.button } : t.nextStep;
+}
 
 export function taskWord(t: Task): { word: TaskWord; text: string } {
   const s = t.state ?? "";
@@ -25,6 +51,8 @@ export function taskWord(t: Task): { word: TaskWord; text: string } {
   if (t.running && t.runningRole === "reviewer") return { word: "reviewing", text: "Being reviewed" };
   if (t.running && t.runningRole === "qa") return { word: "testing", text: "Being tested" };
   if (t.running) return { word: "writing", text: "Being written" };
+  const role = roleStartOf(t);
+  if (role && (s === "factory:in-review" || s === "factory:in-test")) return { word: role.word, text: `Waiting for you to start the ${role.noun}` };
   if (s === "factory:in-review") return { word: "reviewing", text: "Waiting for review" };
   if (s === "factory:in-test") return { word: "testing", text: "Waiting for test" };
   if (s === "factory:in-progress") return { word: "writing", text: "Being written" };
@@ -41,6 +69,9 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
   const inFlight = words.filter((w) => ["writing", "reviewing", "testing"].includes(w.word)).length;
   const stopped = words.filter((w) => w.word === "stopped");
   const starts = words.filter((w) => w.word === "waiting-start");
+  const reviews = words.filter((w) => w.word === "waiting-review");
+  const tests = words.filter((w) => w.word === "waiting-test");
+  const toStart = starts.length + reviews.length + tests.length;
   const waiting = words.filter((w) => w.word === "waiting-on" || w.word === "queued").length;
   const running = tasks.filter((t) => t.running && t.open);
 
@@ -56,7 +87,7 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
             Tasks <span className="muted">{built} of {tasks.length} built</span>
           </h2>
           <span className="muted">
-            {[inFlight > 0 && `${inFlight} in flight`, stopped.length > 0 && `${stopped.length} stopped`, starts.length > 0 && `${starts.length} to start`, waiting > 0 && `${waiting} waiting`]
+            {[inFlight > 0 && `${inFlight} in flight`, stopped.length > 0 && `${stopped.length} stopped`, toStart > 0 && `${toStart} to start`, waiting > 0 && `${waiting} waiting`]
               .filter(Boolean)
               .join(" · ")}
           </span>
@@ -67,12 +98,17 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
             <li key={t.id} className={`task-row ${word}`}>
               <span className="task-n">{i + 1}</span>
               <span className="task-title">{plainTitle(t.title)}</span>
-              <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : word === "waiting-start" ? "decide" : ["writing", "reviewing", "testing"].includes(word) ? "wait" : ""}`}>
+              <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : ["waiting-start", "waiting-review", "waiting-test"].includes(word) ? "decide" : ["writing", "reviewing", "testing"].includes(word) ? "wait" : ""}`}>
                 {text}
               </span>
               {word === "waiting-start" && (
                 <span className="task-start">
                   <TaskStartGate epicId={data.epic.id} taskId={t.id} number={t.number} startGate={data.startGate} status={t.startStatus} />
+                </span>
+              )}
+              {(word === "waiting-review" || word === "waiting-test") && (
+                <span className="task-start">
+                  <StartRoleButton issueId={t.id} step={roleStep(t)} />
                 </span>
               )}
             </li>
@@ -85,10 +121,8 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         <h2>Your decision</h2>
         {stopped.length > 0 ? (
           <p className="need">You need to: answer the question{stopped.length === 1 ? "" : "s"} above. Nothing else waits on you here.</p>
-        ) : starts.length > 0 ? (
-          <p className="need">
-            You need to: start {starts.length === 1 ? "the task" : `${starts.length} tasks`} that {starts.length === 1 ? "waits" : "wait"} for a start, above.
-          </p>
+        ) : toStart > 0 ? (
+          <p className="need">You need to: start {startLine(starts.length, reviews.length, tests.length)}, above.</p>
         ) : (
           <p className="need">Nothing waits on you. The factory has it.</p>
         )}
@@ -114,6 +148,15 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
       )}
     </>
   );
+}
+
+/** "the review on 3 tasks and the test on 1 task" — or the build starts. */
+function startLine(builds: number, reviews: number, tests: number): string {
+  const parts: string[] = [];
+  if (builds > 0) parts.push(builds === 1 ? "the task that waits for a start" : `${builds} tasks that wait for a start`);
+  if (reviews > 0) parts.push(`the review on ${reviews === 1 ? "1 task" : `${reviews} tasks`}`);
+  if (tests > 0) parts.push(`the test on ${tests === 1 ? "1 task" : `${tests} tasks`}`);
+  return parts.join(" and ");
 }
 
 function roleName(role: string | null | undefined): string {

@@ -1306,6 +1306,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .task-n { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .task-row.done .task-title { color: var(--text-dim); }
 .task-start { grid-column: 2 / -1; }
+.role-start { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
 .needs-answer { border-color: var(--halt); }
 .needs-answer blockquote.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem; border-left: 3px solid var(--halt); background: var(--bg-raised); font-style: italic; }
 .needs-answer ol.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem 0.6rem 2rem; border-left: 3px solid var(--halt); background: var(--bg-raised); }

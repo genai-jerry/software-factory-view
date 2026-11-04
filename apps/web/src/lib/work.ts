@@ -56,7 +56,35 @@ export function stageOf(state: string | null | undefined, tasks?: TaskRollup): S
   return null;
 }
 
-export type Ask = "decide" | "answer" | "run" | "start" | "release" | "ship";
+export type Ask = "decide" | "answer" | "run" | "review" | "start" | "release" | "ship";
+
+/**
+ * A task at in-review or in-test: written, and waiting for a person to start
+ * the Reviewer or QA. The queue files it as a `task-start` like a build
+ * start, and the state tells the two apart.
+ */
+export const ROLE_START_STATE: Record<string, { role: "reviewer" | "qa"; noun: string }> = {
+  "factory:in-review": { role: "reviewer", noun: "review" },
+  "factory:in-test": { role: "qa", noun: "test" },
+};
+
+export function isRoleStart(e: AttentionEntry): boolean {
+  return e.kind === "task-start" && e.state != null && e.state in ROLE_START_STATE;
+}
+
+function isBuildStart(e: AttentionEntry): boolean {
+  return e.kind === "task-start" && e.state === "factory:ready";
+}
+
+/** "the review on 3 tasks and the test on 1 task" */
+export function roleStartLine(entries: AttentionEntry[]): string {
+  const parts: string[] = [];
+  for (const [state, { noun }] of Object.entries(ROLE_START_STATE)) {
+    const n = entries.filter((e) => isRoleStart(e) && e.state === state).length;
+    if (n > 0) parts.push(`the ${noun} on ${n} task${n === 1 ? "" : "s"}`);
+  }
+  return parts.join(" and ");
+}
 
 export interface WorkItem {
   card: BoardCard;
@@ -122,7 +150,9 @@ function askOf(entries: AttentionEntry[]): { ask: Ask; entry: AttentionEntry } |
   if (gate) return { ask: "decide", entry: gate };
   const run = entries.find((e) => e.kind === "task-start" && (e.state === "factory:manual-test" || e.state === "factory:bug-retest"));
   if (run) return { ask: "run", entry: run };
-  const start = entries.find((e) => e.kind === "task-start");
+  const review = entries.find(isRoleStart);
+  if (review) return { ask: "review", entry: review };
+  const start = entries.find(isBuildStart);
   if (start) return { ask: "start", entry: start };
   return null;
 }
@@ -148,8 +178,10 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
       const line = testLine(tasks) || `${n} test${n === 1 ? "" : "s"} to run.`;
       return `Run: ${line}${retests > 0 ? ` ${retests} bug fix${retests === 1 ? "" : "es"} to re-test.` : ""}`;
     }
+    case "review":
+      return `Start: ${roleStartLine(entries)}. The factory does not start it by itself.`;
     case "start": {
-      const n = entries.filter((e) => e.kind === "task-start").length;
+      const n = entries.filter(isBuildStart).length;
       return `Start: ${n} task${n === 1 ? " waits" : "s wait"} for a start.`;
     }
   }
@@ -226,7 +258,7 @@ function isHousekeeping(card: BoardCard): boolean {
 
 function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): string {
   if (ask) {
-    const verb = { decide: "decide", answer: "answer", run: "run the tests", start: "start it", release: "release", ship: "ship" }[ask];
+    const verb = { decide: "decide", answer: "answer", run: "run the tests", review: "start the review", start: "start it", release: "release", ship: "ship" }[ask];
     return `You ${verb}`;
   }
   // A run on the epic itself is the factory acting on the gate; nobody
@@ -300,7 +332,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     }
   }
 
-  const rank: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, start: 5 };
+  const rank: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, review: 5, start: 6 };
   needsDecision.sort((a, b) => rank[a.ask!] - rank[b.ask!] || b.card.daysInState - a.card.daysInState);
   working.sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.card.daysInState - b.card.daysInState);
 

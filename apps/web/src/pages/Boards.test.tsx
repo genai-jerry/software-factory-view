@@ -193,6 +193,38 @@ describe("BuildBoard", () => {
     expect(screen.getByText("Reviewer on task 5.")).toBeInTheDocument();
   });
 
+  /**
+   * The complaint this came from: three tasks sat at in-review with nobody
+   * running, the board said "Nothing waits on you. The factory has it.", and
+   * the only Start the Reviewer button was on the engineers' Tasks tab.
+   */
+  it("asks the reader to start a review the factory will not start itself", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true, role: "reviewer", detail: "run queued" });
+    const reviewStep = { who: "you, then the Reviewer", how: "Start the Reviewer.", startRole: "reviewer" as const, startLabel: "Start the Reviewer", waitsOnPerson: true, automatic: false };
+    const testStep = { ...reviewStep, who: "you, then QA", startRole: "qa" as const, startLabel: "Start QA" };
+    const written = [
+      task({ id: "r1", number: 3, title: "task(34): A sender name on every linked number", state: "factory:in-review", nextStep: reviewStep }),
+      task({ id: "r2", number: 5, title: "task(34): A resource is delivered once", state: "factory:in-review", nextStep: reviewStep }),
+      task({ id: "q1", number: 7, title: "task(34): The admin page", state: "factory:in-test", nextStep: testStep }),
+      task({ id: "x", number: 8, title: "task(34): Expedited one", state: "factory:in-review", nextStep: { ...reviewStep, automatic: true, waitsOnPerson: false } }),
+    ];
+    expect(written.map((t) => taskWord(t).text)).toEqual([
+      "Waiting for you to start the review",
+      "Waiting for you to start the review",
+      "Waiting for you to start the test",
+      "Waiting for review",
+    ]);
+    renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, written)} />);
+    expect(screen.getByText("You need to: start the review on 2 tasks and the test on 1 task, above.")).toBeInTheDocument();
+    expect(screen.getByText("1 in flight · 3 to start")).toBeInTheDocument();
+    const buttons = screen.getAllByRole("button", { name: "Start the review" });
+    expect(buttons).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Start the test" })).toBeInTheDocument();
+    await userEvent.click(buttons[0]!);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/r1/start-role", { role: "reviewer" }));
+    expect(await screen.findByText(/Started — run queued/)).toBeInTheDocument();
+  });
+
   it("lists every question when the role asked more than one", async () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path.includes("/peek"))
