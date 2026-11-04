@@ -39,32 +39,81 @@ asked for a mock or for detail.
 - Never write files, never run anything but git reads, never reach the network.
 - Write an issue or PR as #21, or owner/repo#21 in another repo.`;
 
-export const SPEC_INSTRUCTIONS = `Write a requirement from this conversation. Output ONLY markdown in this
-exact shape — it is the issue form the factory reads:
+export const SPEC_INSTRUCTIONS = `Write a factory requirement from this conversation, with a draft OpenSpec
+change the factory's Intake Analyst starts from. Output ONLY markdown in this
+exact shape. Do not add sections. Do not wrap the whole answer in a code fence.
 
-## What should be built?
-What the person asked for, in their words, as 3 to 8 sentences or bullets.
+## Problem / need
+What is broken, missing or slow today, and who it affects, in the person's
+words. 2 to 5 sentences.
 
-## Why / who it is for
-Who uses it and what it changes for them.
+## Desired outcome
+What is true once this ships, as 2 to 6 bullets. Measurable where the
+conversation made it so.
 
-## Context / constraints
-What the code already has that this builds on or must not break, named by
-file or module when the conversation established it from the repository.
-When the idea touches more than one repository, name each repository and
-what changes in it.
+## Affected repositories
+One bullet per repository and what changes in it, from what the conversation
+established in the code.
 
-## Out of scope
-What the conversation decided not to do.
+## Rough size
+Exactly one of: Small fix, Feature (single repo), Feature (multiple repos).
 
 ## Open questions
 A numbered list of only the things the conversation left open. "None" when
 nothing is open.
 
 ## Mockups
-One line per mock the conversation produced ("Mock 1 — the leads page with a
-day-wise panel beside the monthly table"). "None" when there are none.
+One line per mock or diagram the conversation produced ("Mock 1 — the leads
+page with a day-wise panel"). "None" when there are none.
 
-Plain words. No task numbers, no issue numbers, no implementation steps, no
-estimates. At most 400 words. Do not add sections. Do not wrap the whole
-answer in a code fence.`;
+## OpenSpec change: <slug>
+<slug> is 2 to 5 kebab-case words naming the change. Then the change's files,
+each in its own fence of FOUR backticks whose info string is \`openspec\`, a
+space, and the file's path inside the change folder. Write exactly these:
+
+1. \`openspec proposal.md\` with these sections, in order:
+   \`## Why\` (1 to 2 sentences), \`## What Changes\` (bullets; mark a
+   breaking change **BREAKING**), \`## Capabilities\` with
+   \`### New Capabilities\` and \`### Modified Capabilities\` (one bullet each:
+   \`capability-path\`: one line; "None" when empty; a modified capability
+   uses its exact path under openspec/specs/, so read that folder first),
+   \`## Impact\` (repositories, APIs, data), \`## Non-goals\` (what the
+   conversation decided not to do), and \`## Interpretations taken\` (a
+   numbered list, one sentence each, of every reading chosen where the
+   conversation left room, written so a non-engineer can say yes or no; the
+   one line "None: the request left nothing to interpret." when there are
+   none).
+2. One \`openspec specs/<capability-path>/spec.md\` per capability listed. A
+   new capability opens with \`## Purpose\` (one or two sentences, at least
+   50 characters). Then \`## ADDED Requirements\` and, for a modified
+   capability, \`## MODIFIED Requirements\` carrying the whole requirement
+   as it will read. Each requirement is \`### Requirement: <name>\` and one
+   sentence using SHALL or MUST, then at least one scenario:
+   \`#### Scenario: <name>\` (exactly four #) with \`- **WHEN** ...\` and
+   \`- **THEN** ...\` lines (\`- **AND** ...\` for more). Every scenario is
+   testable. Specs say what the product does, never how: no function, class
+   or library names.
+
+No design.md and no tasks.md: the factory writes those from the approved
+spec. Example of the change heading and one file:
+
+## OpenSpec change: calling-status-column
+
+\`\`\`\`openspec specs/lead-calling-status/spec.md
+## Purpose
+
+Shows setters which leads were called today, so nobody calls a lead twice.
+
+## ADDED Requirements
+
+### Requirement: Calling status on the leads page
+The leads page SHALL show each lead's calling status for today.
+
+#### Scenario: A lead called today
+- **WHEN** a setter opens the leads page after calling a lead
+- **THEN** that lead shows "Called today"
+\`\`\`\`
+
+Plain words in the first six sections. No task numbers, no issue numbers, no
+estimates. The first six sections stay under 300 words; the whole answer
+under 1,500.`;

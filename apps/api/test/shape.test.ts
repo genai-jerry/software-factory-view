@@ -133,6 +133,19 @@ async function view(convId: string, cookie = jerryCookie) {
   return (await app.inject({ method: "GET", url: `/api/shape/${convId}`, headers: { cookie } })).json();
 }
 
+/** What the orchestrator writes for a requirement: the form, then the OpenSpec draft. */
+const REQUIREMENT = [
+  "## Problem / need\nA calling status column.",
+  "## Desired outcome\n- Setters see who was called today.",
+  "## Affected repositories\n- acme/app: the leads page.",
+  "## Rough size\nFeature (single repo)",
+  "## Open questions\nNone",
+  "## Mockups\nMock 1 — the leads page with the column.",
+  "## OpenSpec change: calling-status-column",
+  "````openspec proposal.md\n## Why\nSetters call the same lead twice.\n\n## Interpretations taken\n1. Today means the setter's own day.\n````",
+  "````openspec specs/lead-calling-status/spec.md\n## ADDED Requirements\n\n### Requirement: Calling status\nThe leads page SHALL show today's calling status.\n\n#### Scenario: A lead called today\n- **WHEN** a setter calls a lead\n- **THEN** it shows Called today\n````",
+].join("\n\n");
+
 describe("splitMocks", () => {
   it("lifts ```html fences out of the prose and leaves a pointer", () => {
     const { text, mocks } = splitMocks("Here it is.\n\n```html\n<!doctype html><p>hi</p>\n```\n\n- one assumption");
@@ -232,19 +245,20 @@ describe("Shape", () => {
     expect(second.body!.conversation).toBe(convId);
 
     // The requirement.
-    calls = stubNetwork("## What should be built?\nA calling status column.\n\n## Why / who it is for\nSetters.\n\n## Context / constraints\nNone.\n\n## Out of scope\nNone.\n\n## Open questions\nNone\n\n## Mockups\nMock 1 — the leads page with the column.");
+    calls = stubNetwork(REQUIREMENT);
     const spec = await app.inject({ method: "POST", url: `/api/shape/${convId}/spec`, headers: headers(jerryCookie), payload: {} });
     expect(spec.statusCode).toBe(202);
     expect(spec.json()).toEqual({ specStatus: "pending" });
     await settlePendingAnswers();
     expect((await view(convId)).conversation).toMatchObject({ specStatus: "done", specError: null });
-    expect(String((await view(convId)).conversation.spec)).toContain("## What should be built?");
+    expect(String((await view(convId)).conversation.spec)).toContain("## OpenSpec change: calling-status-column");
     const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
     expect(String(specAsk.body!.instructions)).toContain("## Open questions");
+    expect(String(specAsk.body!.instructions)).toContain("#### Scenario: <name>");
     expect(String(specAsk.body!.context)).toContain("Mock 1:");
 
     // The person edits it.
-    const edited = await app.inject({ method: "PUT", url: `/api/shape/${convId}/spec`, headers: headers(jerryCookie), payload: { spec: "## What should be built?\nA calling status column, sortable." } });
+    const edited = await app.inject({ method: "PUT", url: `/api/shape/${convId}/spec`, headers: headers(jerryCookie), payload: { spec: REQUIREMENT.replace("A calling status column.", "A calling status column, sortable.") } });
     expect(edited.statusCode).toBe(200);
 
     // Open as work: an issue with the labels, the spec, and the mock folded in.
@@ -255,7 +269,15 @@ describe("Shape", () => {
     const create = calls.find((c) => c.url.endsWith("/repos/acme/app/issues"))!;
     expect(create.body!.labels).toEqual(["factory:intake", "factory:expedite"]);
     const body = String(create.body!.body);
-    expect(body.startsWith("## What should be built?\nA calling status column, sortable.")).toBe(true);
+    expect(body.startsWith("## Problem / need\nA calling status column, sortable.")).toBe(true);
+    // The OpenSpec draft: each file in its own fold, ready for the Intake Analyst.
+    expect(body).toContain("## OpenSpec draft");
+    expect(body).toContain("`openspec/changes/<this issue's number>-calling-status-column/`");
+    expect(body).toContain("<!-- openspec-draft: calling-status-column -->");
+    expect(body).toContain("<details><summary><code>proposal.md</code></summary>\n\n````markdown\n## Why\nSetters call the same lead twice.");
+    expect(body).toContain("<details><summary><code>specs/lead-calling-status/spec.md</code></summary>");
+    expect(body).toContain("#### Scenario: A lead called today");
+    expect(body).not.toContain("````openspec");
     expect(body).toContain("## Mockups");
     expect(body).toContain("<details><summary>Mock 1</summary>");
     expect(body).toContain("<h1>Leads</h1>");

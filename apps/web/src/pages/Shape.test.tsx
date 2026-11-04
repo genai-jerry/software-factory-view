@@ -178,6 +178,34 @@ describe("ShapePage", () => {
     expect(api.post).toHaveBeenCalledWith("/api/shape/c1/spec");
   });
 
+  it("shows the OpenSpec draft one file per fold, the proposal open", async () => {
+    const spec = [
+      "## Problem / need\nLeads get asked to confirm twice.",
+      "## OpenSpec change: appointment-continuity",
+      "````openspec proposal.md\n## Why\nA lead confirms once.\n````",
+      "````openspec specs/appointment-continuity/spec.md\n### Requirement: Confirm once\n#### Scenario: Reschedule\n- **WHEN** the CRM moves the call\n- **THEN** no confirmation is sent\n````",
+    ].join("\n\n");
+    vi.mocked(api.get).mockImplementation(async (p: string) => {
+      if (p === "/api/shape") return { conversations: summaries };
+      if (p === "/api/work/targets") return targets;
+      if (p === "/api/shape/c1") return { ...conversation, conversation: { ...conversation.conversation, spec } };
+      return {};
+    });
+    renderAt("/shape/c1");
+    await screen.findByText("Here is the page with the panel.");
+    await userEvent.click(screen.getByRole("button", { name: "Show the requirement" }));
+    const panel = await screen.findByRole("complementary", { name: "Requirement" });
+    expect(within(panel).getByText("Leads get asked to confirm twice.")).toBeInTheDocument();
+    expect(within(panel).getByText("appointment-continuity")).toBeInTheDocument();
+    const proposal = within(panel).getByText("proposal.md").closest("details")!;
+    const specFile = within(panel).getByText("specs/appointment-continuity/spec.md").closest("details")!;
+    expect(proposal).toHaveAttribute("open");
+    expect(specFile).not.toHaveAttribute("open");
+    expect(within(specFile).getByText("WHEN").tagName).toBe("STRONG");
+    // The fences themselves never show.
+    expect(panel.textContent).not.toContain("````");
+  });
+
   it("opens the requirement as work and shows where it went", async () => {
     vi.mocked(api.get).mockImplementation(async (p: string) => {
       if (p === "/api/shape") return { conversations: summaries };
