@@ -124,6 +124,13 @@ describe("renderMarkdown diagrams", () => {
     expect(html).not.toContain("T1");
   });
 
+  it("reads a literal backslash-n in a label as a line break", () => {
+    const html = mermaidToChains('flowchart LR\n  A["Caller\\nPSTN"] --> B["beacon-api\\nbridge.py"]');
+    expect(html).toContain("Caller · PSTN");
+    expect(html).toContain("beacon-api · bridge.py");
+    expect(html).not.toContain("\\n");
+  });
+
   it("follows branches and reads flowchart labels with quotes and shapes", () => {
     expect(mermaidToChains('flowchart TD\n  A("Plan tests") --> B{Approve}\n  B --> C[Build]\n  B --> D[Ship]')).toBe(
       '<ol class="chain"><li>Plan tests → Approve → Build</li><li>Plan tests → Approve → Ship</li></ol>',

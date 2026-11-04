@@ -779,6 +779,8 @@ export interface ShapeMessage {
   body: string;
   bodyHtml: string;
   mocks: Array<{ html: string }>;
+  /** Mermaid diagrams the answer carried, drawn below its prose. */
+  diagrams?: Array<{ code: string }>;
   attachments: ShapeAttachment[];
   /** An answer is written in the background: pending until it lands, failed with `error` when it did not. */
   status?: "pending" | "done" | "failed";

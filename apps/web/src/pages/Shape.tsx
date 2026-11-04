@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { Diagram } from "../components/Diagram.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
@@ -563,6 +564,9 @@ function Message({ m, index, first, onRetry, retrying }: { m: ShapeMessage; inde
           <div className="markdown-body" dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />
           {m.mocks.map((mock, i) => (
             <Mock key={`${m.id}-${i}`} html={mock.html} n={index * 10 + i + 1} />
+          ))}
+          {(m.diagrams ?? []).map((d, i) => (
+            <Diagram key={`${m.id}-d${i}`} code={d.code} n={index * 10 + i + 1} />
           ))}
         </div>
       )}
