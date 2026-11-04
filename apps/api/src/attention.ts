@@ -1,4 +1,14 @@
-import { BUG_RETEST_STATE, EPIC_READY_STATE, GATE_STATES, MANUAL_TEST_STATE, READY_STATE, resolveGateApprovers, startStatusTakesApproval } from "@console/core";
+import {
+  BUG_RETEST_STATE,
+  EPIC_READY_STATE,
+  GATE_STATES,
+  IN_PROGRESS_LABEL,
+  MANUAL_TEST_STATE,
+  READY_STATE,
+  ROLE_START_STATES,
+  resolveGateApprovers,
+  startStatusTakesApproval,
+} from "@console/core";
 import { comments, estates, gateAssignments, issues, issueStateHistory, pullRequests, repos } from "@console/db";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
@@ -14,7 +24,9 @@ import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
  *      (assignee → author → approver of the stage it halted in)
  *   2  a gate awaiting this user (G1 / G2 / G3), or a fast-track PR awaiting
  *      merge (the fast lane has no gate — the merge is its one human step)
- *   3  a task awaiting this user's implementation `Approved`
+ *   3  a task awaiting this user's implementation `Approved`, or a task at
+ *      in-review / in-test waiting for anyone to start the Reviewer / QA
+ *      (those states start nothing on their own — FACTORY.md §3)
  *   4  factory:blocked with no ownership signal — the old broadcast entry,
  *      demoted so ownership always sorts above it
  * Within a rank: age descending. Blocked ages count from the blocked label's
@@ -185,6 +197,32 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
           link: `/epics/${epicId}`,
         });
       }
+      continue;
+    }
+
+    // A task at in-review or in-test is not an agent's: the label sits until a
+    // person starts the Reviewer or QA. There is no approver list for either
+    // (any collaborator may), so it is everyone's — unless the epic is
+    // expedited, when the factory takes the hop itself, or the run marker is
+    // on the task, when the role is already at work.
+    const roleStart = ROLE_START_STATES[state];
+    if (issue.kind === "task" && roleStart) {
+      if (expedited || issue.labels.includes(IN_PROGRESS_LABEL)) continue;
+      const roleName = roleStart.role === "reviewer" ? "the Reviewer" : "QA";
+      entries.push({
+        kind: "task-start",
+        rank: 3,
+        whyYou: `the task is written and waits for someone to start ${roleName} — the factory does not start it by itself; any collaborator may`,
+        epicId,
+        issueId: issue.id,
+        title: `#${issue.number} ${issue.title}`,
+        repo: row.repoFullName,
+        state,
+        ageDays,
+        question: null,
+        expedited,
+        link: `/epics/${epicId}?tab=tasks`,
+      });
       continue;
     }
 

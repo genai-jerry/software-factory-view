@@ -327,6 +327,20 @@ export const REVIEW_DONE_BODY = "Review Done";
 /** The one state `REVIEW_DONE_BODY` has any effect on. */
 export const IN_REVIEW_STATE = "factory:in-review";
 
+/** A task whose draft PR the Reviewer passed; QA is the next role a person starts. */
+export const IN_TEST_STATE = "factory:in-test";
+
+/**
+ * The two task states that start nothing on their own (FACTORY.md §3): the
+ * label sits until a person starts the next role, or expedite does it for
+ * them. Everything that lists "what waits on me" reads this, so the user view
+ * and the engineers' view cannot disagree about whether a person is needed.
+ */
+export const ROLE_START_STATES: Record<string, { role: "reviewer" | "qa"; label: string }> = {
+  [IN_REVIEW_STATE]: { role: "reviewer", label: "review" },
+  [IN_TEST_STATE]: { role: "qa", label: "test" },
+};
+
 export interface ApproverFile {
   spec: string[];
   design: string[];

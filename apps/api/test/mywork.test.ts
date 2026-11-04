@@ -216,6 +216,17 @@ beforeAll(async () => {
     ghUpdatedAt: new Date("2026-08-10T00:00:00Z"),
   });
 
+  // #22–#24: written tasks. #22 waits at in-review with nobody running — a
+  // person has to start the Reviewer, so the queue must say so. #23 is the
+  // same state with the run marker on (the Reviewer is at work), and #24 is
+  // in-test under an expedited epic (the factory starts QA itself): neither
+  // is anyone's decision.
+  const written = await mkIssue({ number: 26, title: "written epic", kind: "epic", factoryState: "factory:design-approved", author: "sam" });
+  await mkIssue({ number: 22, title: "task(26): written, waits for review", factoryState: "factory:in-review", parentIssueId: written.id });
+  await mkIssue({ number: 23, title: "task(26): being reviewed", factoryState: "factory:in-review", labels: ["factory:in-review", "factory:in-progress"], parentIssueId: written.id });
+  const expedited = await mkIssue({ number: 25, title: "expedited epic", kind: "epic", factoryState: "factory:design-approved", labels: ["factory:design-approved", "factory:expedite"], author: "sam" });
+  await mkIssue({ number: 24, title: "task(25): expedited, in test", factoryState: "factory:in-test", parentIssueId: expedited.id });
+
   // Foreign org data that must never appear for alice.
   const otherOrg = (await d.insert(orgs).values({ name: "other" }).returning())[0]!;
   const otherEstate = (await d.insert(estates).values({ orgId: otherOrg.id, name: "other", installationId: 2 }).returning())[0]!;
@@ -242,6 +253,7 @@ beforeAll(async () => {
   )[0]!;
 
   id.blockedMine = blockedMine.id;
+  id.written = written.id;
   id.fastTrack = fastTrack.id;
   id.epic = epic.id;
   id.waiting = waiting.id;
@@ -265,6 +277,20 @@ describe("/api/attention ranking", () => {
     expect(entries.find((e) => e.title === "#12 epic")!.rank).toBe(2);
     // Nothing from the foreign org.
     expect(entries.some((e) => e.title === "#1 foreign")).toBe(false);
+  });
+
+  it("asks for a Reviewer start on a written task, and not while one runs or under expedite", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/attention", headers: { cookie } });
+    const { entries } = res.json() as { entries: Array<Record<string, unknown>> };
+    const waits = entries.find((e) => e.title === "#22 task(26): written, waits for review")!;
+    expect(waits).toBeTruthy();
+    expect(waits.kind).toBe("task-start");
+    expect(waits.rank).toBe(3);
+    expect(waits.state).toBe("factory:in-review");
+    expect(waits.whyYou).toContain("start the Reviewer");
+    expect(waits.link).toBe(`/epics/${id.written}?tab=tasks`);
+    expect(entries.some((e) => e.title === "#23 task(26): being reviewed")).toBe(false);
+    expect(entries.some((e) => e.title === "#24 task(25): expedited, in test")).toBe(false);
   });
 
   it("announces a fast-track PR awaiting merge at gate rank", async () => {

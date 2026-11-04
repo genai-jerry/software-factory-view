@@ -141,6 +141,25 @@ describe("DecisionsQueuePage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e36/gate/request-changes", { body: "Make the window 14 days." }));
   });
 
+  it("starts a review from the card, one task at a time", async () => {
+    const review: AttentionEntry = { ...gate, kind: "task-start", rank: 3, epicId: "e97", issueId: "t195", title: "#195 task(97): A sender name on every linked number", state: "factory:in-review", link: "/epics/e97?tab=tasks" };
+    const test: AttentionEntry = { ...review, issueId: "t197", title: "#197 task(97): A resource is delivered once", state: "factory:in-test" };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/board")) return { columns: [], cards: [quietEpic] };
+      if (path.startsWith("/api/my-work")) return { needsYou: [review, test], mine: [], waitingOn: [] };
+      if (path.startsWith("/api/running")) return { running: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true, role: "reviewer", detail: "queued" });
+    renderAt("/decisions", <DecisionsQueuePage />);
+    expect(await screen.findByRole("heading", { name: "Start the review on 1 task and the test on 1 task" })).toBeInTheDocument();
+    expect(screen.getByText("A sender name on every linked number")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start the review" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/t195/start-role", { role: "reviewer" }));
+    expect(await screen.findByText("Started. The factory has it.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start the test" })).toBeInTheDocument();
+  });
+
   it("collapses the test cases into one Run card", async () => {
     renderAt("/decisions", <DecisionsQueuePage />);
     expect(await screen.findByRole("heading", { name: "Run 16 tests" })).toBeInTheDocument();

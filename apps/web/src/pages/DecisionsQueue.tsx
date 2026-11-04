@@ -4,8 +4,8 @@ import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
-import { STAGE_LABEL, decisionCards, type WorkItem } from "../lib/work.js";
-import type { BoardCard, MyWork } from "../types.js";
+import { ROLE_START_STATE, STAGE_LABEL, decisionCards, isRoleStart, roleStartLine, type WorkItem } from "../lib/work.js";
+import type { AttentionEntry, BoardCard, MyWork } from "../types.js";
 
 /**
  * Decisions — what needs a person (redesign board 2). One card per work item
@@ -72,6 +72,8 @@ function DecisionBody({ item: w }: { item: WorkItem }) {
       return <AnswerDecision item={w} />;
     case "run":
       return <RunDecision item={w} />;
+    case "review":
+      return <ReviewDecision item={w} />;
     case "ship":
       return (
         <>
@@ -228,6 +230,67 @@ function AnswerDecision({ item: w }: { item: WorkItem }) {
           <p className="muted">Your reply posts to the conversation on GitHub.</p>
         </div>
       )}
+      {failure && <p className="decision-failure">{failure}</p>}
+    </>
+  );
+}
+
+/**
+ * Written tasks whose review or test a person has to start. One button per
+ * task is the whole decision: it starts the Reviewer or QA on that task, as
+ * the engineers' Tasks tab does. Nothing here needs a GitHub comment.
+ */
+function ReviewDecision({ item: w }: { item: WorkItem }) {
+  const qc = useQueryClient();
+  const { failure, onError, clear } = useFailure();
+  const [started, setStarted] = useState<Set<string>>(new Set());
+  const [starting, setStarting] = useState<string | null>(null);
+  const waits = w.entries.filter(isRoleStart);
+  const start = useMutation({
+    mutationFn: (e: AttentionEntry) => api.post(`/api/issues/${e.issueId}/start-role`, { role: ROLE_START_STATE[e.state!]!.role }),
+    onMutate: (e) => {
+      clear();
+      setStarting(e.issueId);
+    },
+    onSuccess: (_r, e) => {
+      setStarted((s) => new Set(s).add(e.issueId));
+      return Promise.all([qc.invalidateQueries({ queryKey: ["my-work"] }), qc.invalidateQueries({ queryKey: ["board"] })]);
+    },
+    onError,
+    onSettled: () => setStarting(null),
+  });
+  const line = roleStartLine(waits);
+  return (
+    <>
+      <h3>Start {line}</h3>
+      <p className="need">You need to: start each one below. The factory does not start it by itself.</p>
+      <ul className="facts">
+        <li>A review reads the draft pull request and moves the task on to its test, or sends it back with changes.</li>
+        <li>A test checks the task against its scenarios and moves it on to the release.</li>
+      </ul>
+      <ul className="facts role-starts">
+        {waits.map((e) => {
+          const noun = ROLE_START_STATE[e.state!]!.noun;
+          const done = started.has(e.issueId);
+          return (
+            <li key={e.issueId} className="role-start">
+              <span>{e.title.replace(/^#\d+\s+/, "").replace(/^task\(\d+\):\s*/, "")}</span>
+              {done ? (
+                <span className="muted">Started. The factory has it.</span>
+              ) : (
+                <button type="button" className="primary" disabled={starting === e.issueId} onClick={() => start.mutate(e)}>
+                  {starting === e.issueId ? "Starting…" : `Start the ${noun}`}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="decision-actions">
+        <Link to={`/work/${w.card.epicId}`} className="button">
+          Open the item
+        </Link>
+      </div>
       {failure && <p className="decision-failure">{failure}</p>}
     </>
   );

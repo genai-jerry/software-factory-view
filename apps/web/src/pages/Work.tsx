@@ -132,13 +132,14 @@ export function WorkPage() {
 function countsLine(items: WorkItem[]): string {
   const n = (ask: string) => items.filter((w) => w.ask === ask).length;
   const parts = [
-    [n("answer"), "answer"],
-    [n("decide"), "approval"],
-    [n("run"), "test run"],
-    [n("release") + n("ship"), "release"],
-    [n("start"), "start"],
+    [n("answer"), "answer", "answers"],
+    [n("decide"), "approval", "approvals"],
+    [n("run"), "test run", "test runs"],
+    [n("release") + n("ship"), "release", "releases"],
+    [n("review"), "review to start", "reviews to start"],
+    [n("start"), "start", "starts"],
   ] as const;
-  const said = parts.filter(([c]) => c > 0).map(([c, w]) => `${c} ${w}${c === 1 ? "" : "s"}`);
+  const said = parts.filter(([c]) => c > 0).map(([c, one, many]) => `${c} ${c === 1 ? one : many}`);
   return said.length > 0 ? said.join(", ") : "all quiet";
 }
 
