@@ -6,6 +6,7 @@ import type { Db } from "@console/db";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { renderMarkdown } from "../render.js";
+import { requirementBody } from "../openspec-draft.js";
 import { SHAPE_INSTRUCTIONS, SPEC_INSTRUCTIONS } from "../shape-prompts.js";
 import { openWorkIssue } from "./activity.js";
 import { artifactSources, claudeTokenFor } from "./qa.js";
@@ -14,8 +15,9 @@ import { artifactSources, claudeTokenFor } from "./qa.js";
  * Shape — a conversation that turns an idea into work. A person picks the
  * repository the chat may read, talks in text and screenshots, asks for a
  * page or a change to be visualised (the answer carries a self-contained
- * HTML mock), then has the conversation written up as a requirement and
- * opened as a GitHub issue with `factory:intake` — the same door as Add work.
+ * HTML mock), then has the conversation written up as a factory requirement
+ * with a draft OpenSpec change (proposal and specs) and opened as a GitHub
+ * issue with `factory:intake` — the same door as Add work.
  *
  * The answers come from the orchestrator's read-only Claude session in a
  * checkout of the repo (POST /ask), as Ask does; images ride along for its
@@ -585,7 +587,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const header = epic
         ? `${where} The conversation is about epic #${epic.number}, "${epic.title}"; the requirement is for a change to it.`
         : conv.scope === "project"
-          ? `${where} In Context / constraints, say which repositories change and what each one takes on.`
+          ? `${where} In Affected repositories, say which repositories change and what each one takes on.`
           : where;
       const got = await askOrchestrator(deps.cfg, {
         owner,
@@ -670,7 +672,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const diagrams = answered.flatMap((a) => a.diagrams);
     const attachments = messages.flatMap((m) => m.attachments ?? []);
     const origin = deps.cfg.PUBLIC_ORIGIN.replace(/\/+$/, "");
-    const parts = [conv.spec.trim()];
+    // The form first, then the OpenSpec draft one file per fold.
+    const parts = [requirementBody(conv.spec)];
     if (mocks.length > 0) {
       parts.push(
         "## Mockups\n\n" +

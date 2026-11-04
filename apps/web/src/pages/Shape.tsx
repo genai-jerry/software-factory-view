@@ -6,6 +6,7 @@ import { Diagram } from "../components/Diagram.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
+import { splitOpenSpec } from "../lib/openspec.js";
 import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
 
 /**
@@ -658,7 +659,7 @@ function SpecPanel({
           </button>
         </span>
       </div>
-      <p className="muted">This is what the factory reads when you open it as work. Change anything that is not right.</p>
+      <p className="muted">This is the factory requirement, with a draft OpenSpec change the factory starts from when you open it as work. Change anything that is not right.</p>
       {failedNote && (
         <p className="decision-failure">
           The last rewrite failed: {failedNote}{" "}
@@ -667,10 +668,38 @@ function SpecPanel({
           </button>
         </p>
       )}
-      {editing ? <textarea className="shape-spec-edit" value={draft} onChange={(e) => setDraft(e.target.value)} rows={24} aria-label="Requirement text" /> : <SpecView markdown={spec} />}
+      {editing ? <textarea className="shape-spec-edit" value={draft} onChange={(e) => setDraft(e.target.value)} rows={24} aria-label="Requirement text" /> : <RequirementView spec={spec} />}
       {save.isError && <p className="decision-failure">{failureText(save.error)}</p>}
     </aside>
   );
+}
+
+/** The requirement's form, then its OpenSpec draft one file per fold — proposal open, specs closed. */
+function RequirementView({ spec }: { spec: string }) {
+  const { form, slug, files } = splitOpenSpec(spec);
+  if (files.length === 0) return <SpecView markdown={spec} />;
+  return (
+    <>
+      <SpecView markdown={form} />
+      <h3 className="shape-openspec-title">
+        OpenSpec draft{slug ? <code>{slug}</code> : null}
+      </h3>
+      {files.map((f, i) => (
+        <details key={f.path} className="shape-openspec-file" open={i === 0}>
+          <summary>
+            <code>{f.path}</code>
+          </summary>
+          <SpecView markdown={f.content} />
+        </details>
+      ))}
+    </>
+  );
+}
+
+/** `**bold**` inside a line, as the spec's WHEN/THEN keywords are written. */
+function Inline({ text }: { text: string }) {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))}</>;
 }
 
 /** A light rendering of the spec's markdown: headings, bullets, numbered lines, paragraphs. */
@@ -699,17 +728,23 @@ function SpecView({ markdown }: { markdown: string }) {
         ) : b.kind === "ul" ? (
           <ul key={i}>
             {b.lines.map((l, j) => (
-              <li key={j}>{l}</li>
+              <li key={j}>
+                <Inline text={l} />
+              </li>
             ))}
           </ul>
         ) : b.kind === "ol" ? (
           <ol key={i}>
             {b.lines.map((l, j) => (
-              <li key={j}>{l}</li>
+              <li key={j}>
+                <Inline text={l} />
+              </li>
             ))}
           </ol>
         ) : (
-          <p key={i}>{b.lines[0]}</p>
+          <p key={i}>
+            <Inline text={b.lines[0]!} />
+          </p>
         ),
       )}
     </div>
