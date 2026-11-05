@@ -1305,6 +1305,8 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .task-row:first-child { border-top: 0; }
 .task-n { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .task-row.done .task-title { color: var(--text-dim); }
+.task-title { overflow-wrap: anywhere; }
+.task-after { display: block; margin-top: 0.15rem; color: var(--text-dim); font-size: 0.82rem; }
 .task-start { grid-column: 2 / -1; }
 .role-start { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
 .needs-answer { border-color: var(--halt); }

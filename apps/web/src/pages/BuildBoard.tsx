@@ -58,7 +58,8 @@ export function taskWord(t: Task): { word: TaskWord; text: string } {
   if (s === "factory:in-progress") return { word: "writing", text: "Being written" };
   const after = t.blockedBy.filter((d) => d.open);
   if (s === "factory:ready" && t.approvable) return { word: "waiting-start", text: "Waiting for a start" };
-  if (after.length > 0) return { word: "waiting-on", text: `Waiting on ${namesOf(after)}` };
+  // The chip stays short so every row lines up; the names go under the title.
+  if (after.length > 0) return { word: "waiting-on", text: after.length === 1 ? "Waiting on another task" : `Waiting on ${after.length} tasks` };
   return { word: "queued", text: "Waiting" };
 }
 
@@ -97,7 +98,10 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
           {words.map(({ t, word, text }, i) => (
             <li key={t.id} className={`task-row ${word}`}>
               <span className="task-n">{i + 1}</span>
-              <span className="task-title">{plainTitle(t.title)}</span>
+              <span className="task-title">
+                {plainTitle(t.title)}
+                {word === "waiting-on" && <span className="task-after">After {namesOf(t.blockedBy.filter((d) => d.open))}</span>}
+              </span>
               <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : ["waiting-start", "waiting-review", "waiting-test"].includes(word) ? "decide" : ["writing", "reviewing", "testing"].includes(word) ? "wait" : ""}`}>
                 {text}
               </span>

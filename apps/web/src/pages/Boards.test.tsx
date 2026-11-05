@@ -178,7 +178,15 @@ describe("BuildBoard", () => {
   ];
 
   it("says each task's standing in words", () => {
-    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on Sync the setter status"]);
+    expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on another task"]);
+  });
+
+  it("keeps the chip short and names what a task waits on under its title", () => {
+    const open = (id: string, title: string) => ({ id, number: 0, title, state: "factory:ready", open: true, htmlUrl: "" });
+    const many = task({ id: "e", number: 7, title: "task(34): test data — load DS-1..DS-5", state: "factory:ready", blockedBy: [open("x", "task(34): A sender name"), open("y", "task(34): A lead keeps the number")] });
+    expect(taskWord(many).text).toBe("Waiting on 2 tasks");
+    const { container } = renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, [many])} />);
+    expect(container.querySelector(".task-after")?.textContent).toBe("After A sender name, A lead keeps the number");
   });
 
   it("answers a stopped builder from the board", async () => {
