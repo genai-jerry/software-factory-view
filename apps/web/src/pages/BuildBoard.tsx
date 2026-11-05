@@ -149,11 +149,14 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         <h2>Your decision</h2>
         {stopped.length > 0 ? (
           <p className="need">You need to: answer the question{stopped.length === 1 ? "" : "s"} above. Nothing else waits on you here.</p>
+        ) : data.expedite.on ? (
+          <p className="need">Nothing waits on you. The factory runs it through to the staging release, and asks you once: to release it to staging.</p>
         ) : toStart > 0 ? (
           <p className="need">You need to: start {startLine(starts.length, reviews.length, tests.length, merges.length)}, above.</p>
         ) : (
           <p className="need">Nothing waits on you. The factory has it.</p>
         )}
+        {data.epic.open && stopped.length === 0 && <RunThrough epicId={data.epic.id} expedite={data.expedite} toStart={toStart} />}
         <p className="muted">
           {data.systemTests.runOn === "staging"
             ? "When every task is merged, you are asked to release the item to staging. The tests run there."
@@ -179,6 +182,67 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * One switch instead of a start per step: `factory:expedite` on the epic
+ * (FACTORY.md §4a). From then on the factory starts every review, test and
+ * merge itself and the tasks that wait on them, and stops once — at the
+ * release to staging, which stays the reader's. The engineers' view calls it
+ * expedite; here it is said by what it does.
+ */
+function RunThrough({ epicId, expedite, toStart }: { epicId: string; expedite: EpicWorkspace["expedite"]; toStart: number }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const flip = useMutation({
+    mutationFn: (on: boolean) => api.post<{ ok: boolean; on: boolean }>(`/api/epics/${epicId}/expedite`, { on }),
+    onSuccess: () => {
+      setConfirming(false);
+      setFailure(null);
+      void qc.invalidateQueries({ queryKey: ["epic", epicId] });
+      void qc.invalidateQueries({ queryKey: ["my-work"] });
+    },
+    onError: (e) => setFailure(e instanceof ApiError ? e.message : "That did not go through. Try again."),
+  });
+  if (expedite.on) {
+    return (
+      <div className="run-through">
+        <button type="button" disabled={!expedite.available || flip.isPending} onClick={() => flip.mutate(false)}>
+          {flip.isPending ? "Stopping…" : "Ask me at each step instead"}
+        </button>
+        {failure && <p className="decision-failure">{failure}</p>}
+      </div>
+    );
+  }
+  if (!expedite.available) return null;
+  return (
+    <div className="run-through">
+      {confirming ? (
+        <div className="decision-reply">
+          <p>
+            From here the factory starts each step itself: {toStart > 0 ? `the ${toStart === 1 ? "start" : `${toStart} starts`} above, ` : ""}every review, test and
+            merge, and the tasks that wait on them. It stops once, at the release to staging, and asks you. Nothing reaches production without you.
+          </p>
+          <div className="decision-actions">
+            <button type="button" className="primary" disabled={flip.isPending} onClick={() => flip.mutate(true)}>
+              {flip.isPending ? "Starting…" : "Run it to staging"}
+            </button>
+            <button type="button" onClick={() => setConfirming(false)}>
+              Not now
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="decision-actions">
+          <button type="button" onClick={() => setConfirming(true)}>
+            Let the factory run it to staging
+          </button>
+        </div>
+      )}
+      {failure && <p className="decision-failure">{failure}</p>}
+    </div>
   );
 }
 
