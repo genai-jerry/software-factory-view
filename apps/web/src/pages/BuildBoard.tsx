@@ -20,13 +20,31 @@ import type { EpicWorkspace, IssuePeekData, NextStep } from "../types.js";
 
 type Task = EpicWorkspace["tasks"][number];
 
-export type TaskWord = "done" | "writing" | "reviewing" | "testing" | "stopped" | "waiting-start" | "waiting-review" | "waiting-test" | "waiting-on" | "queued";
+export type TaskWord =
+  | "done"
+  | "writing"
+  | "reviewing"
+  | "testing"
+  | "merging"
+  | "stopped"
+  | "waiting-start"
+  | "waiting-review"
+  | "waiting-test"
+  | "waiting-merge"
+  | "waiting-on"
+  | "queued";
 
 /** The words this board uses for the role a person starts. */
 const ROLE_WORD: Record<string, { word: TaskWord; noun: string; button: string }> = {
   reviewer: { word: "waiting-review", noun: "review", button: "Start the review" },
   qa: { word: "waiting-test", noun: "test", button: "Start the test" },
+  // The Release Manager's first phase: the task's pull request onto the
+  // epic branch (§6b). "Merge" is the reader's word for it.
+  release: { word: "waiting-merge", noun: "merge", button: "Start the merge" },
 };
+
+const ROLE_START_WORDS: TaskWord[] = ["waiting-review", "waiting-test", "waiting-merge"];
+const IN_FLIGHT_WORDS: TaskWord[] = ["writing", "reviewing", "testing", "merging"];
 
 /**
  * The next role is one a person has to start, and nobody has: not expedited
@@ -46,15 +64,20 @@ function roleStep(t: Task): NextStep {
 
 export function taskWord(t: Task): { word: TaskWord; text: string } {
   const s = t.state ?? "";
-  if (!t.open || s === "factory:on-epic" || s === "factory:ready-to-ship" || s === "factory:deployed") return { word: "done", text: "Done" };
+  if (!t.open || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed") return { word: "done", text: "Done" };
   if (s === "factory:blocked") return { word: "stopped", text: "Stopped · asks you" };
   if (t.running && t.runningRole === "reviewer") return { word: "reviewing", text: "Being reviewed" };
   if (t.running && t.runningRole === "qa") return { word: "testing", text: "Being tested" };
+  if (t.running && t.runningRole === "release") return { word: "merging", text: "Being merged" };
   if (t.running) return { word: "writing", text: "Being written" };
   const role = roleStartOf(t);
-  if (role && (s === "factory:in-review" || s === "factory:in-test")) return { word: role.word, text: `Waiting for you to start the ${role.noun}` };
+  if (role && (s === "factory:in-review" || s === "factory:in-test" || s === "factory:ready-to-ship")) {
+    return { word: role.word, text: `Waiting for you to start the ${role.noun}` };
+  }
   if (s === "factory:in-review") return { word: "reviewing", text: "Waiting for review" };
   if (s === "factory:in-test") return { word: "testing", text: "Waiting for test" };
+  // Green, and its merge onto the epic branch is the factory's (expedite).
+  if (s === "factory:ready-to-ship") return { word: "merging", text: "Waiting for the merge" };
   if (s === "factory:in-progress") return { word: "writing", text: "Being written" };
   const after = t.blockedBy.filter((d) => d.open);
   if (s === "factory:ready" && t.approvable) return { word: "waiting-start", text: "Waiting for a start" };
@@ -67,12 +90,13 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
   const tasks = data.tasks.filter((t) => t.kind !== "test").sort((a, b) => a.number - b.number);
   const words = tasks.map((t) => ({ t, ...taskWord(t) }));
   const built = words.filter((w) => w.word === "done").length;
-  const inFlight = words.filter((w) => ["writing", "reviewing", "testing"].includes(w.word)).length;
+  const inFlight = words.filter((w) => IN_FLIGHT_WORDS.includes(w.word)).length;
   const stopped = words.filter((w) => w.word === "stopped");
   const starts = words.filter((w) => w.word === "waiting-start");
   const reviews = words.filter((w) => w.word === "waiting-review");
   const tests = words.filter((w) => w.word === "waiting-test");
-  const toStart = starts.length + reviews.length + tests.length;
+  const merges = words.filter((w) => w.word === "waiting-merge");
+  const toStart = starts.length + reviews.length + tests.length + merges.length;
   const waiting = words.filter((w) => w.word === "waiting-on" || w.word === "queued").length;
   const running = tasks.filter((t) => t.running && t.open);
 
@@ -102,7 +126,7 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
                 {plainTitle(t.title)}
                 {word === "waiting-on" && <span className="task-after">After {namesOf(t.blockedBy.filter((d) => d.open))}</span>}
               </span>
-              <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : ["waiting-start", "waiting-review", "waiting-test"].includes(word) ? "decide" : ["writing", "reviewing", "testing"].includes(word) ? "wait" : ""}`}>
+              <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : word === "waiting-start" || ROLE_START_WORDS.includes(word) ? "decide" : IN_FLIGHT_WORDS.includes(word) ? "wait" : ""}`}>
                 {text}
               </span>
               {word === "waiting-start" && (
@@ -110,7 +134,7 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
                   <TaskStartGate epicId={data.epic.id} taskId={t.id} number={t.number} startGate={data.startGate} status={t.startStatus} />
                 </span>
               )}
-              {(word === "waiting-review" || word === "waiting-test") && (
+              {ROLE_START_WORDS.includes(word) && (
                 <span className="task-start">
                   <StartRoleButton issueId={t.id} step={roleStep(t)} />
                 </span>
@@ -126,11 +150,15 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         {stopped.length > 0 ? (
           <p className="need">You need to: answer the question{stopped.length === 1 ? "" : "s"} above. Nothing else waits on you here.</p>
         ) : toStart > 0 ? (
-          <p className="need">You need to: start {startLine(starts.length, reviews.length, tests.length)}, above.</p>
+          <p className="need">You need to: start {startLine(starts.length, reviews.length, tests.length, merges.length)}, above.</p>
         ) : (
           <p className="need">Nothing waits on you. The factory has it.</p>
         )}
-        <p className="muted">When the build finishes, the tests are run. You are asked again at the release.</p>
+        <p className="muted">
+          {data.systemTests.runOn === "staging"
+            ? "When every task is merged, you are asked to release the item to staging. The tests run there."
+            : "When the build finishes, the tests are run. You are asked again at the release."}
+        </p>
       </section>
 
       {running.length > 0 && (
@@ -154,12 +182,13 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
   );
 }
 
-/** "the review on 3 tasks and the test on 1 task" — or the build starts. */
-function startLine(builds: number, reviews: number, tests: number): string {
+/** "the review on 3 tasks and the merge on 1 task" — or the build starts. */
+function startLine(builds: number, reviews: number, tests: number, merges = 0): string {
   const parts: string[] = [];
   if (builds > 0) parts.push(builds === 1 ? "the task that waits for a start" : `${builds} tasks that wait for a start`);
   if (reviews > 0) parts.push(`the review on ${reviews === 1 ? "1 task" : `${reviews} tasks`}`);
   if (tests > 0) parts.push(`the test on ${tests === 1 ? "1 task" : `${tests} tasks`}`);
+  if (merges > 0) parts.push(`the merge on ${merges === 1 ? "1 task" : `${merges} tasks`}`);
   return parts.join(" and ");
 }
 

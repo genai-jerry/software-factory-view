@@ -230,6 +230,70 @@ describe("WorkItemPage at Test", () => {
   });
 });
 
+describe("WorkItemPage at Test with cases that run on staging", () => {
+  const staging = (state: string, tasks: EpicWorkspace["tasks"]): EpicWorkspace => ({
+    ...epic,
+    epic: { ...epic.epic, state, labels: [state] },
+    tasks,
+    rollup: { ...epic.rollup, total: tasks.filter((t) => t.kind !== "test").length },
+    systemTests: { ...epic.systemTests, runOn: "staging" },
+  });
+  const pending = [
+    task({ id: "c1", number: 66, title: "test(35): ST-1 A lead's status reaches the page", kind: "test", caseId: "ST-1", state: null }),
+    task({ id: "c2", number: 67, title: "test(35): ST-2 A placeholder", kind: "test", caseId: "ST-2", state: null }),
+  ];
+
+  it("says the tests wait for staging, and offers the staging release at gate GS", async () => {
+    const data = staging("factory:epic-ready", [task({ id: "k1", number: 62, title: "task(35): compute counts", state: "factory:on-epic" }), ...pending]);
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return data;
+      if (path.startsWith("/api/epics/e35/artifact")) return { path: "", ref: "proposed", sha: "s", markdown: PLAN, html: "", otherSha: null };
+      if (path === "/api/epics/e35/gate")
+        return { gate: "staging", label: "GS", state: "factory:epic-ready", amApprover: true, approvers: [], approversFrom: null, commentApprovable: true, assembly: null, documentPrs: [], releasePrs: [], artifacts: [], currentSha: null, changedSinceLastView: false, lastViewedSha: null, openQuestions: [] };
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      if (path.startsWith("/api/threads")) return { threads: [] };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    // The epic's label puts it at Release; the reader who opens the Test
+    // stage from the rail still has to be told, so the board is rendered directly.
+    const { TestBoard } = await import("./WorkItem.js");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <TestBoard data={data} cases={pending} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("You need to: release it to staging, or hold it.")).toBeInTheDocument();
+    expect(screen.getByText("You need to: release the item to staging, above. The tests run there.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Release to staging" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e35/gate/approve", { acknowledgeOpenQuestions: false }));
+  });
+
+  it("says what still has to happen before the staging release when the build is not finished", async () => {
+    const data = staging("factory:design-approved", [
+      task({ id: "k1", number: 62, title: "task(35): compute counts", state: "factory:ready-to-ship" }),
+      task({ id: "k2", number: 63, title: "task(35): show counts", state: null }),
+      ...pending,
+    ]);
+    const { TestBoard } = await import("./WorkItem.js");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <TestBoard data={data} cases={pending} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("heading", { name: "Staging first" })).toBeInTheDocument();
+    expect(screen.getByText(/1 task is still to build and 1 task waits for a merge onto the item's branch\. The Build stage has the buttons\./)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Waiting for staging" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Release to staging" })).toBeNull();
+  });
+});
+
 describe("WorkItemPage on one test case", () => {
   it("shows the case's steps and takes the verdict, naming its epic", async () => {
     const caseIssue: EpicWorkspace = {

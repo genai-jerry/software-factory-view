@@ -32,15 +32,23 @@ const BUILD = new Set(["factory:design-approved", "factory:ready", "factory:in-r
 const RELEASE = new Set(["factory:epic-ready", "factory:in-staging", "factory:deployed"]);
 
 /**
- * Every code task is written, reviewed and tested: nothing is ready, in
- * flight or held. `waiting` is left out on purpose: the rollup counts a task
- * as waiting while its blocker is still open, and a blocker on the epic
- * branch stays open until the epic closes, so an assembled epic shows waiting
- * tasks that are in fact done.
+ * Every code task is written, reviewed, tested and merged onto the epic
+ * branch: nothing is unstarted, ready, in flight, held, or waiting for its
+ * merge. `waiting` is left out on purpose: the rollup counts a task as
+ * waiting while its blocker is still open, and a blocker on the epic branch
+ * stays open until the epic closes, so an assembled epic shows waiting tasks
+ * that are in fact done. `notStarted` is the count that tells those apart.
  */
 function buildFinished(tasks: TaskRollup | undefined): boolean {
   if (!tasks || tasks.total === 0) return false;
-  return tasks.ready === 0 && tasks.inReview === 0 && tasks.inTest === 0 && tasks.blocked === 0;
+  return (
+    tasks.ready === 0 &&
+    tasks.inReview === 0 &&
+    tasks.inTest === 0 &&
+    tasks.blocked === 0 &&
+    (tasks.readyToShip ?? 0) === 0 &&
+    (tasks.notStarted ?? 0) === 0
+  );
 }
 
 export function stageOf(state: string | null | undefined, tasks?: TaskRollup): Stage | null {
@@ -59,14 +67,24 @@ export function stageOf(state: string | null | undefined, tasks?: TaskRollup): S
 export type Ask = "decide" | "answer" | "run" | "review" | "start" | "release" | "ship";
 
 /**
- * A task at in-review or in-test: written, and waiting for a person to start
- * the Reviewer or QA. The queue files it as a `task-start` like a build
- * start, and the state tells the two apart.
+ * A task at in-review, in-test or ready-to-ship: written, and waiting for a
+ * person to start the Reviewer, QA or the Release Manager (which merges it
+ * onto the epic branch). The queue files it as a `task-start` like a build
+ * start, and the state tells them apart.
  */
-export const ROLE_START_STATE: Record<string, { role: "reviewer" | "qa"; noun: string }> = {
+export const ROLE_START_STATE: Record<string, { role: "reviewer" | "qa" | "release"; noun: string }> = {
   "factory:in-review": { role: "reviewer", noun: "review" },
   "factory:in-test": { role: "qa", noun: "test" },
+  "factory:ready-to-ship": { role: "release", noun: "merge" },
 };
+
+/** "the review and the merge" — the kinds of start these entries ask for. */
+export function roleStartNouns(entries: AttentionEntry[]): string {
+  const nouns = Object.entries(ROLE_START_STATE)
+    .filter(([state]) => entries.some((e) => isRoleStart(e) && e.state === state))
+    .map(([, { noun }]) => `the ${noun}`);
+  return nouns.join(" and ");
+}
 
 export function isRoleStart(e: AttentionEntry): boolean {
   return e.kind === "task-start" && e.state != null && e.state in ROLE_START_STATE;
@@ -256,9 +274,9 @@ function isHousekeeping(card: BoardCard): boolean {
   return card.title.startsWith("Factory: repo profile");
 }
 
-function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[]): string {
+function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[], entries: AttentionEntry[] = []): string {
   if (ask) {
-    const verb = { decide: "decide", answer: "answer", run: "run the tests", review: "start the review", start: "start it", release: "release", ship: "ship" }[ask];
+    const verb = { decide: "decide", answer: "answer", run: "run the tests", review: `start ${roleStartNouns(entries) || "the review"}`, start: "start it", release: "release", ship: "ship" }[ask];
     return `You ${verb}`;
   }
   // A run on the epic itself is the factory acting on the gate; nobody
@@ -318,7 +336,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     const picked = epicRun ? null : askOf(entries);
     const ask = picked?.ask ?? null;
     const pointer = picked ? pointerFor(picked.ask, picked.entry, card, entries) : workingLine(stage, card, live);
-    const who = whoFor(ask, card, live);
+    const who = whoFor(ask, card, live, entries);
     const item: WorkItem = { card, stage, entries, running: live, ask, pointer, who, link: workLink(card.epicId, picked?.entry.link) };
     if (!card.open) {
       done.push(item);

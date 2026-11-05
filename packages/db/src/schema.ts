@@ -202,6 +202,8 @@ export const repos = pgTable(
      */
     systemTests: boolean("system_tests"),
     testMode: text("test_mode"), // gate | advisory
+    /** Where the cases run: `epic` (a preview per epic) or `staging` (after gate GS). Null is unread. */
+    testRunOn: text("test_run_on"),
     /**
      * Bug reports (FACTORY.md §4c), from the same file. Null is "unread", the
      * same as the two above; the parsed value already resolves the follows-

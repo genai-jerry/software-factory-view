@@ -29,6 +29,8 @@ export interface EpicProgress {
   shipping: number;
   /** Released to an implementer and not started (`factory:ready`). */
   ready?: number;
+  /** Open, and not released by the Dispatcher yet: no factory state. */
+  notStarted?: number;
   /** Of `shipping`: green, waiting for the Release Manager. */
   readyToShip?: number;
   /** Of `shipping`: merged onto the epic branch. */

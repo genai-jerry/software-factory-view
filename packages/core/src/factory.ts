@@ -336,9 +336,12 @@ export const IN_TEST_STATE = "factory:in-test";
  * them. Everything that lists "what waits on me" reads this, so the user view
  * and the engineers' view cannot disagree about whether a person is needed.
  */
-export const ROLE_START_STATES: Record<string, { role: "reviewer" | "qa"; label: string }> = {
+export const ROLE_START_STATES: Record<string, { role: "reviewer" | "qa" | "release"; label: string }> = {
   [IN_REVIEW_STATE]: { role: "reviewer", label: "review" },
   [IN_TEST_STATE]: { role: "qa", label: "test" },
+  // Green and waiting for the Release Manager to merge it onto the epic
+  // branch (§6b). The same shape: the label sits until a person starts it.
+  "factory:ready-to-ship": { role: "release", label: "merge" },
 };
 
 export interface ApproverFile {

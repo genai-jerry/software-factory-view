@@ -265,8 +265,11 @@ function ReviewDecision({ item: w }: { item: WorkItem }) {
       <h3>Start {line}</h3>
       <p className="need">You need to: start each one below. The factory does not start it by itself.</p>
       <ul className="facts">
-        <li>A review reads the draft pull request and moves the task on to its test, or sends it back with changes.</li>
-        <li>A test checks the task against its scenarios and moves it on to the release.</li>
+        {waits.some((e) => e.state === "factory:in-review") && <li>A review reads the draft pull request and moves the task on to its test, or sends it back with changes.</li>}
+        {waits.some((e) => e.state === "factory:in-test") && <li>A test checks the task against its scenarios and moves it on to its merge.</li>}
+        {waits.some((e) => e.state === "factory:ready-to-ship") && (
+          <li>A merge puts the task on the item's own branch. When every task is there, you are asked to release the item to staging.</li>
+        )}
       </ul>
       <ul className="facts role-starts">
         {waits.map((e) => {

@@ -136,7 +136,7 @@ function countsLine(items: WorkItem[]): string {
     [n("decide"), "approval", "approvals"],
     [n("run"), "test run", "test runs"],
     [n("release") + n("ship"), "release", "releases"],
-    [n("review"), "review to start", "reviews to start"],
+    [n("review"), "step to start", "steps to start"],
     [n("start"), "start", "starts"],
   ] as const;
   const said = parts.filter(([c]) => c > 0).map(([c, one, many]) => `${c} ${c === 1 ? one : many}`);

@@ -224,6 +224,7 @@ beforeAll(async () => {
   const written = await mkIssue({ number: 26, title: "written epic", kind: "epic", factoryState: "factory:design-approved", author: "sam" });
   await mkIssue({ number: 22, title: "task(26): written, waits for review", factoryState: "factory:in-review", parentIssueId: written.id });
   await mkIssue({ number: 23, title: "task(26): being reviewed", factoryState: "factory:in-review", labels: ["factory:in-review", "factory:in-progress"], parentIssueId: written.id });
+  await mkIssue({ number: 27, title: "task(26): green, waits for its merge", factoryState: "factory:ready-to-ship", parentIssueId: written.id });
   const expedited = await mkIssue({ number: 25, title: "expedited epic", kind: "epic", factoryState: "factory:design-approved", labels: ["factory:design-approved", "factory:expedite"], author: "sam" });
   await mkIssue({ number: 24, title: "task(25): expedited, in test", factoryState: "factory:in-test", parentIssueId: expedited.id });
 
@@ -290,6 +291,10 @@ describe("/api/attention ranking", () => {
     expect(waits.whyYou).toContain("start the Reviewer");
     expect(waits.link).toBe(`/epics/${id.written}?tab=tasks`);
     expect(entries.some((e) => e.title === "#23 task(26): being reviewed")).toBe(false);
+    const merge = entries.find((e) => e.title === "#27 task(26): green, waits for its merge")!;
+    expect(merge.kind).toBe("task-start");
+    expect(merge.state).toBe("factory:ready-to-ship");
+    expect(merge.whyYou).toContain("start the Release Manager");
     expect(entries.some((e) => e.title === "#24 task(25): expedited, in test")).toBe(false);
   });
 
