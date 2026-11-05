@@ -84,7 +84,7 @@ export function OrchestratorRunPage() {
                     {story.soFar.map((p, i) => (
                       <li key={i} className={p.now ? "now" : "done"}>
                         <span>{p.words}</span>
-                        <span className="muted">{p.now ? "now" : p.minutes !== null ? `${p.minutes} min` : ""}</span>
+                        <span className="muted">{p.took}</span>
                       </li>
                     ))}
                   </ol>

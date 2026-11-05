@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { afterRole, phaseWords, stepOf, storyOf } from "./runs.js";
+import { afterRole, lengthWords, phaseWords, stepOf, storyOf } from "./runs.js";
 
 /**
  * A run told in four steps from the orchestrator's phase events. The
@@ -39,6 +39,9 @@ describe("storyOf", () => {
     ]);
     expect(s.soFar[2]!.minutes).toBe(9);
     expect(s.soFar[4]!.now).toBe(true);
+    // Setup takes seconds: it reads in seconds, not as "0 min".
+    expect(s.soFar.slice(0, 3).map((x) => x.took)).toEqual(["4 s", "55 s", "9 min"]);
+    expect(s.soFar[4]!.took).toMatch(/so far$/);
   });
 
   it("tells a finished run by its outcome", () => {
@@ -60,5 +63,11 @@ describe("words", () => {
     expect(stepOf("pushing the branch")).toBe("handover");
     expect(phaseWords("running Claude (x)", "reviewer")).toBe("Reading the change and checking it against the design.");
     expect(afterRole("implementer")).toMatch(/^The reviewer checks the change/);
+  });
+});
+
+describe("lengthWords", () => {
+  it("says seconds under a minute, minutes under an hour, then hours", () => {
+    expect([0, 12, 59, 60, 359, 3600, 3900].map(lengthWords)).toEqual(["1 s", "12 s", "59 s", "1 min", "6 min", "1 h", "1 h 5 min"]);
   });
 });
