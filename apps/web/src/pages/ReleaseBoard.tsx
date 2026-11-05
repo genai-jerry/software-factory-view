@@ -207,6 +207,20 @@ function useFailure() {
   return { failure, onError: (e: unknown) => setFailure(e instanceof ApiError ? e.message : "That did not go through. Try again."), clear: () => setFailure(null) };
 }
 
+/**
+ * The staging decision on its own, for a board that is not the Release
+ * board: the Test board shows it when the cases run on staging and the item
+ * has reached gate GS, because releasing is what makes the cases runnable.
+ */
+export function StagingRelease({ data }: { data: EpicWorkspace }) {
+  const gate = useQuery({
+    queryKey: ["gate", data.epic.id],
+    queryFn: () => api.get<GatePanelData>(`/api/epics/${data.epic.id}/gate`),
+    retry: false,
+  });
+  return <ReleaseToStaging data={data} gate={gate.data ?? null} />;
+}
+
 function ReleaseToStaging({ data, gate }: { data: EpicWorkspace; gate: GatePanelData | null }) {
   const qc = useQueryClient();
   const { failure, onError } = useFailure();

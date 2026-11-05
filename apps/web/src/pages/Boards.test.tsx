@@ -233,6 +233,25 @@ describe("BuildBoard", () => {
     expect(await screen.findByText(/Started — run queued/)).toBeInTheDocument();
   });
 
+  it("asks the reader to start the merge on a green task, and counts it as built only once it is on the epic branch", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true, role: "release", detail: "run queued" });
+    const mergeStep = { who: "you, then the Release Manager", how: "Start the Release Manager.", startRole: "release" as const, startLabel: "Start the Release Manager", waitsOnPerson: true, automatic: false };
+    const green = [
+      task({ id: "g1", number: 3, title: "task(34): A sender name", state: "factory:ready-to-ship", nextStep: mergeStep }),
+      task({ id: "g2", number: 5, title: "task(34): Delivered once", state: "factory:ready-to-ship", nextStep: mergeStep, running: true, runningRole: "release" }),
+      task({ id: "g3", number: 7, title: "task(34): Expedited", state: "factory:ready-to-ship", nextStep: { ...mergeStep, automatic: true, waitsOnPerson: false } }),
+      task({ id: "g4", number: 8, title: "task(34): On the branch", state: "factory:on-epic" }),
+    ];
+    expect(green.map((t) => taskWord(t).text)).toEqual(["Waiting for you to start the merge", "Being merged", "Waiting for the merge", "Done"]);
+    const data = epic({ state: "factory:design-approved" }, green);
+    renderIn(<BuildBoard data={{ ...data, systemTests: { ...data.systemTests, runOn: "staging" } }} />);
+    expect(screen.getByText("1 of 4 built")).toBeInTheDocument();
+    expect(screen.getByText("You need to: start the merge on 1 task, above.")).toBeInTheDocument();
+    expect(screen.getByText(/you are asked to release the item to staging. The tests run there/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start the merge" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/g1/start-role", { role: "release" }));
+  });
+
   it("lists every question when the role asked more than one", async () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path.includes("/peek"))

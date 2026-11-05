@@ -114,6 +114,9 @@ beforeAll(async () => {
   await mkIssue(repo.id, { number: 12, title: "task(10): b", factoryState: "factory:in-test", parentIssueId: building.id });
   await mkIssue(repo.id, { number: 13, title: "task(10): c", factoryState: "factory:on-epic", parentIssueId: building.id });
   await mkIssue(repo.id, { number: 14, title: "task(10): d", factoryState: "factory:ready", parentIssueId: building.id });
+  // Not released by the Dispatcher yet: no state. The rollup has to count it,
+  // or an epic with three tasks merged and six never started reads as built.
+  await mkIssue(repo.id, { number: 15, title: "task(10): e", parentIssueId: building.id });
   id.building = building.id;
 });
 
@@ -167,14 +170,14 @@ describe("the epic status counts the tasks agents are on", () => {
     for (const url of [`/api/epics/${id.building}`, `/api/epics/${id.building}/tree`]) {
       const res = await app.inject({ method: "GET", url, headers: { cookie } });
       expect(res.statusCode).toBe(200);
-      expect(res.json().epic.status).toBe("Building 0/4 · 3 in flight");
-      expect(res.json().epic.nextStep.how).toMatch(/0 of 4 tasks done, 3 in flight/);
+      expect(res.json().epic.status).toBe("Building 0/5 · 3 in flight");
+      expect(res.json().epic.nextStep.how).toMatch(/0 of 5 tasks done, 3 in flight/);
     }
   });
 
   it("ships the count on the rollup so the board reads it without re-deriving it", async () => {
     const res = await app.inject({ method: "GET", url: `/api/epics/${id.building}/tree`, headers: { cookie } });
-    expect(res.json().epic.rollup).toMatchObject({ total: 4, done: 0, ready: 1, inReview: 1, inTest: 1, shipping: 1, readyToShip: 0, onEpic: 1, inFlight: 3 });
+    expect(res.json().epic.rollup).toMatchObject({ total: 5, done: 0, ready: 1, inReview: 1, inTest: 1, shipping: 1, readyToShip: 0, onEpic: 1, notStarted: 1, inFlight: 3 });
   });
 });
 

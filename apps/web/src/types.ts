@@ -293,6 +293,8 @@ export interface TaskRollup {
   blocked: number;
   /** Open tasks that have at least one open blocker. */
   waiting: number;
+  /** Open tasks the Dispatcher has not released yet: no factory state at all. */
+  notStarted?: number;
   /** In review, in test or on a branch — the work the done count cannot see. */
   inFlight: number;
   tests?: TestRollup;
@@ -408,6 +410,8 @@ export interface EpicWorkspace {
   systemTests: {
     enabled: boolean | null;
     mode: "gate" | "advisory" | null;
+    /** Where the cases run. On `staging` they wait for the staging release (gate GS). */
+    runOn?: "epic" | "staging" | null;
     /** A plan exists: the document, the cases, or both. */
     planned: boolean;
     /** The plan document. `merged: false` is why cases are not runnable yet. */

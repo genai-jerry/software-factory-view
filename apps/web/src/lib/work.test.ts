@@ -82,6 +82,14 @@ describe("stageOf", () => {
     expect(stageOf("factory:design-approved", { ...assembled, blocked: 1 })).toBe("build");
   });
 
+  it("stays Build while a task waits for its merge, or has not started", () => {
+    // Beacon #193 on 5 Nov: three tasks green and waiting for the Release
+    // Manager, six never released — and the page said Test.
+    expect(stageOf("factory:design-approved", rollup({ total: 9, shipping: 3, readyToShip: 3, notStarted: 6, waiting: 6, tests: assembled.tests }))).toBe("build");
+    expect(stageOf("factory:design-approved", { ...assembled, readyToShip: 1 })).toBe("build");
+    expect(stageOf("factory:design-approved", { ...assembled, notStarted: 1 })).toBe("build");
+  });
+
   it("ignores tasks counted as waiting on a blocker that is itself assembled", () => {
     // Beacon #35 on 31 Oct: five tasks on the epic branch, two still "waiting"
     // because their blockers stay open until the epic closes.
@@ -118,8 +126,17 @@ describe("buildWork", () => {
     const row = lists.needsDecision[0]!;
     expect(row.ask).toBe("review");
     expect(row.pointer).toBe("Start: the review on 2 tasks and the test on 1 task. The factory does not start it by itself.");
-    expect(row.who).toBe("You start the review");
+    expect(row.who).toBe("You start the review and the test");
     expect(row.link).toBe("/work/e1");
+  });
+
+  it("asks the reader to start the merge when a green task waits for the Release Manager", () => {
+    const merge = entry({ issueId: "m1", title: "#195 task(35): green", state: "factory:ready-to-ship", link: "/epics/e1?tab=tasks", expedited: false });
+    const lists = buildWork([card({ expedited: false })], [merge], []);
+    const row = lists.needsDecision[0]!;
+    expect(row.ask).toBe("review");
+    expect(row.pointer).toBe("Start: the merge on 1 task. The factory does not start it by itself.");
+    expect(row.who).toBe("You start the merge");
   });
 
   it("counts only build starts in a Start row", () => {

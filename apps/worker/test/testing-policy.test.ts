@@ -41,6 +41,12 @@ async function seed() {
 }
 
 describe("importTestingPolicy", () => {
+  it("mirrors where the cases run", async () => {
+    const { db, read, repoRef } = await seed();
+    await importTestingPolicy(db, repoRef, reader({ [POLICY]: { content: '{"system_tests": true, "run_on": "staging"}', sha: "a" } }));
+    expect((await read()).testRunOn).toBe("staging");
+  });
+
   it("starts as unread, not as off", async () => {
     const { read } = await seed();
     expect((await read()).systemTests).toBeNull();
@@ -52,6 +58,7 @@ describe("importTestingPolicy", () => {
     const row = await read();
     expect(row.systemTests).toBe(true);
     expect(row.testMode).toBe("gate");
+    expect(row.testRunOn).toBe("epic");
     // Bug reports (FACTORY.md §4c) ride on the same file and follow the cases
     // unless the file says otherwise — so a repo that enabled system tests
     // before §4c existed can raise bugs without editing anything.

@@ -10,7 +10,7 @@ import type { ArtifactView, EpicWorkspace, Me } from "../types.js";
 import { ThreadsTab } from "./EpicWorkspace.js";
 import { QaPanel } from "./QaPanel.js";
 import { ReportBug, TestVerdict } from "./SystemTests.js";
-import { ReleaseBoard } from "./ReleaseBoard.js";
+import { ReleaseBoard, StagingRelease } from "./ReleaseBoard.js";
 import { BuildBoard } from "./BuildBoard.js";
 import { ClarifyBoard, DesignBoard } from "./PlanBoards.js";
 
@@ -357,11 +357,33 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
   const failed = byVerdict.failed.length;
   const openCases = toRun + failed + byVerdict.pending.length;
   const retests = data.bugs.rows.filter((b) => b.open && b.state === "factory:bug-retest");
+  // Cases that run on staging (FACTORY.md §4b) cannot run until the item has
+  // passed gate GS: the staging release is what makes them runnable. Until
+  // then the board has to say so, and offer the step that gets it there.
+  const onStaging = ["factory:in-staging", "factory:deployed"].includes(data.epic.state ?? "");
+  const needsStaging = data.systemTests.runOn === "staging" && !onStaging && byVerdict.pending.length > 0;
+  const atGateGS = data.epic.state === "factory:epic-ready";
+  const codeTasks = data.tasks.filter((t) => t.kind !== "test" && t.open);
+  const toMerge = codeTasks.filter((t) => t.state === "factory:ready-to-ship").length;
+  const toBuild = codeTasks.filter((t) => !["factory:ready-to-ship", "factory:on-epic", "factory:in-staging", "factory:deployed"].includes(t.state ?? "")).length;
   const skippable =
     openCases > 0 && ["factory:design-approved", "factory:epic-ready", "factory:in-staging"].includes(data.epic.state ?? "");
 
   return (
     <>
+      {needsStaging && atGateGS && <StagingRelease data={data} />}
+      {needsStaging && !atGateGS && (
+        <section className="card" aria-labelledby="staging-first">
+          <h2 id="staging-first">Staging first</h2>
+          <p className="need">
+            These tests run on staging, and the item is not there yet.{" "}
+            {toBuild + toMerge > 0
+              ? `${toBuild > 0 ? `${toBuild} task${toBuild === 1 ? " is" : "s are"} still to build` : ""}${toBuild > 0 && toMerge > 0 ? " and " : ""}${toMerge > 0 ? `${toMerge} task${toMerge === 1 ? " waits" : "s wait"} for a merge onto the item's branch` : ""}. The Build stage has the buttons.`
+              : "The factory is assembling it; you are asked to release it to staging once it is."}
+          </p>
+          <p className="muted">Releasing to staging merges the item's branch onto staging and deploys it there. The tests become runnable then.</p>
+        </section>
+      )}
       <section className="card" aria-labelledby="cases">
         <div className="spread">
           <h2 id="cases">
@@ -435,18 +457,26 @@ export function TestBoard({ data, cases }: { data: EpicWorkspace; cases: EpicWor
       </section>
 
       <section className="card">
-        <h2>{toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : skipped > 0 ? "Tests done" : "All tests passed"}</h2>
+        <h2>
+          {toRun > 0 ? "Waiting on tests" : failed > 0 ? "Waiting on a fix" : needsStaging ? "Waiting for staging" : skipped > 0 ? "Tests done" : "All tests passed"}
+        </h2>
         <p className="need">
           {toRun > 0
             ? `A tester needs to: run ${toRun === 1 ? "the remaining case" : `the ${toRun} remaining cases`}.`
             : failed > 0
               ? "The fix is being built. The failed case comes back here for a re-test once it lands."
-              : "The release is the next decision."}
+              : needsStaging
+                ? atGateGS
+                  ? "You need to: release the item to staging, above. The tests run there."
+                  : "The tests run on staging, once the item is released there."
+                : "The release is the next decision."}
         </p>
         <p className="muted">
-          {data.systemTests.mode === "gate"
-            ? "When every case passes, the item goes to the release decision. A case that fails comes back here once its fix is built."
-            : "These tests advise; they do not hold the release."}
+          {data.systemTests.runOn === "staging"
+            ? "These tests run on staging. Their results go with the item to the production decision; they do not hold the staging release."
+            : data.systemTests.mode === "gate"
+              ? "When every case passes, the item goes to the release decision. A case that fails comes back here once its fix is built."
+              : "These tests advise; they do not hold the release."}
         </p>
       </section>
 

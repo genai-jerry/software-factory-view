@@ -92,8 +92,15 @@ describe("the testing policy", () => {
       systemTests: true,
       bugReports: true,
       mode: "gate",
+      runOn: "epic",
     });
     expect(parseTestingPolicy({ system_tests: true, mode: "advisory" }).mode).toBe("advisory");
+  });
+
+  it("reads where the cases run, and runs them on the epic unless the file says staging", () => {
+    expect(parseTestingPolicy({ system_tests: true, run_on: "staging" }).runOn).toBe("staging");
+    expect(parseTestingPolicy({ system_tests: true, run_on: "epic" }).runOn).toBe("epic");
+    expect(parseTestingPolicy({ system_tests: true, run_on: "elsewhere" }).runOn).toBe("epic");
   });
 
   it("follows system_tests for bug reports, and takes an explicit answer either way", () => {

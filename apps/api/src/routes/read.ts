@@ -549,6 +549,9 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
       systemTests: {
         enabled: repo.systemTests,
         mode: (repo.testMode as "gate" | "advisory" | null) ?? null,
+        // Where the cases run. On `staging` nothing is runnable until the
+        // epic has passed gate GS, and the Test board has to say so.
+        runOn: (repo.testRunOn as "epic" | "staging" | null) ?? null,
         planned: hasPlan,
         plan: plan
           ? {
@@ -1072,6 +1075,7 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
     done: 0,
     blocked: 0,
     waiting: 0,
+    notStarted: 0,
     inFlight: 0,
     ...(cases.length > 0 ? { tests } : {}),
     ...(bugRows.length > 0 ? { bugs } : {}),
@@ -1093,6 +1097,12 @@ export async function taskRollup(deps: AppDeps, epicIssueId: string): Promise<Ta
       else if (t.factoryState === "factory:on-epic") rollup.onEpic++;
     }
     else if (t.factoryState === "factory:blocked") rollup.blocked++;
+    // Open and carrying no state at all: the Dispatcher has not released it
+    // yet (its blockers are still being built). `waiting` cannot say this —
+    // it counts open blockers, which an assembled task keeps until the epic
+    // closes — and without it an epic with three tasks merged and six never
+    // started rolled up as "build finished".
+    else if (t.state === "open" && !t.factoryState) rollup.notStarted++;
   }
   if (openIds.length > 0) {
     const waiting = await db

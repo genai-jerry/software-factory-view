@@ -200,15 +200,16 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       continue;
     }
 
-    // A task at in-review or in-test is not an agent's: the label sits until a
-    // person starts the Reviewer or QA. There is no approver list for either
-    // (any collaborator may), so it is everyone's — unless the epic is
-    // expedited, when the factory takes the hop itself, or the run marker is
-    // on the task, when the role is already at work.
+    // A task at in-review, in-test or ready-to-ship is not an agent's: the
+    // label sits until a person starts the Reviewer, QA or the Release
+    // Manager (the merge onto the epic branch). There is no approver list for
+    // any of them (any collaborator may), so it is everyone's — unless the
+    // epic is expedited, when the factory takes the hop itself, or the run
+    // marker is on the task, when the role is already at work.
     const roleStart = ROLE_START_STATES[state];
     if (issue.kind === "task" && roleStart) {
       if (expedited || issue.labels.includes(IN_PROGRESS_LABEL)) continue;
-      const roleName = roleStart.role === "reviewer" ? "the Reviewer" : "QA";
+      const roleName = { reviewer: "the Reviewer", qa: "QA", release: "the Release Manager" }[roleStart.role];
       entries.push({
         kind: "task-start",
         rank: 3,

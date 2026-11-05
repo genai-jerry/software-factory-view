@@ -27,7 +27,17 @@ export interface TestingPolicy {
    * human's merge click, and not something the factory can hold.
    */
   mode: TestMode;
+  /**
+   * Where a person runs the cases (FACTORY.md §4b, *Running the cases on
+   * staging*). `epic`: on the epic's own preview, as the code assembles.
+   * `staging`: after gate GS, on staging — the epic reaches
+   * `factory:epic-ready` on assembly alone, the staging release is what
+   * makes the cases runnable, and `mode` is not read.
+   */
+  runOn: TestRunOn;
 }
+
+export type TestRunOn = "epic" | "staging";
 
 export const TESTING_POLICY_PATH = ".github/factory-testing.json";
 
@@ -38,6 +48,7 @@ export function parseTestingPolicy(json: unknown): TestingPolicy {
     systemTests,
     bugReports: typeof obj.bug_reports === "boolean" ? obj.bug_reports : systemTests,
     mode: obj.mode === "advisory" ? "advisory" : "gate",
+    runOn: obj.run_on === "staging" ? "staging" : "epic",
   };
 }
 
