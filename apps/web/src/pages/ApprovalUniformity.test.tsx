@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EpicTree, EpicWorkspace, ThreadDetail } from "../types.js";
+import { forgetStartPresses } from "../components/NextStep.js";
 
 vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
@@ -163,6 +164,7 @@ function renderIn(ui: React.ReactElement) {
 }
 
 beforeEach(() => {
+  forgetStartPresses();
   vi.mocked(api.get).mockReset().mockImplementation((path: string) => {
     if (path.endsWith("/tree")) return Promise.resolve(tree as never);
     if (path.startsWith("/api/threads/")) return Promise.resolve(threadDetail as never);

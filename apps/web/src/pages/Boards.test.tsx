@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EpicWorkspace, GatePanelData, PrSummary } from "../types.js";
+import { forgetStartPresses } from "../components/NextStep.js";
 
 vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
@@ -80,6 +81,7 @@ const gate: GatePanelData = {
 };
 
 beforeEach(() => {
+  forgetStartPresses();
   vi.mocked(api.get).mockReset();
   vi.mocked(api.post).mockReset();
   vi.mocked(api.get).mockImplementation(async (path: string) => {
@@ -231,6 +233,14 @@ describe("BuildBoard", () => {
     await userEvent.click(buttons[0]!);
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/r1/start-role", { role: "reviewer" }));
     expect(await screen.findByText(/Started — run queued/)).toBeInTheDocument();
+    // Pressed: the button stays disabled until the task moves on, so a
+    // second press cannot put a second run on the same task.
+    const pressedButton = screen.getByRole("button", { name: "Started" });
+    expect(pressedButton).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Mark Reviewed" })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Start the review" })).toHaveLength(1);
+    await userEvent.click(pressedButton);
+    expect(api.post).toHaveBeenCalledTimes(1);
   });
 
   it("asks the reader to start the merge on a green task, and counts it as built only once it is on the epic branch", async () => {
