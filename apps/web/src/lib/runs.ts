@@ -48,6 +48,7 @@ export function phaseWords(phase: string, role?: string | null): string {
   if (p.startsWith("resolving")) return "Choosing which model to use.";
   if (p === "starting" || p.startsWith("starting")) return "Starting.";
   if (p.startsWith("cloning")) return "Getting a copy of the code.";
+  if (p.startsWith("fetching attachments")) return "Fetching the images and files attached to the task.";
   if (p.startsWith("running claude")) {
     switch (role) {
       case "implementer":
@@ -114,12 +115,28 @@ export interface RunStory {
   minutes: number | null;
   /** The four steps and which are done or current. */
   steps: Array<{ step: Step; state: "done" | "now" | "todo" }>;
-  /** Each phase so far, in words, with its own minutes. */
-  soFar: Array<{ words: string; minutes: number | null; now: boolean }>;
+  /**
+   * Each phase so far, in words, with its own length. The live phase is timed
+   * up to now. `took` says it the way the page shows it.
+   */
+  soFar: Array<{ words: string; minutes: number | null; seconds: number | null; took: string; now: boolean }>;
   /** The current phase in words. */
   now: string;
   /** How many times it fixed failing tests. */
   fixAttempts: number;
+}
+
+/**
+ * A phase's length as a reader says it. Setup steps take seconds, so whole
+ * minutes alone would show every one as "0 min".
+ */
+export function lengthWords(seconds: number): string {
+  if (seconds < 60) return `${Math.max(1, seconds)} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
 export function storyOf(run: OrchestratorRunLog): RunStory {
@@ -144,10 +161,15 @@ export function storyOf(run: OrchestratorRunLog): RunStory {
   const soFar = phases.map((p, i) => {
     const t0 = p.ts ? new Date(p.ts) : null;
     const next = phases[i + 1]?.ts ? new Date(phases[i + 1]!.ts!) : finished ?? (running ? new Date() : null);
+    const seconds = t0 && next ? Math.max(0, Math.round((next.getTime() - t0.getTime()) / 1000)) : null;
+    const now = running && i === phases.length - 1;
+    const length = seconds === null ? "" : lengthWords(seconds);
     return {
       words: phaseWords(p.message, role),
-      minutes: t0 && next ? Math.max(0, Math.round((next.getTime() - t0.getTime()) / 60_000)) : null,
-      now: running && i === phases.length - 1,
+      minutes: seconds === null ? null : Math.round(seconds / 60),
+      seconds,
+      took: now ? (length ? `${length} so far` : "now") : length,
+      now,
     };
   });
   const fixAttempts = phases.filter((p) => p.message.toLowerCase().startsWith("fixing failing tests")).length;
