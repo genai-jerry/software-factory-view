@@ -252,6 +252,26 @@ describe("BuildBoard", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/g1/start-role", { role: "release" }));
   });
 
+  it("offers to run the item through to staging with one switch, and to take it back", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true, on: true });
+    const mergeStep = { who: "you, then the Release Manager", how: "", startRole: "release" as const, startLabel: "Start the Release Manager", waitsOnPerson: true, automatic: false };
+    const green = [task({ id: "g1", number: 3, title: "task(34): A sender name", state: "factory:ready-to-ship", nextStep: mergeStep })];
+    const { unmount } = renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, green)} />);
+    await userEvent.click(screen.getByRole("button", { name: "Let the factory run it to staging" }));
+    expect(screen.getByText(/the start above, every review, test and merge/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run it to staging" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e1/expedite", { on: true }));
+    unmount();
+
+    const on = epic({ state: "factory:design-approved" }, [{ ...green[0]!, nextStep: { ...mergeStep, automatic: true, waitsOnPerson: false } }]);
+    renderIn(<BuildBoard data={{ ...on, expedite: { ...on.expedite, on: true } }} />);
+    expect(screen.getByText(/The factory runs it through to the staging release, and asks you once/)).toBeInTheDocument();
+    expect(screen.getByText("Waiting for the merge")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start the merge" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Ask me at each step instead" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e1/expedite", { on: false }));
+  });
+
   it("lists every question when the role asked more than one", async () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path.includes("/peek"))
