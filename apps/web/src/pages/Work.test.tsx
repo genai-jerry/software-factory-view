@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { FocusProvider } from "../lib/filter.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttentionEntry, BoardCard, MyWork } from "../types.js";
+import { forgetStartPresses } from "../components/NextStep.js";
 
 vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
@@ -93,6 +94,7 @@ const gate: AttentionEntry = {
 const myWork: MyWork = { needsYou: [gate, ...Array.from({ length: 16 }, (_, i) => testCase(i + 1))], mine: [], waitingOn: [] };
 
 beforeEach(() => {
+  forgetStartPresses();
   vi.mocked(api.get).mockReset();
   vi.mocked(api.post).mockReset();
   vi.mocked(api.get).mockImplementation(async (path: string) => {

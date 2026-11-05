@@ -37,6 +37,32 @@ const MARK_REVIEWED_TITLE =
   'Posts the literal comment "Review Done" as you — skips the Reviewer and moves this task straight to In test. ' +
   "No changes-requested equivalent: review the draft PR on GitHub instead if it needs work.";
 
+/**
+ * Starts pressed in this tab, kept until the task's step changes. Between a
+ * successful press and the orchestrator labelling the task in progress, the
+ * board still shows the step as waiting; without this the button comes back
+ * enabled and invites a second press. Module-level so a board refetch or a
+ * remount keeps it; a press older than ten minutes is forgotten, so a start
+ * that never fired can be pressed again.
+ */
+const pressed = new Map<string, number>();
+const PRESS_HOLD_MS = 10 * 60_000;
+
+function wasPressed(key: string): boolean {
+  const at = pressed.get(key);
+  if (at === undefined) return false;
+  if (Date.now() - at > PRESS_HOLD_MS) {
+    pressed.delete(key);
+    return false;
+  }
+  return true;
+}
+
+/** For tests: forget every press. */
+export function forgetStartPresses(): void {
+  pressed.clear();
+}
+
 export function StartRoleButton({
   issueId,
   step,
@@ -47,9 +73,11 @@ export function StartRoleButton({
   onStarted?: () => void;
 }) {
   const qc = useQueryClient();
+  const pressKey = `${issueId}:${step.startRole ?? ""}`;
   const start = useMutation({
     mutationFn: () => api.post<{ ok: boolean; role: string; detail: string }>(`/api/issues/${issueId}/start-role`, { role: step.startRole }),
     onSuccess: () => {
+      pressed.set(pressKey, Date.now());
       void qc.invalidateQueries({ queryKey: ["epic"] });
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["attention"] });
@@ -59,6 +87,7 @@ export function StartRoleButton({
   const markReviewed = useMutation({
     mutationFn: () => api.post<{ ok: boolean; commentUrl: string }>(`/api/issues/${issueId}/mark-reviewed`),
     onSuccess: () => {
+      pressed.set(pressKey, Date.now());
       void qc.invalidateQueries({ queryKey: ["epic"] });
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["attention"] });
@@ -67,9 +96,19 @@ export function StartRoleButton({
   });
   if (!step.startRole) return null;
   const startLabel = step.startLabel ?? `Start the ${step.startRole}`;
+  // In progress from the press until the step moves on: while the request is
+  // out, and after it succeeded (here or in an earlier mount of this button).
+  const busy = start.isPending || markReviewed.isPending;
+  const done = start.isSuccess || markReviewed.isSuccess || wasPressed(pressKey);
   const button = (
-    <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()} title={step.how}>
-      {start.isPending ? "Starting…" : startLabel}
+    <button
+      type="button"
+      className="primary"
+      disabled={busy || done}
+      onClick={() => start.mutate()}
+      title={done ? "Started. The board moves on once the run picks it up." : step.how}
+    >
+      {start.isPending ? "Starting…" : done ? "Started" : startLabel}
     </button>
   );
   /**
@@ -98,7 +137,7 @@ export function StartRoleButton({
     <span className="approve-action">
       {button}
       {step.startRole === "reviewer" && (
-        <button type="button" disabled={markReviewed.isPending} onClick={() => markReviewed.mutate()} title={MARK_REVIEWED_TITLE}>
+        <button type="button" disabled={busy || done} onClick={() => markReviewed.mutate()} title={MARK_REVIEWED_TITLE}>
           {markReviewed.isPending ? "Marking…" : "Mark Reviewed"}
         </button>
       )}
