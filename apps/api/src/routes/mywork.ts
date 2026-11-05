@@ -154,8 +154,8 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
         const repoId = repoByName.get(r.repo)!;
         const issue = issueOf.get(`${repoId}#${r.issue}`);
         const parent = issue?.parentIssueId ? parentOf.get(issue.parentIssueId) : undefined;
-        const started = new Date(r.startedAt.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(r.startedAt) ? "" : "Z"));
-        const finished = new Date(r.finishedAt.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(r.finishedAt) ? "" : "Z"));
+        const started = new Date(r.startedAt);
+        const finished = new Date(r.finishedAt);
         return {
           runId: r.id,
           repo: r.repo,

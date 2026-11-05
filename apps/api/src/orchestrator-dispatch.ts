@@ -161,6 +161,31 @@ export async function syncDispatchStatus(
 
 export type OrchestratorProxyError = { error: string; status: number };
 
+/**
+ * The orchestrator's clock as ISO 8601 in UTC. Its ledger stores an aware
+ * time, but SQLite hands it back bare (`2026-11-05 06:01:48.213069`) and a
+ * browser reads a bare timestamp as local time: a run four minutes old shows
+ * as "running for 334 min" five and a half hours east of Greenwich. A value
+ * that already names its zone passes through; anything unreadable is kept
+ * as it came.
+ */
+export function orchestratorClock(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const text = value.trim().replace(" ", "T");
+  const zoned = /[zZ]|[+-]\d\d:?\d\d$/.test(text) ? text : `${text}Z`;
+  const at = new Date(zoned);
+  return Number.isNaN(at.getTime()) ? value : at.toISOString();
+}
+
+/** A run as the orchestrator sent it, with its clock read as UTC. */
+function withClock(run: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...run };
+  for (const key of ["started_at", "finished_at"]) {
+    if (out[key] != null) out[key] = orchestratorClock(out[key]) ?? out[key];
+  }
+  return out;
+}
+
 function orchestratorBase(cfg: ConsoleConfig): { base: string; token: string } | OrchestratorProxyError {
   const base = cfg.ORCHESTRATOR_URL.trim().replace(/\/+$/, "");
   const token = cfg.ORCHESTRATOR_DISPATCH_TOKEN.trim();
@@ -203,7 +228,7 @@ export async function fetchOrchestratorRun(
   if (!got.body || typeof got.body !== "object" || Array.isArray(got.body)) {
     return { error: "orchestrator run was not an object", status: 502 };
   }
-  return { ok: true, run: got.body as Record<string, unknown> };
+  return { ok: true, run: withClock(got.body as Record<string, unknown>) };
 }
 
 export async function fetchOrchestratorTranscript(
@@ -247,8 +272,8 @@ export async function fetchPastRuns(cfg: ConsoleConfig): Promise<PastRun[]> {
       issue: r.issue,
       role: typeof r.role === "string" ? r.role : "",
       outcome: typeof r.outcome === "string" ? r.outcome : "",
-      startedAt: String(r.started_at),
-      finishedAt: String(r.finished_at),
+      startedAt: orchestratorClock(r.started_at) ?? String(r.started_at),
+      finishedAt: orchestratorClock(r.finished_at) ?? String(r.finished_at),
       model: typeof r.model === "string" ? r.model : null,
       error: typeof r.error === "string" && r.error ? r.error : null,
       hasLog: typeof r.has_log === "boolean" ? r.has_log : null,
@@ -278,7 +303,7 @@ export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, A
   for (const r of got.body as Array<{ id?: string; repo?: string; issue?: number; role?: string; started_at?: string }>) {
     if (!r.id || !r.repo || typeof r.issue !== "number") continue;
     const key = `${r.repo}#${r.issue}`;
-    const startedAt = r.started_at ?? "";
+    const startedAt = orchestratorClock(r.started_at) ?? "";
     const prior = out.get(key);
     if (!prior || startedAt > prior.startedAt) out.set(key, { id: r.id, role: r.role ?? "", startedAt });
   }
@@ -392,5 +417,6 @@ export async function fetchOrchestratorRuns(
   const params = new URLSearchParams({ repo: query.repo, issue: String(query.issue) });
   const got = await orchestratorGet(cfg, `/runs?${params}`);
   if ("error" in got) return got;
-  return { ok: true, runs: Array.isArray(got.body) ? got.body : [] };
+  const runs = Array.isArray(got.body) ? got.body : [];
+  return { ok: true, runs: runs.map((r) => (r && typeof r === "object" ? withClock(r as Record<string, unknown>) : r)) };
 }

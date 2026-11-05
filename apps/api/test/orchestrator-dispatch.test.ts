@@ -1,6 +1,6 @@
 import { loadConfig } from "@console/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dispatchFactoryRole, fetchOrchestratorRun, syncDispatchStatus } from "../src/orchestrator-dispatch.js";
+import { dispatchFactoryRole, fetchOrchestratorRun, orchestratorClock, syncDispatchStatus } from "../src/orchestrator-dispatch.js";
 
 const cfg = (over: Record<string, string> = {}) =>
   loadConfig({ CONSOLE_MASTER_KEY: "x", NODE_ENV: "test", ...over } as never);
@@ -166,5 +166,27 @@ describe("fetchOrchestratorRun", () => {
   it("explains a missing orchestrator URL", async () => {
     const got = await fetchOrchestratorRun(cfg(), "abc");
     expect(got).toMatchObject({ error: expect.stringContaining("ORCHESTRATOR_URL"), status: 502 });
+  });
+
+  // The ledger's SQLite hands back the clock bare; a browser would read
+  // "2026-11-05 06:01:48" as local time and show a four-minute run as
+  // hours long. The proxy says UTC. A zoned value is left as it means.
+  it("reads a bare orchestrator clock as UTC", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ id: "r1", outcome: "running", started_at: "2026-11-05 06:01:48.213069", finished_at: null }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const got = await fetchOrchestratorRun(cfg({ ORCHESTRATOR_URL: "http://127.0.0.1:8080", ORCHESTRATOR_DISPATCH_TOKEN: "t" }), "r1");
+    expect(got).toMatchObject({ ok: true, run: { started_at: "2026-11-05T06:01:48.213Z", finished_at: null } });
+    expect(orchestratorClock("2026-11-05T11:31:48+05:30")).toBe("2026-11-05T06:01:48.000Z");
+    expect(orchestratorClock("2026-11-05T06:01:48Z")).toBe("2026-11-05T06:01:48.000Z");
+    expect(orchestratorClock("not a clock")).toBe("not a clock");
+    expect(orchestratorClock(null)).toBeNull();
   });
 });
