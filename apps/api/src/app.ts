@@ -5,6 +5,7 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 import { registerReadRoutes } from "./routes/read.js";
 import { registerMyWorkRoutes } from "./routes/mywork.js";
+import { registerEnvironmentRoutes } from "./routes/environments.js";
 import { registerFlowRoutes } from "./routes/flow.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -75,6 +76,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerEstateRoutes(app, deps);
   registerReadRoutes(app, deps);
   registerMyWorkRoutes(app, deps);
+  registerEnvironmentRoutes(app, deps);
   registerFlowRoutes(app, deps);
   registerSettingsRoutes(app, deps);
   registerProjectRoutes(app, deps);

@@ -813,3 +813,61 @@ export interface ShapeConversation {
   };
   messages: ShapeMessage[];
 }
+
+/** GET /api/environments: where the Claude sessions run. */
+export interface EnvTurn {
+  runId: string | null;
+  role: string;
+  title: string | null;
+  /** running · starting · waiting for a session · waiting (queued for the environment) */
+  state: string;
+  since: string | null;
+}
+
+export interface EnvNote {
+  at: string | null;
+  role: string;
+  title: string | null;
+  outcome: string;
+  summary: string;
+  runId: string | null;
+}
+
+export interface EnvCard {
+  id: string;
+  kind: "staging" | "epic" | "task" | "issue";
+  repo: string;
+  title: string;
+  issueId: string | null;
+  epicId: string | null;
+  active: EnvTurn | null;
+  queue: EnvTurn[];
+  notes: EnvNote[];
+  lastUsedAt: string | null;
+}
+
+export interface EnvLane {
+  ref: string;
+  epicId: string | null;
+  title: string;
+  epic: EnvCard | null;
+  tasks: EnvCard[];
+  tasksTotal: number;
+  tasksMerged: number;
+}
+
+export interface EnvSession {
+  runId: string | null;
+  role: string;
+  title: string | null;
+  staging: boolean;
+  since: string | null;
+}
+
+export interface EnvironmentsView {
+  available: boolean;
+  sessions: { total: number; inUse: EnvSession[]; waiting: EnvSession[] } | null;
+  staging: EnvCard[];
+  lanes: EnvLane[];
+  other: EnvCard[];
+}

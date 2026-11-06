@@ -12,6 +12,7 @@ import { DecisionsQueuePage } from "./pages/DecisionsQueue.js";
 import { WorkItemPage } from "./pages/WorkItem.js";
 import { NewWorkPage } from "./pages/NewWork.js";
 import { ActivityPage } from "./pages/Activity.js";
+import { EnvironmentsPage } from "./pages/Environments.js";
 import { FlowPage } from "./pages/Flow.js";
 import { EpicWorkspacePage } from "./pages/EpicWorkspace.js";
 import { BlockedPage } from "./pages/Blocked.js";
@@ -127,6 +128,7 @@ export function App() {
         <Route path="/work/new" element={<NewWorkPage />} />
         <Route path="/work/:id" element={<WorkItemPage me={user!} />} />
         <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/environments" element={<EnvironmentsPage />} />
         <Route path="/blocked" element={<BlockedPage />} />
         <Route path="/decisions" element={<DecisionsQueuePage />} />
         <Route path="/decision-log" element={<DecisionsPage />} />

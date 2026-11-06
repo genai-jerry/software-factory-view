@@ -1,0 +1,164 @@
+import { generateKeyPairSync } from "node:crypto";
+import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
+import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildApp } from "../src/app.js";
+import type { AppDeps } from "../src/context.js";
+
+const MASTER_KEY = Buffer.alloc(32, 7).toString("base64");
+const PKCS8 = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+}).privateKey;
+const cookie = "console_session=sess-1";
+const RUN = "factory:in-progress";
+
+let app: Awaited<ReturnType<typeof buildApp>>;
+let deps: AppDeps;
+const id: Record<string, string> = {};
+
+beforeEach(async () => {
+  const pg = new PGlite();
+  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../packages/db/migrations");
+  for (const file of (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort()) {
+    for (const stmt of (await readFile(join(migrationsDir, file), "utf8")).split("--> statement-breakpoint")) {
+      if (stmt.trim()) await pg.exec(stmt.trim());
+    }
+  }
+  const db = drizzle(pg);
+  const cfg = loadConfig({ CONSOLE_MASTER_KEY: MASTER_KEY, NODE_ENV: "test" } as never);
+  deps = {
+    cfg,
+    dbh: { db: db as never, sql: null as never, close: async () => undefined },
+    credentials: new CredentialStore({
+      masterKey: MASTER_KEY,
+      apiUrl: "https://api.invalid",
+      load: async () => null,
+      env: { appId: "1", privateKeyPem: PKCS8, webhookSecret: "s", clientId: "c", clientSecret: "cs" },
+    }),
+    ingestQueue: { add: async () => undefined } as never,
+    reconcileQueue: { add: async () => undefined } as never,
+    openspecQueue: { add: async () => undefined } as never,
+  };
+  const user = (
+    await db.insert(users).values({ ghUserId: 1, login: "alice", encryptedOauthToken: encryptSecret("t", MASTER_KEY) }).returning()
+  )[0]!;
+  const org = (await db.insert(orgs).values({ name: "acme" }).returning())[0]!;
+  await db.insert(memberships).values({ orgId: org.id, userId: user.id, role: "owner" });
+  await db.insert(sessions).values({ id: "sess-1", userId: user.id, expiresAt: new Date(Date.now() + 3600_000) });
+  const estate = (await db.insert(estates).values({ orgId: org.id, name: "acme", installationId: 99 }).returning())[0]!;
+  const mkRepo = async (name: string) =>
+    (await db.insert(repos).values({ orgId: org.id, estateId: estate.id, ghNodeId: `r-${name}`, fullName: `acme/${name}` } as never).returning())[0]!;
+  const api = await mkRepo("api");
+  const web = await mkRepo("web");
+  let n = 100;
+  const mk = async (repoId: string, over: Record<string, unknown>) =>
+    (
+      await db
+        .insert(issues)
+        .values({
+          orgId: org.id, repoId, number: ++n, kind: "task", title: `t${n}`, state: "open", labels: [],
+          ghNodeId: `n${n}`, ghId: n, ghCreatedAt: new Date(), ghUpdatedAt: new Date(), ...over,
+        } as never)
+        .returning()
+    )[0]!;
+  const epic = await mk(api.id, { number: 34, kind: "epic", title: "Booker status", factoryState: "factory:design-approved", labels: [RUN] });
+  id.epic = epic.id;
+  id.review = (await mk(api.id, { number: 40, title: "task(34): The status map", factoryState: "factory:in-review", labels: [RUN], parentIssueId: epic.id })).id;
+  await mk(api.id, { number: 41, title: "task(34): idle", factoryState: "factory:in-review", parentIssueId: epic.id });
+  await mk(api.id, { number: 42, title: "task(34): closed", state: "closed", factoryState: "factory:in-test", labels: [RUN], parentIssueId: epic.id });
+  await mk(api.id, { number: 43, kind: "test", title: "test(34): ST-1 case", factoryState: "factory:manual-test", labels: [RUN], parentIssueId: epic.id });
+  id.webTask = (await mk(web.id, { number: 7, title: "task(34): The panel", factoryState: "factory:ready", labels: [RUN], parentIssueId: epic.id })).id;
+  id.apiRepo = api.id;
+  id.webRepo = web.id;
+  app = await buildApp(deps);
+});
+
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await app.close();
+});
+
+const envs = {
+  sessions: {
+    total: 4,
+    in_use: [
+      { run_id: "r40", role: "reviewer", issue: 40, repo: "acme/api", environment: "acme/api#40", since: "2026-11-06T05:00:00+00:00" },
+      { run_id: "x", role: "qa", issue: 1, repo: "someone/else", environment: "someone/else#1", since: null },
+    ],
+    waiting: [{ run_id: "r7", role: "implementer", issue: 7, repo: "acme/web", environment: "acme/web#7", since: "2026-11-06T05:01:00+00:00" }],
+  },
+  environments: [
+    { id: "acme/api@staging", kind: "staging", repo: "acme/api", number: null, epic: null, last_used_at: "2026-11-06T04:00:00+00:00",
+      active: { run_id: "rel", role: "release", issue: 34, state: "running", since: "2026-11-06T05:02:00+00:00" },
+      queue: [], notes: [{ at: "2026-11-06T04:00:00+00:00", role: "release", issue: 34, run_id: "old", outcome: "success", summary: "Merged onto staging." }] },
+    { id: "acme/api#34", kind: "epic", repo: "acme/api", number: 34, epic: null, last_used_at: "2026-11-06T03:00:00+00:00", active: null, queue: [], notes: [] },
+    { id: "acme/api#40", kind: "task", repo: "acme/api", number: 40, epic: "acme/api#34", last_used_at: "2026-11-06T05:00:00+00:00",
+      active: { run_id: "r40", role: "reviewer", issue: 40, state: "running", since: "2026-11-06T05:00:00+00:00" },
+      queue: [{ run_id: "r40b", role: "qa", issue: 40, state: "waiting", since: "2026-11-06T05:03:00+00:00" }], notes: [] },
+    { id: "acme/api#41", kind: "task", repo: "acme/api", number: 41, epic: "acme/api#34", last_used_at: "2026-11-05T05:00:00+00:00", active: null, queue: [], notes: [] },
+    { id: "acme/web#7", kind: "task", repo: "acme/web", number: 7, epic: "acme/api#34", last_used_at: null, active: null, queue: [], notes: [] },
+    { id: "someone/else#1", kind: "issue", repo: "someone/else", number: 1, epic: null, last_used_at: null, active: null, queue: [], notes: [] },
+  ],
+};
+
+const stub = (body: unknown = envs) => {
+  deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+  deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+  vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status: 200 }));
+};
+const environments = async (qs = "") => app.inject({ method: "GET", url: `/api/environments${qs}`, headers: { cookie } });
+
+describe("GET /api/environments", () => {
+  it("requires a session", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/environments" })).statusCode).toBe(401);
+  });
+
+  it("groups tasks into their epic's lane and names everything by title", async () => {
+    stub();
+    const body = (await environments()).json();
+    expect(body.available).toBe(true);
+    expect(body.staging).toHaveLength(1);
+    expect(body.staging[0]).toMatchObject({ title: "Staging", active: { role: "Release Manager", title: "Booker status", state: "running" } });
+    expect(body.staging[0].notes[0]).toMatchObject({ summary: "Merged onto staging.", outcome: "success", role: "Release Manager" });
+    expect(body.lanes).toHaveLength(1);
+    const lane = body.lanes[0];
+    expect(lane).toMatchObject({ title: "Booker status", epicId: id.epic, tasksTotal: 4, tasksMerged: 1 });
+    expect(lane.epic).toMatchObject({ kind: "epic", title: "Booker status" });
+    // the busy task first, then by last use; the sibling-repo task is in the lane too
+    expect(lane.tasks.map((t: { title: string }) => t.title)).toEqual(["The status map", "idle", "The panel"]);
+    expect(lane.tasks[0].queue[0]).toMatchObject({ role: "QA", state: "waiting" });
+    // another tenant's environment is left out
+    expect(body.other).toEqual([]);
+  });
+
+  it("counts every session in use but names only this org's", async () => {
+    stub();
+    const { sessions } = (await environments()).json();
+    expect(sessions.total).toBe(4);
+    expect(sessions.inUse).toHaveLength(2);
+    expect(sessions.inUse[0]).toMatchObject({ role: "Reviewer", title: "The status map" });
+    expect(sessions.inUse[1]).toMatchObject({ role: "Another team's run", title: null });
+    expect(sessions.waiting).toEqual([expect.objectContaining({ role: "Implementer", title: "The panel" })]);
+  });
+
+  it("follows the repo focus, keeping a sibling-repo task with its epic", async () => {
+    stub();
+    const web = (await environments(`?repo=${id.webRepo}`)).json();
+    expect(web.staging).toEqual([]);
+    expect(web.lanes[0].tasks.map((t: { title: string }) => t.title)).toEqual(["The panel"]);
+  });
+
+  it("says when the orchestrator cannot list its environments", async () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    expect((await environments()).json()).toMatchObject({ available: false, lanes: [] });
+  });
+});

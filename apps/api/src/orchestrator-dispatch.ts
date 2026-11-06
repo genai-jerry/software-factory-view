@@ -420,3 +420,52 @@ export async function fetchOrchestratorRuns(
   const runs = Array.isArray(got.body) ? got.body : [];
   return { ok: true, runs: runs.map((r) => (r && typeof r === "object" ? withClock(r as Record<string, unknown>) : r)) };
 }
+
+/** One turn on a build environment, as the orchestrator reports it. */
+export interface OrchestratorTurn {
+  run_id: string | null;
+  role: string | null;
+  issue: number | null;
+  state: string;
+  since: string | null;
+}
+
+export interface OrchestratorEnvironment {
+  id: string;
+  kind: "staging" | "epic" | "task" | "issue";
+  repo: string;
+  number: number | null;
+  epic: string | null;
+  last_used_at: string | null;
+  active: OrchestratorTurn | null;
+  queue: OrchestratorTurn[];
+  notes: Array<{ at: string | null; role: string | null; issue: number | null; run_id: string | null; outcome: string | null; summary: string }>;
+}
+
+export interface OrchestratorSession {
+  run_id: string | null;
+  role: string | null;
+  issue: number | null;
+  repo: string | null;
+  environment: string | null;
+  since: string | null;
+}
+
+export interface OrchestratorEnvironments {
+  sessions: { total: number; in_use: OrchestratorSession[]; waiting: OrchestratorSession[] } | null;
+  environments: OrchestratorEnvironment[];
+}
+
+/**
+ * The orchestrator's GET /environments: its build environments (staging, one
+ * per epic, one per task), who holds each and who waits, plus the Claude
+ * sessions in use. `null` when it cannot be reached or is older than that
+ * endpoint: the page then says so instead of drawing an empty factory.
+ */
+export async function fetchOrchestratorEnvironments(cfg: ConsoleConfig): Promise<OrchestratorEnvironments | null> {
+  const got = await orchestratorGet(cfg, "/environments");
+  if ("error" in got || !got.body || typeof got.body !== "object") return null;
+  const body = got.body as Partial<OrchestratorEnvironments>;
+  if (!Array.isArray(body.environments)) return null;
+  return { sessions: body.sessions ?? null, environments: body.environments };
+}
