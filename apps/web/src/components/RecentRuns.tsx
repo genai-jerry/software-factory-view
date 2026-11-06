@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { useFocus } from "../lib/filter.js";
 import type { PastRunItem } from "../types.js";
 import { RepoChip } from "./RepoChip.js";
+import { localTimesText } from "../lib/localTimes.js";
 
 const PAGE = 10;
 
@@ -96,7 +97,7 @@ export function RecentRuns() {
                 {agoText(r.finishedAt)} · took {durationText(r.seconds)}
                 {r.model ? ` · ${r.model}` : ""}
               </span>
-              {r.error && r.outcome !== "success" && <span className="running-card-error">{r.error}</span>}
+              {r.error && r.outcome !== "success" && <span className="running-card-error">{localTimesText(r.error, r.finishedAt)}</span>}
               <span className="running-card-meta">
                 {!r.hasLog && <span className="muted">log no longer available</span>}
                 {thread && <Link to={thread}>{r.kind === "task" ? "thread" : "epic"}</Link>}

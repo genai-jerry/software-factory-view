@@ -5,6 +5,7 @@ import { ApiError, api } from "../api.js";
 import { OpenQuestions } from "../components/OpenQuestions.js";
 import { plain } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, GatePanelData, PrSummary, TimelineEvent } from "../types.js";
+import { localTimesHtml } from "../lib/localTimes.js";
 
 /**
  * Release — where the item is and the one decision left (redesign board 8).
@@ -87,7 +88,7 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
         {proposal.data ? (
           <Summary markdown={proposal.data.markdown} />
         ) : data.epic.bodyHtml ? (
-          <div className="rel-body" dangerouslySetInnerHTML={{ __html: data.epic.bodyHtml }} />
+          <div className="rel-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(data.epic.bodyHtml, null) }} />
         ) : (
           <p className="muted">No write-up on this item.</p>
         )}

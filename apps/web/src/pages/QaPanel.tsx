@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api.js";
 import type { Citation, QaData, SetupStatus } from "../types.js";
+import { localTimesText } from "../lib/localTimes.js";
 
 /** One panel, two scopes (plan 07 §5): the epic workspace's context rail and
  * the peek drawer's issue scope share everything but corpus and prompts. */
@@ -81,7 +82,7 @@ export function QaPanel({ scope }: { scope: QaScope }) {
         <div style={{ maxHeight: "22rem", overflowY: "auto", marginBottom: "0.5rem" }}>
           {conv.messages.map((m, i) => (
             <div className={`qa-message ${m.role}`} key={i}>
-              <span className="bubble">{m.body}</span>
+              <span className="bubble">{localTimesText(m.body, m.createdAt)}</span>
               {m.citations.length > 0 && (
                 <div>
                   {m.citations.map((c: Citation, j: number) => (

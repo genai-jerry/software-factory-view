@@ -8,6 +8,7 @@ import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { splitOpenSpec } from "../lib/openspec.js";
 import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
+import { localTimesHtml } from "../lib/localTimes.js";
 
 /**
  * Shape — a chat that turns an idea into work. A person picks the repository
@@ -562,7 +563,7 @@ function Message({ m, index, first, onRetry, retrying }: { m: ShapeMessage; inde
         </div>
       ) : (
         <div className="shape-bubble assistant">
-          <div className="markdown-body" dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />
+          <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(m.bodyHtml, m.createdAt ?? null) }} />
           {m.mocks.map((mock, i) => (
             <Mock key={`${m.id}-${i}`} html={mock.html} n={index * 10 + i + 1} />
           ))}
