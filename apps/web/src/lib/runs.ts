@@ -35,7 +35,7 @@ export function roleName(role: string | undefined | null): string {
 /** What the role does, said as the step the reader is watching. */
 export function stepOf(phase: string): Step {
   const p = phase.toLowerCase();
-  if (p.startsWith("resolving") || p.startsWith("cloning")) return "prepare";
+  if (p.startsWith("resolving") || p.startsWith("cloning") || p.startsWith("waiting for its") || p.startsWith("waiting for a free")) return "prepare";
   if (p.startsWith("running claude")) return "work";
   if (p.includes("tests")) return "tests";
   if (p.startsWith("pushing") || p === "finished" || p.startsWith("handing")) return "handover";
@@ -48,6 +48,9 @@ export function phaseWords(phase: string, role?: string | null): string {
   if (p.startsWith("resolving")) return "Choosing which model to use.";
   if (p === "starting" || p.startsWith("starting")) return "Starting.";
   if (p.startsWith("cloning")) return "Getting a copy of the code.";
+  if (p.startsWith("waiting for its turn on staging")) return "Waiting for its turn on staging. Another release goes first.";
+  if (p.startsWith("waiting for its build environment")) return "Waiting for its build environment. Another run on the same work finishes first.";
+  if (p.startsWith("waiting for a free session")) return "Waiting for a free Claude session. All of them are busy.";
   if (p.startsWith("fetching attachments")) return "Fetching the images and files attached to the task.";
   if (p.startsWith("running claude")) {
     switch (role) {

@@ -71,3 +71,13 @@ describe("lengthWords", () => {
     expect([0, 12, 59, 60, 359, 3600, 3900].map(lengthWords)).toEqual(["1 s", "12 s", "59 s", "1 min", "6 min", "1 h", "1 h 5 min"]);
   });
 });
+
+describe("waiting phases", () => {
+  it("say what a run waits for, as part of getting ready", () => {
+    expect(phaseWords("waiting for its turn on staging")).toBe("Waiting for its turn on staging. Another release goes first.");
+    expect(phaseWords("waiting for its build environment")).toMatch(/^Waiting for its build environment/);
+    expect(phaseWords("waiting for a free session")).toBe("Waiting for a free Claude session. All of them are busy.");
+    expect(stepOf("waiting for its turn on staging")).toBe("prepare");
+    expect(stepOf("waiting for a free session")).toBe("prepare");
+  });
+});

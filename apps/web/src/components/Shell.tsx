@@ -149,6 +149,7 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
         )}
       </NavLink>
       <NavLink to="/activity">Activity</NavLink>
+      {!onMore && <NavLink to="/environments">Environments</NavLink>}
       <NavLink to="/shape">Shape</NavLink>
       {onMore ? (
         <button type="button" className="nav-more" onClick={onMore}>
@@ -211,6 +212,9 @@ function MoreMenu({
   const themeLabel = themePref === "system" ? "System" : themePref === "light" ? "Light" : "Dark";
   return (
     <div className="more-menu">
+      <NavLink to="/environments" onClick={onNavigate}>
+        Environments
+      </NavLink>
       <EngineerLinks onNavigate={onNavigate} />
       {showSettings && setup?.canEditApp && (
         <NavLink to="/settings" onClick={onNavigate}>
