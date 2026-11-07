@@ -105,13 +105,15 @@ describe("EnvironmentsPage", () => {
     expect(board.textContent).not.toMatch(/#\d/);
   });
 
-  it("names the repo each task is built in, and not on epics", async () => {
+  it("names the repo of each task and each staging, and not on epics", async () => {
     show(view);
     const board = await screen.findByLabelText("Build environments");
     const task = within(board).getByRole("button", { name: /^The status map:/ });
     expect(within(task).getByTitle("Built in acme/api")).toHaveTextContent("api");
     const epic = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!;
     expect(within(epic).queryByTitle(/^Built in/)).toBeNull();
+    const staging = within(board).getByRole("button", { name: /^Staging:/ });
+    expect(within(staging).getByTitle("The staging branch of acme/api")).toHaveTextContent("api");
   });
 
   it("colours each epic's lane, and shows the same colour on staging once it is merged there", async () => {

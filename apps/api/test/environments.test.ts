@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
+import { estates, issues, memberships, orgs, pullRequests, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
@@ -77,6 +77,7 @@ beforeEach(async () => {
   await mk(api.id, { number: 43, kind: "test", title: "test(34): ST-1 case", factoryState: "factory:manual-test", labels: [RUN], parentIssueId: epic.id });
   id.webTask = (await mk(web.id, { number: 7, title: "task(34): The panel", factoryState: "factory:ready", labels: [RUN], parentIssueId: epic.id })).id;
   id.apiRepo = api.id;
+  id.org = org.id;
   id.webRepo = web.id;
   app = await buildApp(deps);
 });
@@ -139,9 +140,25 @@ describe("GET /api/environments", () => {
     expect(body.other).toEqual([]);
   });
 
-  it("lists on each staging the epics already merged onto it, by lane ref", async () => {
+  it("lists on each staging the epics merged there since its last promotion, from the pull requests", async () => {
     const db = deps.dbh.db as unknown as ReturnType<typeof drizzle>;
-    await db.update(issues).set({ factoryState: "factory:in-staging" } as never).where(eq(issues.id, id.epic));
+    let n = 500;
+    const pr = (repoId: string, title: string, kind: string, mergedAt: string, baseRef = "staging") =>
+      db.insert(pullRequests).values({
+        orgId: id.org, repoId, ghNodeId: `pr${++n}`, number: n, title, kind, headRef: "h", baseRef, state: "closed",
+        mergedAt: new Date(mergedAt), ghUpdatedAt: new Date(),
+      } as never);
+    const old = (await db.insert(issues).values({
+      orgId: id.org, repoId: id.apiRepo, number: 35, kind: "plain", title: "Day-wise calls", state: "open", labels: [],
+      factoryState: "factory:in-staging", ghNodeId: "n35", ghId: 35, ghCreatedAt: new Date(), ghUpdatedAt: new Date(),
+    } as never).returning())[0]!;
+    expect(old).toBeTruthy();
+    // 35 integrated, then promoted (its label still says in-staging); 34 integrated after the promotion
+    await pr(id.apiRepo, "release(35): integrate factory/epic-35 into staging", "other", "2026-11-01T00:00:00Z");
+    await pr(id.apiRepo, "release(35): promote staging to main", "promotion", "2026-11-03T00:00:00Z", "main");
+    await pr(id.apiRepo, "release(34): integrate factory/epic-34 into staging", "other", "2026-11-06T00:00:00Z");
+    // the web half of epic 34, in its sibling repo
+    await pr(id.webRepo, "release(34): integrate factory/epic-34 into staging", "other", "2026-11-06T00:00:00Z");
     stub({
       ...envs,
       environments: [
@@ -151,7 +168,6 @@ describe("GET /api/environments", () => {
     });
     const body = (await environments()).json();
     const on = Object.fromEntries(body.staging.map((s: { repo: string; onStaging: unknown }) => [s.repo, s.onStaging]));
-    // its home repo, and the sibling repo that holds one of its tasks
     expect(on["acme/api"]).toEqual([{ ref: "acme/api#34", title: "Booker status" }]);
     expect(on["acme/web"]).toEqual([{ ref: "acme/api#34", title: "Booker status" }]);
   });
