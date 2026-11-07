@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api.js";
 import { FocusProvider } from "../lib/filter.js";
 import type { EnvCard, EnvironmentsView } from "../types.js";
-import { EnvironmentsPage, envState, laneColors } from "./Environments.js";
+import { EnvironmentsPage, envState, laneColors, mergedWords } from "./Environments.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -45,7 +45,11 @@ const view: EnvironmentsView = {
     {
       ref: "acme/api#34", epicId: "e34", title: "Booker status", tasksTotal: 9, tasksMerged: 7,
       epic: card({ id: "acme/api#34", kind: "epic", title: "Booker status", lastUsedAt: at(60),
-        notes: [{ at: at(60), role: "Dispatcher", title: "Booker status", outcome: "success", summary: "Released the last two tasks.", runId: "d1" }] }),
+        notes: [{ at: at(60), role: "Dispatcher", title: "Booker status", outcome: "success", summary: "Released the last two tasks.", runId: "d1",
+          merged: [
+            { number: 240, title: "task(34): The status map", baseRef: "factory/epic-34", url: "https://github.com/acme/api/pull/240" },
+            { number: 241, title: "task(34): Quiet hours", baseRef: "factory/epic-34", url: "https://github.com/acme/api/pull/241" },
+          ] }] }),
       tasks: [
         card({ active: { runId: "r40", role: "Implementer", title: "The status map", state: "running", since: at(12) },
           notes: [{ at: at(200), role: "Implementer", title: "The status map", outcome: "timeout", summary: "Loader tests hang. Stub the lookup first.", runId: "t1" }],
@@ -193,6 +197,25 @@ describe("EnvironmentsPage", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(within(board).queryByRole("dialog")).toBeNull();
     expect(icon.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("says on a card which branch its last run merged onto, and names the pull requests in the sheet", async () => {
+    show(view);
+    const board = await screen.findByLabelText("Build environments");
+    const epic = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!;
+    expect(epic).toHaveTextContent("Merged 2 pull requests onto factory/epic-34");
+    expect(epic.textContent).not.toMatch(/#\d/);
+    fireEvent.click(epic);
+    const sheet = await screen.findByRole("dialog");
+    const merged = within(sheet).getByText(/^Merged:/).closest(".env-merged") as HTMLElement;
+    expect(merged).toHaveTextContent("#240 → factory/epic-34, #241 → factory/epic-34");
+    expect(within(merged).getByRole("link", { name: "#240" }).getAttribute("href")).toBe("https://github.com/acme/api/pull/240");
+  });
+
+  it("words what a run merged by branch", () => {
+    const m = (number: number, baseRef: string) => ({ number, title: "", baseRef, url: "" });
+    expect(mergedWords([m(1, "factory/epic-193")])).toBe("Merged 1 pull request onto factory/epic-193");
+    expect(mergedWords([m(1, "factory/epic-193"), m(2, "factory/epic-193"), m(3, "staging")])).toBe("Merged 2 pull requests onto factory/epic-193, 1 onto staging");
   });
 
   it("reads a card's state from its turn, its queue and its last run", () => {

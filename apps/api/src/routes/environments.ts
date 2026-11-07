@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import {
   fetchOrchestratorEnvironments,
+  fetchPastRuns,
   orchestratorClock,
   type OrchestratorEnvironment,
   type OrchestratorSession,
@@ -51,7 +52,7 @@ export interface EnvCard {
   epicId: string | null;
   active: EnvTurn | null;
   queue: EnvTurn[];
-  notes: Array<{ at: string | null; role: string; title: string | null; outcome: string; summary: string; runId: string | null }>;
+  notes: EnvNote[];
   lastUsedAt: string | null;
   /** Staging only: the epics already merged onto it and not yet shipped, by lane ref. */
   onStaging?: Array<{ ref: string; title: string }>;
@@ -62,6 +63,30 @@ export interface EnvCard {
    * Empty when the Console has none for it.
    */
   pulls: EnvPull[];
+}
+
+/** A pull request a run merged: which branch it went onto is what the note's reader needs. */
+export interface EnvMerge {
+  number: number;
+  title: string;
+  baseRef: string;
+  url: string;
+}
+
+export interface EnvNote {
+  at: string | null;
+  role: string;
+  title: string | null;
+  outcome: string;
+  summary: string;
+  runId: string | null;
+  /**
+   * The pull requests of this repo merged while the run ran, oldest first: a
+   * release run in the staging environment may have assembled an epic
+   * (merged onto its branch) rather than put anything onto staging, and the
+   * summary alone does not say which.
+   */
+  merged: EnvMerge[];
 }
 
 /** A pull request behind a card, as the Console's projection of GitHub holds it. */
@@ -172,6 +197,25 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
       }
       return chosen.sort(newestFirst).slice(0, MOST_PULLS).map(pullOut);
     };
+    // What each remembered run merged: the repo's pull requests whose merge
+    // fell within the run, by the orchestrator's own record of when it ran.
+    // A run it no longer lists (older than its newest hundred) gets none.
+    const ran = new Map<string, { from: number; to: number }>();
+    for (const r of await fetchPastRuns(deps.cfg)) {
+      const from = Date.parse(r.startedAt);
+      const to = Date.parse(r.finishedAt);
+      if (!Number.isNaN(from) && !Number.isNaN(to)) ran.set(r.id, { from, to });
+    }
+    const MERGE_SLACK = 60_000; // the merge's clock and the orchestrator's need not agree to the second
+    const mergedDuring = (repo: string, runId: string | null): EnvMerge[] => {
+      const w = runId ? ran.get(runId) : undefined;
+      if (!w) return [];
+      const id = repoId.get(repo);
+      return prRows
+        .filter((p) => p.repoId === id && p.mergedAt !== null && p.mergedAt.getTime() >= w.from - MERGE_SLACK && p.mergedAt.getTime() <= w.to + MERGE_SLACK)
+        .sort((a, b) => a.mergedAt!.getTime() - b.mergedAt!.getTime())
+        .map((p) => ({ number: p.number, title: p.title, baseRef: p.baseRef, url: p.htmlUrl }));
+    };
     const issueRows: IssueRow[] = repoRowIds.length
       ? ((await db
           .select({
@@ -227,6 +271,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
           outcome: n.outcome ?? "",
           summary: n.summary,
           runId: n.run_id,
+          merged: mergedDuring(e.repo, n.run_id),
         })),
         lastUsedAt: orchestratorClock(e.last_used_at),
         pulls: pullsOf(e, row),
