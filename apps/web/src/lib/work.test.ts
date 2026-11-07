@@ -260,4 +260,17 @@ describe("the Decisions list", () => {
       ["o/api", ["c", "a"]],
     ]);
   });
+
+  it("gives a cross-repo epic one card per repo, so a task waiting in the other repo is not hidden", () => {
+    const epic = card({ epicId: "e193", number: 193, title: "Improvement to whatsapp coordination flow", repo: "o/api", state: "factory:epic-ready" });
+    const got = decisionCards([epic], [
+      entry({ kind: "gate", epicId: "e193", repo: "o/api", state: "factory:epic-ready", ageDays: 0 }),
+      entry({ kind: "task-start", epicId: "e193", issueId: "w50", repo: "o/web", state: "factory:ready-to-ship", title: "#50 task(193): The builder screen", ageDays: 0 }),
+    ]);
+    expect(got.map((w) => [w.card.repo, w.ask])).toEqual([
+      ["o/api", "release"],
+      ["o/web", "review"],
+    ]);
+    expect(byRepo(got).map((t) => t.repo)).toEqual(["o/api", "o/web"]);
+  });
 });
