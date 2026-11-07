@@ -34,7 +34,7 @@ const BOT = /\[bot\]$|^github-actions/;
  * `Approved` and the run-start note, none of which asks anything. Counting
  * those held gate GS on "1 open question" that nobody had asked.
  */
-export async function countQuestionEntries(db: Db, threadIds: string[]): Promise<Map<string, number>> {
+export async function countQuestionEntries(db: Db, threadIds: string[], viewer?: string): Promise<Map<string, number>> {
   if (threadIds.length === 0) return new Map();
   const rows = await db
     .select({
@@ -53,6 +53,10 @@ export async function countQuestionEntries(db: Db, threadIds: string[]): Promise
     if (r.source === "ask_answer") continue;
     const author = r.author ?? r.commentAuthor;
     if (author && BOT.test(author)) continue;
+    // What the person looking wrote is their own instruction or note, not a
+    // question put to them: "Merge the beacon-web design PR" on the gate
+    // thread held that same person's GS approval on "1 open question".
+    if (viewer && author && author.toLowerCase() === viewer.toLowerCase()) continue;
     const body = r.source === "gh_comment" ? r.commentBody : r.noteBody;
     if (body && (CONTROL.test(body) || body.includes("<!-- factory-agent -->"))) continue;
     out.set(r.threadId, (out.get(r.threadId) ?? 0) + 1);

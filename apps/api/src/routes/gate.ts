@@ -138,7 +138,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     // Open-questions guard: unresolved threads attached to this gate's artifacts
     // or the gate itself — the same computation the approve guard runs, so the
     // panel can never enable a button the guard then refuses.
-    const openQuestions = await openGateQuestions(db, epic.id, gateInfo.gate);
+    const openQuestions = await openGateQuestions(db, epic.id, gateInfo.gate, ctx.login);
 
     // GS's evidence: what the factory assembled, not what a human is about to
     // read for the first time. The tasks table, the newest agent report on the
@@ -192,7 +192,7 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       // Open-questions guard: approving over open questions needs an explicit,
       // recorded acknowledgement. Computed by the same helper the panel uses —
       // the guard must never see questions the panel did not offer to acknowledge.
-      const withEntries = await openGateQuestions(db, epic.id, gateInfo.gate);
+      const withEntries = await openGateQuestions(db, epic.id, gateInfo.gate, ctx.login);
       if (withEntries.length > 0 && !req.body?.acknowledgeOpenQuestions) {
         return reply.code(409).send({
           error: `open questions exist on this gate's artifacts: ${withEntries.map((t) => t.title).join(", ")}`,
@@ -504,8 +504,8 @@ function artifactIsRelevant(gate: string, kind: string): boolean {
 
 /**
  * The open questions that hold a gate: the gate's own thread plus the threads
- * on the artifacts that gate is about, counting only threads that actually have
- * entries.
+ * on the artifacts that gate is about, counting only threads with entries
+ * someone other than the viewer wrote — your own notes never hold your gate.
  *
  * One definition, called by both the panel and the approve guard. They used to
  * compute two different sets — the panel from the gate's own artifacts, the
@@ -519,6 +519,7 @@ async function openGateQuestions(
   db: Db,
   epicIssueId: string,
   gate: string,
+  viewer: string,
 ): Promise<Array<{ id: string; title: string; topicRef: string; entryCount: number }>> {
   const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epicIssueId)).limit(1))[0];
   const artifactRows = change
@@ -536,7 +537,7 @@ async function openGateQuestions(
   ).filter((t) => guardRefs.has(t.topicRef));
   // Only what a person wrote counts; the factory's notices and the gate
   // controls themselves never hold a gate.
-  const counts = await countQuestionEntries(db, rows.map((t) => t.id));
+  const counts = await countQuestionEntries(db, rows.map((t) => t.id), viewer);
   return rows
     .map((t) => ({ ...t, entryCount: counts.get(t.id) ?? 0 }))
     .filter((t) => t.entryCount > 0);

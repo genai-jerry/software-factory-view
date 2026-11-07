@@ -150,7 +150,7 @@ describe("the gate panel and the approve guard agree on open questions", () => {
     // block on it either, or approve fails with no reachable way to proceed.
     await deps.dbh.db
       .insert(threadEntries)
-      .values({ orgId: id.org!, threadId: id.designThread!, source: "console_note", body: "later", author: "alice" });
+      .values({ orgId: id.org!, threadId: id.designThread!, source: "console_note", body: "later", author: "carol" });
 
     const panel = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
     expect(panel.statusCode).toBe(200);
@@ -184,17 +184,31 @@ describe("the gate panel and the approve guard agree on open questions", () => {
     expect(panel.json().openQuestions).toEqual([]);
 
     // A person's real question on the same thread does count.
-    const asked = await mkComment("alice", "Which time zone groups the days?", 3);
-    await d.insert(threadEntries).values({ orgId: id.org!, threadId: id.gateThread!, source: "gh_comment", commentId: asked.id, author: "alice" });
+    const asked = await mkComment("carol", "Which time zone groups the days?", 3);
+    await d.insert(threadEntries).values({ orgId: id.org!, threadId: id.gateThread!, source: "gh_comment", commentId: asked.id, author: "carol" });
     const again = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
     expect(again.json().openQuestions).toMatchObject([{ topicRef: "gate/spec", entryCount: 1 }]);
     await d.delete(threadEntries).where(eq(threadEntries.threadId, id.gateThread!));
   });
 
+  it("never holds your gate on what you wrote yourself", async () => {
+    // "Merge the beacon-web design PR", written on the gate thread by the
+    // person now approving, is their instruction, not a question for them.
+    await deps.dbh.db
+      .insert(threadEntries)
+      .values({ orgId: id.org!, threadId: id.gateThread!, source: "console_note", body: "Merge the beacon-web design PR", author: "alice" });
+    const panel = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
+    expect(panel.json().openQuestions).toEqual([]);
+    const calls = stubGitHub(201, { node_id: "C3", html_url: "https://gh/1#c3" });
+    expect((await approve()).statusCode).toBe(200);
+    expect(calls).toHaveLength(1);
+    await deps.dbh.db.delete(threadEntries).where(eq(threadEntries.threadId, id.gateThread!));
+  });
+
   it("blocks on a question the panel does list, and says how many", async () => {
     await deps.dbh.db
       .insert(threadEntries)
-      .values({ orgId: id.org!, threadId: id.proposalThread!, source: "console_note", body: "why?", author: "alice" });
+      .values({ orgId: id.org!, threadId: id.proposalThread!, source: "console_note", body: "why?", author: "carol" });
 
     const panel = await app.inject({ method: "GET", url: `/api/epics/${id.epic}/gate`, headers: { cookie } });
     expect(panel.json().openQuestions).toMatchObject([{ topicRef: "artifact/proposal", entryCount: 1 }]);
