@@ -846,6 +846,18 @@ export interface EnvCard {
   lastUsedAt: string | null;
   /** Staging only: the epics already merged onto it and not yet shipped. */
   onStaging?: Array<{ ref: string; title: string }>;
+  /** The pull requests behind this card, newest first (see the API's EnvCard). */
+  pulls: EnvPull[];
+}
+
+export interface EnvPull {
+  number: number;
+  title: string;
+  state: "open" | "merged" | "closed";
+  mergedAt: string | null;
+  headRef: string;
+  baseRef: string;
+  url: string;
 }
 
 export interface EnvLane {

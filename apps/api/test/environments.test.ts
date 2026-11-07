@@ -174,6 +174,50 @@ describe("GET /api/environments", () => {
     expect(on["acme/web"]).toEqual([{ ref: "acme/api#34", title: "Booker status" }]);
   });
 
+  it("lists on each card the pull requests behind it: a task's own, an epic's, and what is on staging", async () => {
+    const db = deps.dbh.db as unknown as ReturnType<typeof drizzle>;
+    let n = 600;
+    const pr = (over: Record<string, unknown>) =>
+      db.insert(pullRequests).values({
+        orgId: id.org, repoId: id.apiRepo, ghNodeId: `pr${++n}`, number: n, title: `pr ${n}`, kind: "task", headRef: "h", baseRef: "staging",
+        state: "closed", mergedAt: null, htmlUrl: `https://github.com/acme/api/pull/${n}`, ghUpdatedAt: new Date("2026-11-04T00:00:00Z"), ...over,
+      } as never);
+    // the task's: its spec, merged into the epic branch, and a fix still open
+    await pr({ title: "task(34): The status map", issueNumber: 40, headRef: "factory/40-the-status-map", baseRef: "factory/epic-34", mergedAt: new Date("2026-11-02T00:00:00Z") });
+    await pr({ title: "fix(34): status map colours", issueNumber: 40, headRef: "factory/40-colours", baseRef: "factory/epic-34", state: "open" });
+    // another task of the epic, merged; and a task of some other epic
+    await pr({ title: "task(34): idle", issueNumber: 41, headRef: "factory/41-idle", baseRef: "factory/epic-34", mergedAt: new Date("2026-11-03T00:00:00Z") });
+    await pr({ title: "task(99): elsewhere", issueNumber: 99, headRef: "factory/99-x", baseRef: "factory/epic-99", mergedAt: new Date("2026-11-03T00:00:00Z") });
+    // the epic's own: its spec, and its release onto staging
+    await pr({ title: "spec(34): booker status", kind: "spec", issueNumber: 34, headRef: "factory/34-spec", baseRef: "factory/epic-34", mergedAt: new Date("2026-10-20T00:00:00Z") });
+    await pr({ title: "release(34): integrate factory/epic-34 into staging", kind: "other", issueNumber: 34, headRef: "factory/epic-34", mergedAt: new Date("2026-11-06T00:00:00Z") });
+    // staging's: an older epic promoted (so not listed), the promotion, and the open promotion of what is there now
+    await pr({ title: "release(35): integrate factory/epic-35 into staging", kind: "other", issueNumber: 35, headRef: "factory/epic-35", mergedAt: new Date("2026-11-01T00:00:00Z") });
+    await pr({ title: "release(35): promote staging to main", kind: "promotion", headRef: "staging", baseRef: "main", mergedAt: new Date("2026-11-03T00:00:00Z") });
+    await pr({ title: "release(34): promote staging to main", kind: "promotion", headRef: "staging", baseRef: "main", state: "open", ghUpdatedAt: new Date("2026-11-07T00:00:00Z") });
+    stub();
+    const body = (await environments()).json();
+    const brief = (c: { pulls: Array<{ number: number; state: string; title: string }> }) => c.pulls.map((p) => `${p.state} ${p.title}`);
+    const task = body.lanes[0].tasks.find((t: { id: string }) => t.id === "acme/api#40");
+    expect(brief(task)).toEqual(["open fix(34): status map colours", "merged task(34): The status map"]);
+    expect(task.pulls[1]).toMatchObject({ number: 601, mergedAt: "2026-11-02T00:00:00.000Z", headRef: "factory/40-the-status-map", baseRef: "factory/epic-34", url: "https://github.com/acme/api/pull/601" });
+    expect(brief(body.lanes[0].epic)).toEqual([
+      "merged release(34): integrate factory/epic-34 into staging",
+      "open fix(34): status map colours",
+      "merged task(34): idle",
+      "merged task(34): The status map",
+      "merged spec(34): booker status",
+    ]);
+    const staging = body.staging.find((s: { repo: string }) => s.repo === "acme/api");
+    expect(brief(staging)).toEqual([
+      "open release(34): promote staging to main",
+      "merged release(34): integrate factory/epic-34 into staging",
+      "merged release(35): promote staging to main",
+    ]);
+    // a card the Console has no pull requests for says so with an empty list
+    expect(body.lanes[0].tasks.find((t: { id: string }) => t.id === "acme/web#7").pulls).toEqual([]);
+  });
+
   it("counts every session in use but names only this org's", async () => {
     stub();
     const { sessions } = (await environments()).json();
