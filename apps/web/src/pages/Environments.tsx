@@ -6,7 +6,7 @@ import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { lengthWords } from "../lib/runs.js";
-import type { EnvCard, EnvironmentsView, EnvLane, EnvPull, EnvSession, EnvTurn } from "../types.js";
+import type { EnvCard, EnvironmentsView, EnvLane, EnvMerge, EnvPull, EnvSession, EnvTurn } from "../types.js";
 import { localTimesText } from "../lib/localTimes.js";
 
 /**
@@ -113,10 +113,23 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
             <b>Remembers:</b> {memory.length > 150 ? `${memory.slice(0, 150).trimEnd()}…` : memory}
           </span>
         )}
+        {card.notes[0]?.merged?.length ? <span className="env-merged">{mergedWords(card.notes[0].merged)}</span> : null}
       </button>
       {card.pulls?.length > 0 && <Pulls card={card} now={now} />}
     </div>
   );
+}
+
+/**
+ * What a run merged, by branch, without numbers (the card names work by its
+ * title): "Merged 1 pull request onto factory/epic-193" — or two branches,
+ * "Merged 2 pull requests onto factory/epic-193, 1 onto staging".
+ */
+export function mergedWords(merged: EnvMerge[]): string {
+  const by = new Map<string, number>();
+  for (const m of merged) by.set(m.baseRef, (by.get(m.baseRef) ?? 0) + 1);
+  const parts = [...by].map(([branch, n], i) => (i === 0 ? `${n} pull request${n === 1 ? "" : "s"} onto ${branch}` : `${n} onto ${branch}`));
+  return `Merged ${parts.join(", ")}`;
 }
 
 /** How many of a card's pull requests merged, and the words for the icon. */
@@ -367,6 +380,20 @@ function EnvSheet({ card, onClose, now }: { card: EnvCard; onClose: () => void; 
                   )}
                 </span>
                 <span className="env-note">{localTimesText(n.summary, n.at) || "No closing summary."}</span>
+                {n.merged && n.merged.length > 0 && (
+                  <span className="env-merged">
+                    Merged:{" "}
+                    {n.merged.map((m, j) => (
+                      <span key={m.number}>
+                        {j > 0 && ", "}
+                        <a href={m.url} target="_blank" rel="noreferrer" title={m.title}>
+                          #{m.number}
+                        </a>{" "}
+                        → {m.baseRef}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

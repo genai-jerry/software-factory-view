@@ -222,6 +222,40 @@ describe("GET /api/environments", () => {
     expect(body.lanes[0].tasks.find((t: { id: string }) => t.id === "acme/web#7").pulls).toEqual([]);
   });
 
+  it("says on each remembered run which pull requests it merged, and onto which branch", async () => {
+    const db = deps.dbh.db as unknown as ReturnType<typeof drizzle>;
+    let n = 700;
+    const pr = (title: string, baseRef: string, mergedAt: string) =>
+      db.insert(pullRequests).values({
+        orgId: id.org, repoId: id.apiRepo, ghNodeId: `pr${++n}`, number: n, title, kind: "other", headRef: `h${n}`, baseRef, state: "closed",
+        mergedAt: new Date(mergedAt), htmlUrl: `https://github.com/acme/api/pull/${n}`, ghUpdatedAt: new Date(),
+      } as never);
+    // the run `old` ran 03:30–04:00: it assembled the epic, then put it onto staging; a later merge is not its
+    await pr("task(34): closed", "factory/epic-34", "2026-11-06T03:40:00Z");
+    await pr("release(34): integrate factory/epic-34 into staging", "staging", "2026-11-06T03:58:00Z");
+    await pr("fix: something else", "staging", "2026-11-06T04:30:00Z");
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async (url: string) => {
+      const body = String(url).endsWith("/runs")
+        ? [{ id: "old", repo: "acme/api", issue: 34, role: "release", outcome: "success", started_at: "2026-11-06T03:30:00+00:00", finished_at: "2026-11-06T04:00:00+00:00" }]
+        : envs;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    const body = (await environments()).json();
+    const staging = body.staging.find((s: { repo: string }) => s.repo === "acme/api");
+    expect(staging.notes[0].merged).toEqual([
+      { number: 701, title: "task(34): closed", baseRef: "factory/epic-34", url: "https://github.com/acme/api/pull/701" },
+      { number: 702, title: "release(34): integrate factory/epic-34 into staging", baseRef: "staging", url: "https://github.com/acme/api/pull/702" },
+    ]);
+  });
+
+  it("gives a remembered run no merges when the orchestrator no longer lists it", async () => {
+    stub(); // the stub answers /runs with the environments body, which is no list of runs
+    const body = (await environments()).json();
+    expect(body.staging[0].notes[0].merged).toEqual([]);
+  });
+
   it("counts every session in use but names only this org's", async () => {
     stub();
     const { sessions } = (await environments()).json();

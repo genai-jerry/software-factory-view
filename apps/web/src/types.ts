@@ -831,6 +831,15 @@ export interface EnvNote {
   outcome: string;
   summary: string;
   runId: string | null;
+  /** The pull requests the run merged, oldest first, each with the branch it went onto. */
+  merged?: EnvMerge[];
+}
+
+export interface EnvMerge {
+  number: number;
+  title: string;
+  baseRef: string;
+  url: string;
 }
 
 export interface EnvCard {
