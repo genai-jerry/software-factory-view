@@ -273,4 +273,18 @@ describe("the Decisions list", () => {
     ]);
     expect(byRepo(got).map((t) => t.repo)).toEqual(["o/api", "o/web"]);
   });
+
+  it("does not ask to release an epic the Release Manager is already releasing", () => {
+    const a = card({ epicId: "e138", number: 138, repo: "o/api", state: "factory:epic-ready" });
+    const b = card({ epicId: "e193", number: 193, repo: "o/api", state: "factory:epic-ready" });
+    const gates = [
+      entry({ kind: "gate", epicId: "e138", repo: "o/api", state: "factory:epic-ready", ageDays: 0 }),
+      entry({ kind: "gate", epicId: "e193", repo: "o/api", state: "factory:epic-ready", ageDays: 0 }),
+    ];
+    const running: RunningItem[] = [
+      { issueId: "e138", number: 138, title: "Whatsapp flow", repo: "o/api", kind: "epic", role: "release", epicId: "e138", epicNumber: 138, epicTitle: "Whatsapp flow" },
+    ];
+    expect(decisionCards([a, b], gates).map((w) => w.card.epicId)).toEqual(["e138", "e193"]);
+    expect(decisionCards([a, b], gates, running).map((w) => w.card.epicId)).toEqual(["e193"]);
+  });
 });
