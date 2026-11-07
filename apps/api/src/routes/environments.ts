@@ -58,8 +58,8 @@ export interface EnvCard {
   /**
    * The pull requests this card's work moved through, newest first: a task's
    * own; those into an epic's branch and the epic's own (spec, design, its
-   * release onto staging); what went onto staging since its last promotion,
-   * and the promotion itself. Empty when the Console has none for it.
+   * release onto staging); what went onto staging since its last promotion.
+   * Empty when the Console has none for it.
    */
   pulls: EnvPull[];
 }
@@ -155,10 +155,12 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
       if (e.kind === "staging") {
         const promoted = lastPromotion(id);
         const onto = stagingBranchOf.get(id ?? "") ?? "staging";
+        // What is in the staging branch: every pull request onto it since the last
+        // promotion carried the branch to main, and any still open onto it. A
+        // promotion (staging → main) is about leaving staging, and is a decision on
+        // the Decisions page rather than a line here.
         chosen = mine.filter(
-          (p) =>
-            (p.baseRef === onto && (p.state === "open" || (p.mergedAt !== null && p.mergedAt.getTime() > promoted))) ||
-            (p.kind === "promotion" && (p.state === "open" || p.mergedAt?.getTime() === promoted)),
+          (p) => p.baseRef === onto && (p.state === "open" || (p.mergedAt !== null && p.mergedAt.getTime() > promoted)),
         );
       } else if (e.number === null) {
         chosen = [];

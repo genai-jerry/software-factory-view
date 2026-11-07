@@ -191,10 +191,13 @@ describe("GET /api/environments", () => {
     // the epic's own: its spec, and its release onto staging
     await pr({ title: "spec(34): booker status", kind: "spec", issueNumber: 34, headRef: "factory/34-spec", baseRef: "factory/epic-34", mergedAt: new Date("2026-10-20T00:00:00Z") });
     await pr({ title: "release(34): integrate factory/epic-34 into staging", kind: "other", issueNumber: 34, headRef: "factory/epic-34", mergedAt: new Date("2026-11-06T00:00:00Z") });
-    // staging's: an older epic promoted (so not listed), the promotion, and the open promotion of what is there now
+    // staging's: an older epic promoted (so not listed), the promotions (never listed: they leave staging),
+    // a fix merged onto staging since, and one still open onto it
     await pr({ title: "release(35): integrate factory/epic-35 into staging", kind: "other", issueNumber: 35, headRef: "factory/epic-35", mergedAt: new Date("2026-11-01T00:00:00Z") });
     await pr({ title: "release(35): promote staging to main", kind: "promotion", headRef: "staging", baseRef: "main", mergedAt: new Date("2026-11-03T00:00:00Z") });
     await pr({ title: "release(34): promote staging to main", kind: "promotion", headRef: "staging", baseRef: "main", state: "open", ghUpdatedAt: new Date("2026-11-07T00:00:00Z") });
+    await pr({ title: "Pin kombu", kind: "other", headRef: "fix/pin-kombu", mergedAt: new Date("2026-11-05T00:00:00Z") });
+    await pr({ title: "Quiet hours", kind: "other", headRef: "fix/quiet-hours", state: "open", ghUpdatedAt: new Date("2026-11-07T00:00:00Z") });
     stub();
     const body = (await environments()).json();
     const brief = (c: { pulls: Array<{ number: number; state: string; title: string }> }) => c.pulls.map((p) => `${p.state} ${p.title}`);
@@ -210,10 +213,11 @@ describe("GET /api/environments", () => {
     ]);
     const staging = body.staging.find((s: { repo: string }) => s.repo === "acme/api");
     expect(brief(staging)).toEqual([
-      "open release(34): promote staging to main",
+      "open Quiet hours",
       "merged release(34): integrate factory/epic-34 into staging",
-      "merged release(35): promote staging to main",
+      "merged Pin kombu",
     ]);
+    expect(staging.pulls.every((p: { baseRef: string }) => p.baseRef === "staging")).toBe(true);
     // a card the Console has no pull requests for says so with an empty list
     expect(body.lanes[0].tasks.find((t: { id: string }) => t.id === "acme/web#7").pulls).toEqual([]);
   });
