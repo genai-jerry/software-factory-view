@@ -53,6 +53,8 @@ export interface EnvCard {
   queue: EnvTurn[];
   notes: Array<{ at: string | null; role: string; title: string | null; outcome: string; summary: string; runId: string | null }>;
   lastUsedAt: string | null;
+  /** Staging only: the epics already merged onto it and not yet shipped, by lane ref. */
+  onStaging?: Array<{ ref: string; title: string }>;
 }
 
 const cleanTitle = (t: string) => t.replace(/^(task|test|bug)\([^)]*\):?\s*/i, "");
@@ -142,7 +144,18 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     };
 
     const envs = got.environments.filter((e) => inFocus(e.repo, e.epic));
-    const staging = envs.filter((e) => e.kind === "staging").map(card);
+    // An epic (or a standalone issue) is on a repo's staging when it sits at factory:in-staging and
+    // that repo is its home or holds one of its tasks (a cross-repo train).
+    const stagedEpics = issueRows.filter((i) => (i.kind === "epic" || i.kind === "plain") && i.state === "open" && i.factoryState === "factory:in-staging");
+    const onStagingOf = (repo: string) =>
+      stagedEpics
+        .filter((ep) => {
+          if (fullNameOf.get(ep.repoId) === repo) return true;
+          const id = repoId.get(repo);
+          return issueRows.some((t) => t.parentIssueId === ep.id && t.repoId === id);
+        })
+        .map((ep) => ({ ref: `${fullNameOf.get(ep.repoId)}#${ep.number}`, title: cleanTitle(ep.title) }));
+    const staging = envs.filter((e) => e.kind === "staging").map((e) => ({ ...card(e), onStaging: onStagingOf(e.repo) }));
 
     // Lanes: one per epic, its own environment and its tasks'.
     const lanes = new Map<string, { epic: EnvCard | null; ref: string; tasks: EnvCard[] }>();
