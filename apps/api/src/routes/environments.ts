@@ -1,5 +1,5 @@
-import { issues, repos } from "@console/db";
-import { and, inArray } from "drizzle-orm";
+import { issues, pullRequests, repos } from "@console/db";
+import { and, inArray, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import {
@@ -114,7 +114,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
       t && {
         runId: t.run_id,
         role: agentRoleLabel(t.role ?? undefined) ?? (t.role || "Factory"),
-        title: titleOf(repo, t.issue),
+        title: titleOf(t.repo || repo, t.issue),
         state: t.state,
         since: orchestratorClock(t.since),
       };
@@ -144,17 +144,42 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     };
 
     const envs = got.environments.filter((e) => inFocus(e.repo, e.epic));
-    // An epic (or a standalone issue) is on a repo's staging when it sits at factory:in-staging and
-    // that repo is its home or holds one of its tasks (a cross-repo train).
-    const stagedEpics = issueRows.filter((i) => (i.kind === "epic" || i.kind === "plain") && i.state === "open" && i.factoryState === "factory:in-staging");
-    const onStagingOf = (repo: string) =>
-      stagedEpics
-        .filter((ep) => {
-          if (fullNameOf.get(ep.repoId) === repo) return true;
-          const id = repoId.get(repo);
-          return issueRows.some((t) => t.parentIssueId === ep.id && t.repoId === id);
-        })
-        .map((ep) => ({ ref: `${fullNameOf.get(ep.repoId)}#${ep.number}`, title: cleanTitle(ep.title) }));
+    // What is on a repo's staging comes from its merged pull requests, not
+    // from labels (a label can lag: an epic promoted by hand keeps
+    // factory:in-staging, and a blocked one already merged there carries no
+    // staging label at all). A promotion carries the whole staging branch to
+    // the default branch, so an epic is on staging when its
+    // `release(<n>): integrate …` pull request merged after the repo's last
+    // merged promotion.
+    const prRows = repoRowIds.length
+      ? await db
+          .select({ repoId: pullRequests.repoId, title: pullRequests.title, kind: pullRequests.kind, mergedAt: pullRequests.mergedAt })
+          .from(pullRequests)
+          .where(and(inArray(pullRequests.repoId, repoRowIds), isNotNull(pullRequests.mergedAt)))
+      : [];
+    const onStagingOf = (repo: string) => {
+      const id = repoId.get(repo);
+      const mine = prRows.filter((p) => p.repoId === id);
+      const promoted = Math.max(0, ...mine.filter((p) => p.kind === "promotion").map((p) => p.mergedAt!.getTime()));
+      const numbers = new Set<number>();
+      for (const p of mine) {
+        const m = /^release\(([\d,\s]+)\):\s*integrate/i.exec(p.title);
+        if (m && p.kind !== "promotion" && p.mergedAt!.getTime() > promoted) {
+          for (const n of m[1]!.split(",")) if (Number(n)) numbers.add(Number(n));
+        }
+      }
+      // The number names the epic in its home repo: this repo's own, or a
+      // sibling repo's epic that has a task here (a cross-repo train).
+      const out: Array<{ ref: string; title: string }> = [];
+      for (const n of numbers) {
+        const candidates = issueRows.filter((i) => i.number === n && (i.kind === "epic" || i.kind === "plain"));
+        const ep =
+          candidates.find((i) => i.repoId === id) ??
+          candidates.find((i) => issueRows.some((t) => t.parentIssueId === i.id && t.repoId === id));
+        if (ep) out.push({ ref: `${fullNameOf.get(ep.repoId)}#${ep.number}`, title: cleanTitle(ep.title) });
+      }
+      return out;
+    };
     const staging = envs.filter((e) => e.kind === "staging").map((e) => ({ ...card(e), onStaging: onStagingOf(e.repo) }));
 
     // Lanes: one per epic, its own environment and its tasks'.
