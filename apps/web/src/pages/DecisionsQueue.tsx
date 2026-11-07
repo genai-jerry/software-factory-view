@@ -21,22 +21,54 @@ export function DecisionsQueuePage() {
   });
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
   const cards = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou) : null;
+  const tabs = cards ? byRepo(cards) : [];
+  const [picked, setPicked] = useState<string | null>(null);
+  const current = tabs.find((t) => t.repo === picked) ?? tabs[0];
 
   return (
     <div>
       <h1>Decisions</h1>
-      <p className="muted">Everything that waits for you, most urgent first. Each card is one decision; the buttons are the whole answer.</p>
+      <p className="muted">Everything that waits for you, newest first, one tab per repo. Each card is one decision; the buttons are the whole answer.</p>
       {(board.isLoading || myWork.isLoading) && <p className="muted">Loading…</p>}
       {cards && cards.length === 0 && (
         <div className="card">
           <p className="muted">Nothing is waiting on you. The factory is running.</p>
         </div>
       )}
-      {cards?.map((w) => (
-        <DecisionCard item={w} key={w.card.epicId} />
-      ))}
+      {tabs.length > 0 && (
+        <div className="decision-tabs" role="tablist" aria-label="Repos">
+          {tabs.map((t) => (
+            <button
+              key={t.repo}
+              type="button"
+              role="tab"
+              id={`decisions-tab-${t.repo}`}
+              aria-selected={t.repo === current?.repo}
+              aria-controls="decisions-panel"
+              className={t.repo === current?.repo ? "active" : ""}
+              onClick={() => setPicked(t.repo)}
+            >
+              <RepoChip fullName={t.repo} /> <span className="decision-tab-count">{t.items.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {current && (
+        <div role="tabpanel" id="decisions-panel" aria-labelledby={`decisions-tab-${current.repo}`}>
+          {current.items.map((w) => (
+            <DecisionCard item={w} key={w.card.epicId} />
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+/** One tab per repo, in the order of each repo's newest decision; the cards keep theirs. */
+export function byRepo(items: WorkItem[]): { repo: string; items: WorkItem[] }[] {
+  const tabs = new Map<string, WorkItem[]>();
+  for (const w of items) tabs.set(w.card.repo, [...(tabs.get(w.card.repo) ?? []), w]);
+  return [...tabs].map(([repo, list]) => ({ repo, items: list }));
 }
 
 function ageOf(days: number): string {
@@ -313,8 +345,9 @@ function RunDecision({ item: w }: { item: WorkItem }) {
             {t.passed} of {t.total} have passed.{t.failed > 0 && ` ${t.failed} failed; the fix is being built and will come back for a re-test.`}
           </li>
         )}
+        {!w.card.open && <li>This already shipped and closed, but nobody recorded these tests.</li>}
         {cases.slice(0, 3).map((c) => (
-          <li key={c.issueId}>{c.title.replace(/^test\(\d+\):\s*/, "")}</li>
+          <li key={c.issueId}>{c.title.replace(/^#\d+\s+/, "").replace(/^test\(\d+\):\s*/, "")}</li>
         ))}
         {n > 3 && <li className="muted">and {n - 3} more</li>}
       </ul>

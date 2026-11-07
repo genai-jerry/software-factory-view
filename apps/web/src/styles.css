@@ -1545,3 +1545,8 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
   .env-lane-epic { border-top: 0; padding-top: 0; }
   .env-tasks > .env-card { max-width: none; }
 }
+
+.decision-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 16px; border-bottom: 1px solid var(--border); }
+.decision-tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); }
+.decision-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
+.decision-tab-count { font-variant-numeric: tabular-nums; font-size: 0.8rem; padding: 0 6px; border-radius: 999px; background: var(--surface-2, rgba(255,255,255,0.08)); }

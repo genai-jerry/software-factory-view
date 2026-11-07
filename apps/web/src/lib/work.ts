@@ -299,7 +299,10 @@ export function workLink(epicId: string, entryLink?: string): string {
 }
 
 export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[]): WorkLists {
-  const shown = cards.filter((c) => !isHousekeeping(c));
+  // Housekeeping stays off the lists unless it waits on someone: then it is
+  // a decision like any other, and the Decisions badge counts it.
+  const asked = new Set(needsYou.map((e) => e.epicId));
+  const shown = cards.filter((c) => !isHousekeeping(c) || asked.has(c.epicId));
   const known = new Set(shown.map((c) => c.epicId));
   const byNumber = new Map(shown.map((c) => [`${c.repo}#${c.number}`, c]));
   const extra: BoardCard[] = [];
@@ -338,12 +341,13 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     const pointer = picked ? pointerFor(picked.ask, picked.entry, card, entries) : workingLine(stage, card, live);
     const who = whoFor(ask, card, live, entries);
     const item: WorkItem = { card, stage, entries, running: live, ask, pointer, who, link: workLink(card.epicId, picked?.entry.link) };
-    if (!card.open) {
-      done.push(item);
-      continue;
-    }
+    // Something still waiting on a person is a decision even when its item
+    // has shipped and closed (test cases nobody recorded, say): the badge
+    // counts it, so the list shows it.
     if (ask) {
       needsDecision.push(item);
+    } else if (!card.open) {
+      done.push(item);
     } else {
       if (who.startsWith("Someone else")) others += 1;
       working.push(item);
@@ -351,7 +355,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
   }
 
   const rank: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, review: 5, start: 6 };
-  needsDecision.sort((a, b) => rank[a.ask!] - rank[b.ask!] || b.card.daysInState - a.card.daysInState);
+  needsDecision.sort((a, b) => newestAge(a) - newestAge(b) || rank[a.ask!] - rank[b.ask!]);
   working.sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.card.daysInState - b.card.daysInState);
 
   return {
@@ -360,6 +364,11 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     done,
     counts: { you: needsDecision.length, others, working: working.length - others },
   };
+}
+
+/** Days since the newest thing on this item started waiting on a person. */
+export function newestAge(w: WorkItem): number {
+  return w.entries.length ? Math.min(...w.entries.map((e) => e.ageDays)) : w.card.daysInState;
 }
 
 /**
@@ -372,7 +381,7 @@ export function workKey(e: AttentionEntry): string {
   return m ? `${e.repo}#${m[1]}` : e.epicId;
 }
 
-/** The Decisions page: one card per work item that waits on me, newest first. */
+/** The Decisions page and its badge: one card per work item that waits on me, newest first. */
 export function decisionCards(cards: BoardCard[], needsYou: AttentionEntry[]): WorkItem[] {
   return buildWork(cards, needsYou, []).needsDecision;
 }
