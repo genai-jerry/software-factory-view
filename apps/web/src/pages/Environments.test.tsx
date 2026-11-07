@@ -37,7 +37,7 @@ const view: EnvironmentsView = {
       onStaging: [{ ref: "acme/api#34", title: "Booker status" }],
       pulls: [
         pull(250, "release(34): integrate factory/epic-34 into staging", "merged", "factory/epic-34", "staging"),
-        pull(236, "release(35): promote staging to main", "merged", "staging", "main"),
+        pull(236, "Booking: the lead's timezone goes with the book request", "merged", "fix/booking-timezone", "staging"),
       ],
     }),
   ],
