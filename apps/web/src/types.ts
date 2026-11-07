@@ -844,6 +844,8 @@ export interface EnvCard {
   queue: EnvTurn[];
   notes: EnvNote[];
   lastUsedAt: string | null;
+  /** Staging only: the epics already merged onto it and not yet shipped. */
+  onStaging?: Array<{ ref: string; title: string }>;
 }
 
 export interface EnvLane {

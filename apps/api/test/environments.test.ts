@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -136,6 +137,23 @@ describe("GET /api/environments", () => {
     expect(lane.tasks[0].queue[0]).toMatchObject({ role: "QA", state: "waiting" });
     // another tenant's environment is left out
     expect(body.other).toEqual([]);
+  });
+
+  it("lists on each staging the epics already merged onto it, by lane ref", async () => {
+    const db = deps.dbh.db as unknown as ReturnType<typeof drizzle>;
+    await db.update(issues).set({ factoryState: "factory:in-staging" } as never).where(eq(issues.id, id.epic));
+    stub({
+      ...envs,
+      environments: [
+        ...envs.environments,
+        { id: "acme/web@staging", kind: "staging", repo: "acme/web", number: null, epic: null, last_used_at: null, active: null, queue: [], notes: [] },
+      ],
+    });
+    const body = (await environments()).json();
+    const on = Object.fromEntries(body.staging.map((s: { repo: string; onStaging: unknown }) => [s.repo, s.onStaging]));
+    // its home repo, and the sibling repo that holds one of its tasks
+    expect(on["acme/api"]).toEqual([{ ref: "acme/api#34", title: "Booker status" }]);
+    expect(on["acme/web"]).toEqual([{ ref: "acme/api#34", title: "Booker status" }]);
   });
 
   it("counts every session in use but names only this org's", async () => {

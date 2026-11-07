@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api.js";
 import { FocusProvider } from "../lib/filter.js";
 import type { EnvCard, EnvironmentsView } from "../types.js";
-import { EnvironmentsPage, envState } from "./Environments.js";
+import { EnvironmentsPage, envState, laneColor } from "./Environments.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -30,6 +30,7 @@ const view: EnvironmentsView = {
       active: { runId: "rel", role: "Release Manager", title: "Booker status", state: "running", since: at(6) },
       queue: [{ runId: "rel2", role: "Release Manager", title: "Flow triggers", state: "waiting", since: at(1) }],
       notes: [{ at: at(120), role: "Release Manager", title: "Older epic", outcome: "success", summary: "Merged onto staging; deploy asked.", runId: "old" }],
+      onStaging: [{ ref: "acme/api#34", title: "Booker status" }],
     }),
   ],
   lanes: [
@@ -111,6 +112,17 @@ describe("EnvironmentsPage", () => {
     expect(within(task).getByTitle("Built in acme/api")).toHaveTextContent("api");
     const epic = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!;
     expect(within(epic).queryByTitle(/^Built in/)).toBeNull();
+  });
+
+  it("colours each epic's lane, and shows the same colour on staging once it is merged there", async () => {
+    show(view);
+    const board = await screen.findByLabelText("Build environments");
+    const hue = laneColor("acme/api#34");
+    const epicCell = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!.parentElement!;
+    expect(epicCell.style.getPropertyValue("--lane")).toBe(hue);
+    const staged = within(board).getByText("Merged onto staging").parentElement!;
+    expect(staged).toHaveTextContent("Booker status");
+    expect((staged.querySelector(".env-swatch") as HTMLElement).style.background).not.toBe("");
   });
 
   it("opens an environment to show what it remembers, newest first, with its runs", async () => {

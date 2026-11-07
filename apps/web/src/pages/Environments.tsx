@@ -103,6 +103,7 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
         <span className="env-sub">Next: {card.queue.map((q) => q.role).join(", then ")}</span>
       )}
       {card.kind === "staging" && <StagingQueue card={card} />}
+      {card.kind === "staging" && <OnStaging card={card} />}
       {!card.active && lastLine(card, now) && <span className="env-sub">{lastLine(card, now)}</span>}
       {memory && (
         <span className="env-mem">
@@ -115,6 +116,31 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
 
 function stateWord(state: EnvState): string {
   return state === "running" ? "Running" : state === "waiting" ? "Waiting" : state === "failed" ? "Idle · last run failed" : "Idle";
+}
+
+/** Quiet hues that read on both themes; an epic keeps its hue wherever it appears. */
+const LANE_HUES = ["#4fb3a9", "#d9a441", "#9b7fd4", "#d4708f", "#5aa7d6", "#8fb357", "#e08a5f", "#7286d3"];
+
+export function laneColor(ref: string): string {
+  let h = 0;
+  for (let i = 0; i < ref.length; i++) h = (h * 31 + ref.charCodeAt(i)) | 0;
+  return LANE_HUES[Math.abs(h) % LANE_HUES.length]!;
+}
+
+/** The epics merged onto this staging, each in its lane's colour. */
+function OnStaging({ card }: { card: EnvCard }) {
+  if (!card.onStaging?.length) return null;
+  return (
+    <span className="env-onstaging">
+      <span className="env-onstaging-head">Merged onto staging</span>
+      {card.onStaging.map((e) => (
+        <span key={e.ref} className="env-onstaging-item">
+          <span className="env-swatch" style={{ background: laneColor(e.ref) }} aria-hidden="true" />
+          {e.title}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /** Staging's line: who is on it now, then who is next, in order. */
@@ -351,13 +377,13 @@ export function EnvironmentsPage() {
 function LaneRow({ lane, row, now, onOpen }: { lane: EnvLane; row: number; now: number; onOpen: (c: EnvCard) => void }) {
   return (
     <>
-      <div className="env-lane-tasks" style={{ gridRow: row }}>
+      <div className="env-lane-tasks" style={{ gridRow: row, ["--lane" as string]: laneColor(lane.ref) }}>
         <TasksCell lane={lane} now={now} onOpen={onOpen} />
       </div>
       <div className="env-arrow env-arrow-in" style={{ gridRow: row }} aria-hidden="true">
         →
       </div>
-      <div className="env-lane-epic" style={{ gridRow: row }}>
+      <div className="env-lane-epic" style={{ gridRow: row, ["--lane" as string]: laneColor(lane.ref) }}>
         {lane.epic ? (
           <EnvCardView card={lane.epic} now={now} onOpen={onOpen} />
         ) : (
