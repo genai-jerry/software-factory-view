@@ -5,8 +5,8 @@ import { api } from "../api.js";
 import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "../theme.js";
 import { useFocus } from "../lib/filter.js";
 import { isOrgAdminRole, canReachSettings } from "../lib/labels.js";
-import { workKey } from "../lib/work.js";
-import type { Me, MyWork, ProjectsData, SetupStatus } from "../types.js";
+import { decisionCards } from "../lib/work.js";
+import type { BoardCard, Me, MyWork, ProjectsData, SetupStatus } from "../types.js";
 import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
@@ -49,7 +49,12 @@ export function Shell({
   // The Decisions badge counts work items, not issues: sixteen test cases on
   // one epic are one decision for the tester.
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
-  const inboxCount = new Set((myWork.data?.needsYou ?? []).map(workKey)).size;
+  // Counted by the same function that draws the page, so the two agree.
+  const board = useQuery({
+    queryKey: ["board", focus.key],
+    queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>(`/api/board${focus.qs}`),
+  });
+  const inboxCount = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou).length : 0;
 
   return (
     <HaltCtx.Provider value={{ halt, setHalt }}>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AttentionEntry, BoardCard, RunningItem, TaskRollup } from "../types.js";
-import { buildWork, stageOf } from "./work.js";
+import { buildWork, decisionCards, stageOf } from "./work.js";
+import { byRepo } from "../pages/DecisionsQueue.js";
 
 /**
  * The Work list folds the factory's label machine into the five stages a
@@ -222,5 +223,41 @@ describe("buildWork", () => {
     const lists = buildWork([card({ open: false, state: "factory:deployed" })], [], []);
     expect(lists.done).toHaveLength(1);
     expect(lists.working).toHaveLength(0);
+  });
+});
+
+describe("the Decisions list", () => {
+  it("keeps tests nobody recorded on an item that already shipped and closed", () => {
+    const shipped = card({ epicId: "e9", number: 115, title: "Add support deployment to staging", state: "factory:deployed", open: false });
+    const cases = [
+      entry({ epicId: "c1", issueId: "c1", title: "#119 test(115): ST-1 A push deploys", ageDays: 5 }),
+      entry({ epicId: "c2", issueId: "c2", title: "#120 test(115): ST-2 Production untouched", ageDays: 5 }),
+    ];
+    const got = decisionCards([shipped], cases);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.ask).toBe("run");
+    expect(buildWork([shipped], cases, []).done).toHaveLength(0);
+  });
+
+  it("shows a blocked repo set-up issue, which it otherwise leaves off the lists", () => {
+    const setup = card({ epicId: "h1", title: "Factory: repo profile", repo: "o/view", state: "factory:blocked" });
+    expect(decisionCards([setup], [])).toHaveLength(0);
+    expect(decisionCards([setup], [entry({ kind: "blocked", epicId: "h1", repo: "o/view", state: "factory:blocked" })])).toHaveLength(1);
+  });
+
+  it("puts the newest decision first, then groups the cards by repo in that order", () => {
+    const old = card({ epicId: "a", repo: "o/api", state: "factory:blocked" });
+    const fresh = card({ epicId: "b", repo: "o/web", state: "factory:epic-ready" });
+    const mid = card({ epicId: "c", repo: "o/api", state: "factory:spec-ready" });
+    const got = decisionCards([old, fresh, mid], [
+      entry({ kind: "blocked", epicId: "a", repo: "o/api", ageDays: 4 }),
+      entry({ kind: "gate", epicId: "b", repo: "o/web", state: "factory:epic-ready", ageDays: 0 }),
+      entry({ kind: "gate", epicId: "c", repo: "o/api", state: "factory:spec-ready", ageDays: 1 }),
+    ]);
+    expect(got.map((w) => w.card.epicId)).toEqual(["b", "c", "a"]);
+    expect(byRepo(got).map((t) => [t.repo, t.items.map((w) => w.card.epicId)])).toEqual([
+      ["o/web", ["b"]],
+      ["o/api", ["c", "a"]],
+    ]);
   });
 });
