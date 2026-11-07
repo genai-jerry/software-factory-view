@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { lengthWords } from "../lib/runs.js";
-import type { EnvCard, EnvironmentsView, EnvLane, EnvSession, EnvTurn } from "../types.js";
+import type { EnvCard, EnvironmentsView, EnvLane, EnvPull, EnvSession, EnvTurn } from "../types.js";
 import { localTimesText } from "../lib/localTimes.js";
 
 /**
@@ -84,35 +84,122 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
   const kindWord = card.kind === "staging" ? "STAGING · ONE AT A TIME" : card.kind === "epic" ? "EPIC" : card.kind === "task" ? "TASK" : "ISSUE";
   const memory = card.notes[0] && localTimesText(card.notes[0].summary, card.notes[0].at);
   return (
-    <button
-      type="button"
-      className={`env-card env-${state}${wide ? " env-wide" : ""}`}
-      onClick={() => onOpen(card)}
-      aria-label={`${card.title}: ${stateWord(state)}. Open what this environment remembers.`}
-    >
-      <span className="env-kind">
-        {kindWord}
-        {card.kind !== "epic" && (
-          <RepoChip fullName={card.repo} title={card.kind === "staging" ? `The staging branch of ${card.repo}` : `Built in ${card.repo}`} />
-        )}
-      </span>
-      <span className="env-title">{card.title}</span>
-      <span className="env-line">
-        <span className="env-dot" aria-hidden="true" />
-        {card.active ? turnLine(card.active, card, now) : card.queue.length ? `Waiting · ${card.queue.length} queued` : stateWord(state)}
-      </span>
-      {card.kind !== "staging" && card.queue.length > 0 && (
-        <span className="env-sub">Next: {card.queue.map((q) => q.role).join(", then ")}</span>
-      )}
-      {card.kind === "staging" && <StagingQueue card={card} />}
-      {card.kind === "staging" && <OnStaging card={card} />}
-      {!card.active && lastLine(card, now) && <span className="env-sub">{lastLine(card, now)}</span>}
-      {memory && (
-        <span className="env-mem">
-          <b>Remembers:</b> {memory.length > 150 ? `${memory.slice(0, 150).trimEnd()}…` : memory}
+    <div className={`env-card-wrap${wide ? " env-wide" : ""}`}>
+      <button
+        type="button"
+        className={`env-card env-${state}${wide ? " env-wide" : ""}`}
+        onClick={() => onOpen(card)}
+        aria-label={`${card.title}: ${stateWord(state)}. Open what this environment remembers.`}
+      >
+        <span className="env-kind">
+          {kindWord}
+          {card.kind !== "epic" && (
+            <RepoChip fullName={card.repo} title={card.kind === "staging" ? `The staging branch of ${card.repo}` : `Built in ${card.repo}`} />
+          )}
         </span>
+        <span className="env-title">{card.title}</span>
+        <span className="env-line">
+          <span className="env-dot" aria-hidden="true" />
+          {card.active ? turnLine(card.active, card, now) : card.queue.length ? `Waiting · ${card.queue.length} queued` : stateWord(state)}
+        </span>
+        {card.kind !== "staging" && card.queue.length > 0 && (
+          <span className="env-sub">Next: {card.queue.map((q) => q.role).join(", then ")}</span>
+        )}
+        {card.kind === "staging" && <StagingQueue card={card} />}
+        {card.kind === "staging" && <OnStaging card={card} />}
+        {!card.active && lastLine(card, now) && <span className="env-sub">{lastLine(card, now)}</span>}
+        {memory && (
+          <span className="env-mem">
+            <b>Remembers:</b> {memory.length > 150 ? `${memory.slice(0, 150).trimEnd()}…` : memory}
+          </span>
+        )}
+      </button>
+      {card.pulls?.length > 0 && <Pulls card={card} now={now} />}
+    </div>
+  );
+}
+
+/** How many of a card's pull requests merged, and the words for the icon. */
+function pullsLabel(card: EnvCard): string {
+  const merged = card.pulls.filter((p) => p.state === "merged").length;
+  const open = card.pulls.filter((p) => p.state === "open").length;
+  const parts = [merged ? `${merged} merged` : "", open ? `${open} open` : ""].filter(Boolean);
+  return `Pull requests of ${card.title}: ${parts.join(", ") || `${card.pulls.length} closed`}`;
+}
+
+/** The word for a pull request's state, read beside its title. */
+function pullState(p: EnvPull, now: number): string {
+  if (p.state === "merged") return `merged ${clockWords(p.mergedAt, now)}`.trim();
+  return p.state === "open" ? "open" : "closed, not merged";
+}
+
+/**
+ * The small pull-request icon on a card, with how many merged; it opens a
+ * popup listing every pull request behind the card, each linking to GitHub.
+ * It sits beside the card's own button (a button inside a button is not a
+ * thing), so the card still opens what the environment remembers.
+ */
+function Pulls({ card, now }: { card: EnvCard; now: number }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const popId = useId();
+  const merged = card.pulls.filter((p) => p.state === "merged").length;
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+        button.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  return (
+    <div className="env-pulls" ref={wrap}>
+      <button
+        type="button"
+        ref={button}
+        className={`env-pulls-btn${open ? " is-open" : ""}`}
+        aria-label={pullsLabel(card)}
+        aria-expanded={open}
+        aria-controls={open ? popId : undefined}
+        title={pullsLabel(card)}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+          <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+        </svg>
+        <span className="env-pulls-n">{merged || card.pulls.length}</span>
+      </button>
+      {open && (
+        <div className="env-pulls-pop" role="dialog" id={popId} aria-label={`Pull requests · ${card.title}`}>
+          <ul className="env-pulls-list">
+            {card.pulls.map((p) => (
+              <li key={p.number} className={`env-pull is-${p.state}`}>
+                <a href={p.url} target="_blank" rel="noreferrer" className="env-pull-link">
+                  <span className="env-pull-dot" aria-hidden="true" />
+                  <span className="env-pull-num">#{p.number}</span>
+                  <span className="env-pull-title">{p.title}</span>
+                </a>
+                <span className="env-pull-meta">
+                  {pullState(p, now)} · {p.headRef} → {p.baseRef}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-    </button>
+    </div>
   );
 }
 

@@ -11,7 +11,11 @@ const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).to
 
 const card = (over: Partial<EnvCard>): EnvCard => ({
   id: "acme/api#40", kind: "task", repo: "acme/api", title: "The status map", issueId: "i40", epicId: "e34",
-  active: null, queue: [], notes: [], lastUsedAt: at(30), ...over,
+  active: null, queue: [], notes: [], lastUsedAt: at(30), pulls: [], ...over,
+});
+
+const pull = (number: number, title: string, state: "open" | "merged" | "closed", headRef: string, baseRef = "factory/epic-34") => ({
+  number, title, state, mergedAt: state === "merged" ? at(60 * 24) : null, headRef, baseRef, url: `https://github.com/acme/api/pull/${number}`,
 });
 
 const view: EnvironmentsView = {
@@ -31,6 +35,10 @@ const view: EnvironmentsView = {
       queue: [{ runId: "rel2", role: "Release Manager", title: "Flow triggers", state: "waiting", since: at(1) }],
       notes: [{ at: at(120), role: "Release Manager", title: "Older epic", outcome: "success", summary: "Merged onto staging; deploy asked.", runId: "old" }],
       onStaging: [{ ref: "acme/api#34", title: "Booker status" }],
+      pulls: [
+        pull(250, "release(34): integrate factory/epic-34 into staging", "merged", "factory/epic-34", "staging"),
+        pull(236, "release(35): promote staging to main", "merged", "staging", "main"),
+      ],
     }),
   ],
   lanes: [
@@ -40,7 +48,8 @@ const view: EnvironmentsView = {
         notes: [{ at: at(60), role: "Dispatcher", title: "Booker status", outcome: "success", summary: "Released the last two tasks.", runId: "d1" }] }),
       tasks: [
         card({ active: { runId: "r40", role: "Implementer", title: "The status map", state: "running", since: at(12) },
-          notes: [{ at: at(200), role: "Implementer", title: "The status map", outcome: "timeout", summary: "Loader tests hang. Stub the lookup first.", runId: "t1" }] }),
+          notes: [{ at: at(200), role: "Implementer", title: "The status map", outcome: "timeout", summary: "Loader tests hang. Stub the lookup first.", runId: "t1" }],
+          pulls: [pull(246, "fix(34): status map colours", "open", "factory/40-colours"), pull(240, "task(34): The status map", "merged", "factory/40-the-status-map")] }),
         card({ id: "acme/api#41", title: "Quiet hours", active: { runId: "r41", role: "Reviewer", title: "Quiet hours", state: "waiting for a session", since: at(2) } }),
         card({ id: "acme/api#42", title: "Idle one", notes: [{ at: at(300), role: "QA", title: null, outcome: "error", summary: "", runId: null }] }),
         card({ id: "acme/api#43", title: "Idle two" }),
@@ -120,7 +129,7 @@ describe("EnvironmentsPage", () => {
     show(view);
     const board = await screen.findByLabelText("Build environments");
     const hue = laneColors(["acme/api#34"]).get("acme/api#34")!;
-    const epicCell = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!.parentElement!;
+    const epicCell = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!.closest(".env-lane-epic") as HTMLElement;
     expect(epicCell.style.getPropertyValue("--lane")).toBe(hue);
     const staged = within(board).getByText("Merged onto staging").parentElement!;
     expect(staged).toHaveTextContent("Booker status");
@@ -148,6 +157,42 @@ describe("EnvironmentsPage", () => {
   it("says so when the orchestrator cannot list environments yet", async () => {
     show({ available: false, sessions: null, staging: [], lanes: [], other: [] });
     expect(await screen.findByText(/does not list its environments yet/)).toBeTruthy();
+  });
+
+  it("puts a pull-request icon on a card that has pull requests, counting the merged ones", async () => {
+    show(view);
+    const board = await screen.findByLabelText("Build environments");
+    const icon = within(board).getByRole("button", { name: "Pull requests of The status map: 1 merged, 1 open" });
+    expect(icon).toHaveTextContent("1");
+    expect(icon.getAttribute("aria-expanded")).toBe("false");
+    // staging's counts its merged ones alone; an idle task with none has no icon
+    expect(within(board).getByRole("button", { name: "Pull requests of Staging: 2 merged" })).toHaveTextContent("2");
+    expect(within(board).queryByRole("button", { name: /^Pull requests of Idle one/ })).toBeNull();
+    // the icon never shows a number sign on the card itself
+    expect(board.textContent).not.toMatch(/#\d/);
+  });
+
+  it("opens the pull requests in a popup, each linking to GitHub, and closes it on Escape", async () => {
+    show(view);
+    const board = await screen.findByLabelText("Build environments");
+    const icon = within(board).getByRole("button", { name: "Pull requests of The status map: 1 merged, 1 open" });
+    fireEvent.click(icon);
+    const pop = within(board).getByRole("dialog", { name: "Pull requests · The status map" });
+    expect(icon.getAttribute("aria-expanded")).toBe("true");
+    const items = within(pop).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("#246");
+    expect(items[0]).toHaveTextContent("fix(34): status map colours");
+    expect(items[0]).toHaveTextContent("open · factory/40-colours → factory/epic-34");
+    expect(items[1]).toHaveTextContent("#240");
+    expect(items[1]).toHaveTextContent(/merged .*· factory\/40-the-status-map → factory\/epic-34/);
+    expect(within(items[0]!).getByRole("link").getAttribute("href")).toBe("https://github.com/acme/api/pull/246");
+    expect(within(items[0]!).getByRole("link").getAttribute("target")).toBe("_blank");
+    // the card's own button is untouched: the popup is not inside it
+    expect(within(board).getByRole("button", { name: /^The status map:/ }).contains(pop)).toBe(false);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(within(board).queryByRole("dialog")).toBeNull();
+    expect(icon.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("reads a card's state from its turn, its queue and its last run", () => {

@@ -1492,9 +1492,37 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .env-arrow-in { grid-column: 2; }
 .env-arrow-out { grid-column: 4; }
 .env-staging { grid-column: 5; padding: 0.6rem 0; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 0.5rem; }
-.env-staging > .env-card { flex: 1 0 auto; } /* grow to fill, never shrink below its content */
+.env-staging > .env-card, .env-staging > .env-card-wrap { flex: 1 0 auto; } /* grow to fill, never shrink below its content */
 .env-tasks { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start; }
-.env-tasks > .env-card { flex: 1 1 12rem; max-width: 17rem; }
+.env-tasks > .env-card, .env-tasks > .env-card-wrap { flex: 1 1 12rem; max-width: 17rem; }
+/* The card's button and, beside it, its pull-request icon: the wrap is what the cell sizes. */
+.env-card-wrap { position: relative; display: flex; min-width: 0; }
+.env-card-wrap > .env-card { flex: 1; width: 100%; }
+.env-card-wrap > .env-pulls { position: absolute; top: 0.35rem; right: 0.45rem; }
+.env-pulls-btn {
+  display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; min-height: 0;
+  font: inherit; font-size: 0.7rem; font-weight: 600; line-height: 1; color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+}
+.env-pulls-btn:hover, .env-pulls-btn.is-open { color: var(--accent); border-color: var(--accent); }
+.env-pulls-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.env-pulls-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: min(26rem, 80vw); max-height: 20rem; overflow: auto;
+  padding: 0.4rem 0; background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 0.8rem; text-align: left;
+}
+.env-pulls-list { list-style: none; margin: 0; padding: 0; }
+.env-pull { padding: 0.35rem 0.7rem; display: flex; flex-direction: column; gap: 2px; }
+.env-pull + .env-pull { border-top: 1px solid var(--border); }
+.env-pull-link { display: flex; align-items: baseline; gap: 0.4rem; color: var(--text); text-decoration: none; min-width: 0; }
+.env-pull-link:hover .env-pull-title { text-decoration: underline; }
+.env-pull-num { color: var(--text-dim); font-variant-numeric: tabular-nums; flex: none; }
+.env-pull-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.env-pull-meta { color: var(--text-dim); font-size: 0.74rem; padding-left: 1.1rem; overflow-wrap: anywhere; }
+.env-pull-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; background: var(--text-dim); }
+.env-pull.is-merged .env-pull-dot { background: var(--accent); }
+.env-pull.is-open .env-pull-dot { background: var(--amber); }
+.env-pull.is-closed .env-pull-dot { background: var(--red); }
 .env-card {
   display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; text-align: left;
   padding: 0.5rem 0.65rem; background: var(--bg-raised); color: var(--text);

@@ -1,5 +1,5 @@
 import { issues, pullRequests, repos } from "@console/db";
-import { and, inArray, isNotNull } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import {
@@ -55,7 +55,56 @@ export interface EnvCard {
   lastUsedAt: string | null;
   /** Staging only: the epics already merged onto it and not yet shipped, by lane ref. */
   onStaging?: Array<{ ref: string; title: string }>;
+  /**
+   * The pull requests this card's work moved through, newest first: a task's
+   * own; those into an epic's branch and the epic's own (spec, design, its
+   * release onto staging); what went onto staging since its last promotion,
+   * and the promotion itself. Empty when the Console has none for it.
+   */
+  pulls: EnvPull[];
 }
+
+/** A pull request behind a card, as the Console's projection of GitHub holds it. */
+export interface EnvPull {
+  number: number;
+  title: string;
+  /** open · merged · closed (closed without merging) */
+  state: "open" | "merged" | "closed";
+  mergedAt: string | null;
+  headRef: string;
+  baseRef: string;
+  url: string;
+}
+
+/** The pull requests of a repo, as `pullsOf` reads them. */
+interface PullRow {
+  repoId: string;
+  number: number;
+  title: string;
+  kind: string;
+  state: string;
+  issueNumber: number | null;
+  headRef: string;
+  baseRef: string;
+  mergedAt: Date | null;
+  htmlUrl: string;
+  ghUpdatedAt: Date;
+}
+
+const MOST_PULLS = 40;
+
+const pullOut = (p: PullRow): EnvPull => ({
+  number: p.number,
+  title: p.title,
+  state: p.mergedAt ? "merged" : p.state === "open" ? "open" : "closed",
+  mergedAt: p.mergedAt ? p.mergedAt.toISOString() : null,
+  headRef: p.headRef,
+  baseRef: p.baseRef,
+  url: p.htmlUrl,
+});
+
+const newestFirst = (a: PullRow, b: PullRow) =>
+  (b.mergedAt ?? b.ghUpdatedAt).getTime() - (a.mergedAt ?? a.ghUpdatedAt).getTime() || b.number - a.number;
 
 const cleanTitle = (t: string) => t.replace(/^(task|test|bug)\([^)]*\):?\s*/i, "");
 
@@ -77,12 +126,50 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     const names = [...new Set(got.environments.flatMap((e) => [e.repo, epicRepoOf(e.epic)]).filter((n): n is string => Boolean(n)))];
     const repoRows = names.length
       ? await db
-          .select({ id: repos.id, fullName: repos.fullName })
+          .select({ id: repos.id, fullName: repos.fullName, stagingBranch: repos.stagingBranch })
           .from(repos)
           .where(and(inArray(repos.fullName, names), inArray(repos.orgId, ctx.orgIds)))
       : [];
     const repoId = new Map(repoRows.map((r) => [r.fullName, r.id]));
     const repoRowIds = repoRows.map((r) => r.id);
+    const stagingBranchOf = new Map(repoRows.map((r) => [r.id, r.stagingBranch ?? "staging"]));
+    // Every pull request of these repos, open or done: what is on staging is
+    // read from the merged ones below, and each card lists its own.
+    const prRows: PullRow[] = repoRowIds.length
+      ? await db
+          .select({
+            repoId: pullRequests.repoId, number: pullRequests.number, title: pullRequests.title, kind: pullRequests.kind,
+            state: pullRequests.state, issueNumber: pullRequests.issueNumber, headRef: pullRequests.headRef,
+            baseRef: pullRequests.baseRef, mergedAt: pullRequests.mergedAt, htmlUrl: pullRequests.htmlUrl,
+            ghUpdatedAt: pullRequests.ghUpdatedAt,
+          })
+          .from(pullRequests)
+          .where(inArray(pullRequests.repoId, repoRowIds))
+      : [];
+    const lastPromotion = (id: string | undefined) =>
+      Math.max(0, ...prRows.filter((p) => p.repoId === id && p.kind === "promotion" && p.mergedAt).map((p) => p.mergedAt!.getTime()));
+    const pullsOf = (e: OrchestratorEnvironment, row: IssueRow | undefined): EnvPull[] => {
+      const id = repoId.get(e.repo);
+      const mine = prRows.filter((p) => p.repoId === id);
+      let chosen: PullRow[];
+      if (e.kind === "staging") {
+        const promoted = lastPromotion(id);
+        const onto = stagingBranchOf.get(id ?? "") ?? "staging";
+        chosen = mine.filter(
+          (p) =>
+            (p.baseRef === onto && (p.state === "open" || (p.mergedAt !== null && p.mergedAt.getTime() > promoted))) ||
+            (p.kind === "promotion" && (p.state === "open" || p.mergedAt?.getTime() === promoted)),
+        );
+      } else if (e.number === null) {
+        chosen = [];
+      } else if (e.kind === "epic" || row?.kind === "epic") {
+        const branch = `factory/epic-${e.number}`;
+        chosen = mine.filter((p) => p.baseRef === branch || p.issueNumber === e.number);
+      } else {
+        chosen = mine.filter((p) => p.issueNumber === e.number || p.headRef.startsWith(`factory/${e.number}-`));
+      }
+      return chosen.sort(newestFirst).slice(0, MOST_PULLS).map(pullOut);
+    };
     const issueRows: IssueRow[] = repoRowIds.length
       ? ((await db
           .select({
@@ -140,6 +227,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
           runId: n.run_id,
         })),
         lastUsedAt: orchestratorClock(e.last_used_at),
+        pulls: pullsOf(e, row),
       };
     };
 
@@ -151,16 +239,10 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     // the default branch, so an epic is on staging when its
     // `release(<n>): integrate …` pull request merged after the repo's last
     // merged promotion.
-    const prRows = repoRowIds.length
-      ? await db
-          .select({ repoId: pullRequests.repoId, title: pullRequests.title, kind: pullRequests.kind, mergedAt: pullRequests.mergedAt })
-          .from(pullRequests)
-          .where(and(inArray(pullRequests.repoId, repoRowIds), isNotNull(pullRequests.mergedAt)))
-      : [];
     const onStagingOf = (repo: string) => {
       const id = repoId.get(repo);
-      const mine = prRows.filter((p) => p.repoId === id);
-      const promoted = Math.max(0, ...mine.filter((p) => p.kind === "promotion").map((p) => p.mergedAt!.getTime()));
+      const mine = prRows.filter((p) => p.repoId === id && p.mergedAt !== null);
+      const promoted = lastPromotion(id);
       const numbers = new Set<number>();
       for (const p of mine) {
         const m = /^release\(([\d,\s]+)\):\s*integrate/i.exec(p.title);
