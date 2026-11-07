@@ -1,14 +1,14 @@
 {
-  "_doc": "Drafted by the Profiler on issue #21 and re-verified against commit 84ff5ee in a later run of the same issue. Every command in `commands` was executed on a clean checkout in the repo's own Actions runner; every other field is cited to a file read or a command run in the PR body.",
+  "_doc": "Drafted by the Profiler on issue #21 and re-verified against commit 6956830 in a later run on issue #54. Every command in `commands` was executed on a clean checkout in the repo's own Actions runner; every other field is cited to a file read or a command run in the PR body.",
   "repo": "software-factory-view",
-  "estate_role": "Standalone. The Compass — a read-mostly lens and control panel over the Claude Software Factory (GitHub + OpenSpec). It has no sibling repos in this estate: it consumes GitHub's API and mirrors claude-software-factory's label/state contract in packages/core/src/factory.ts, but nothing in this estate depends on it, so there is no cross-repo merge order to honour.",
-  "stack": "TypeScript end-to-end (ES2022, module NodeNext, strict + noUncheckedIndexedAccess), Node >=20.19, pnpm 10.33 workspace. apps/api = Fastify 5 (@fastify/cookie, GitHub OAuth, REST, webhook endpoint); apps/worker = BullMQ 5 on ioredis (webhook projection, reconciler, OpenSpec scaffolding); apps/web = React 18 + Vite 6 SPA (react-router-dom 6, @tanstack/react-query 5); packages/core = factory constants, hidden-comment markers, state derivation, two-token GitHub REST client (jose + libsodium-wrappers), AES-256-GCM envelope crypto, zod env config; packages/db = Drizzle ORM 0.36 over Postgres 16 (postgres.js driver) with hand-rolled forward-only SQL migrations; packages/insight = Anthropic SDK plus OpenAI-compatible providers for cited, read-only Q&A. Deployed as Docker images (infra/Dockerfile.api, infra/Dockerfile.web) behind nginx and Traefik on a VPS.",
+  "estate_role": "Standalone. Compass — a read-mostly lens and control panel over the Claude Software Factory (GitHub + OpenSpec). The product was named \"Factory Console\" until 709f5da (#82) renamed every user-facing string; the repo, the package scopes and the env names were deliberately left alone, so the code still says `console` everywhere (see gotchas). It has no sibling repos in this estate: it consumes GitHub's API and mirrors claude-software-factory's label/state contract in packages/core/src/factory.ts, but nothing in this estate depends on it, so there is no cross-repo merge order to honour.",
+  "stack": "TypeScript end-to-end (ES2022, module NodeNext, strict + noUncheckedIndexedAccess + noFallthroughCasesInSwitch), Node >=20.19 (CI runs 22), pnpm 10.33.0 workspace over apps/* and packages/*. apps/api = Fastify 5.12 (@fastify/cookie, GitHub OAuth, REST, a webhook endpoint, a proxy for GitHub-hosted issue images, an Environments view over the orchestrator's build environments, and Shape — a conversation that turns an idea into a requirement issue, emitting an OpenSpec draft the Intake Analyst starts the change folder from); apps/worker = BullMQ 5.81 on ioredis (webhook projection, reconciler, OpenSpec scaffolding); apps/web = React 18.3 + Vite 6 SPA (react-router-dom 6, @tanstack/react-query 5, and mermaid 11 + jspdf + svg2pdf.js loaded on demand for Shape's diagrams); packages/core = factory label/state constants and the factory-policy modules beside them, hidden-comment markers, state derivation, a two-token GitHub REST client (jose + libsodium-wrappers), AES-256-GCM envelope crypto and zod env config; packages/db = Drizzle ORM 0.45 over Postgres 16 (postgres.js driver) with 25 hand-rolled forward-only SQL migrations and 35 `pgTable` declarations; packages/insight = cited, read-only Q&A over @anthropic-ai/sdk plus three OpenAI-compatible providers (openai, grok, openrouter) reached with plain fetch, no extra SDKs. Runs as Docker images (infra/Dockerfile.api, infra/Dockerfile.web) with Postgres 16 and Redis 7 behind nginx and Traefik on a VPS.",
   "branches": {
     "default": "main",
     "staging": null
   },
   "commands": {
-    "test": "pnpm test",
+    "test": "pnpm build && pnpm test",
     "build": "pnpm typecheck && pnpm build",
     "lint": null
   },
@@ -16,67 +16,388 @@
     "pnpm workspace, ESM only. Every package is `\"type\": \"module\"` and tsconfig is `module: NodeNext`, so relative imports MUST carry the `.js` extension even in TypeScript sources (`import { loadEpic } from \"./read.js\"`). Cross-package imports use the workspace aliases `@console/core`, `@console/db`, `@console/insight`.",
     "API routes are `registerXRoutes(app: FastifyInstance, deps: AppDeps): void` in apps/api/src/routes/*.ts, wired once in apps/api/src/app.ts. Dependencies (config, db handle, credential store, BullMQ queues) are threaded through the `AppDeps` object — no module-level singletons, which is what lets the tests build the whole app against an in-process Postgres.",
     "Every authenticated route starts with `const ctx = await requireAuth(deps, req, reply); if (!ctx) return;` and then scopes each query to `ctx.orgIds` at the data layer (`inArray(table.orgId, ctx.orgIds)`). Authorisation is a WHERE clause, not a post-filter. Errors are returned as `reply.code(N).send({ error: \"lowercase message\" })`.",
-    "Two-token model as a structural property (packages/core/src/github.ts): `InstallationClient` is the App's identity (reads, non-authoritative comments); `UserClient` is the human's OAuth identity. Anything carrying authority — approving, merging, labelling, filing issues — exists only on `UserClient` and is reached via `userClient(deps, ctx)`. Do not add an authoritative operation to `InstallationClient`.",
-    "Database access is Drizzle query-builder only (`db.select().from(x).where(and(eq(...)))`) — no raw SQL strings in app code. Schema lives in packages/db/src/schema.ts and is split by comment banner into GitHub PROJECTIONS (keyed by `gh_node_id`, guarded by `gh_updated_at`, rebuildable, never backed up) and CONSOLE-NATIVE tables. No table mixes the two.",
+    "There are two narrower auth paths beside `requireAuth`, and a route uses one only for the kind of data it was built for. `setupAccess(deps, req)` in apps/api/src/setup.ts admits the GitHub App owner (or, before the App is configured, the bootstrap operator / `APP_RESET`) and returns `{ allowed, ctx }` for the caller to refuse with 403 — it is for instance-wide data that spans every estate, and apps/api/src/routes/ops.ts is the whole set. `loadOrg(deps, ctx, orgId, reply, { admin: true })` (apps/api/src/routes/settings.ts, projects.ts) resolves the org within `ctx.orgIds` and additionally requires the caller's membership role to be `owner` or `admin`; it is for routes that change configuration. An unknown org and a non-member both answer 404, so neither path tells a stranger what exists.",
+    "Some tables belong to one person rather than to their org, and are scoped by `userId` on top of the org filter: `qaConversations` (Ask) and `shapeConversations` / `shapeMessages` / `shapeAttachments` (Shape) all add `eq(….userId, ctx.userId)` beside `inArray(….orgId, ctx.orgIds)`, and an attachment is reached by joining to its conversation rather than by its own id. Follow that when adding a per-person surface — the org filter alone would show one colleague another's draft.",
+    "Two-token model as a structural property (packages/core/src/github.ts): `InstallationClient` is the App's identity (reads, non-authoritative comments); `UserClient` is the human's OAuth identity. Anything carrying authority — approving, merging, labelling, filing issues, committing a file — exists only on `UserClient` and is reached via `userClient(deps, ctx)`. Do not add an authoritative operation to `InstallationClient`.",
+    "Factory routing rules live in packages/core as pure functions over labels and state, never inline in a route or a component: epic-status.ts, next-step.ts, start-gate.ts, plan-tests.ts, test-verdict.ts, bug-report.ts, testing-policy.ts. Each opens with a block comment citing the FACTORY.md section it mirrors, and most have a same-named suite in packages/core/test. A new rule about what the factory allows belongs there, with its citation and its test.",
+    "Database access is Drizzle query-builder only (`db.select().from(x).where(and(eq(...)))`) — no raw SQL strings in app code. Schema lives in packages/db/src/schema.ts and is split by comment banner into GitHub PROJECTIONS (keyed by `gh_node_id`, guarded by `gh_updated_at`, rebuildable, never backed up) and CONSOLE-NATIVE tables (the product's own state, backed up). No table mixes the two.",
     "Secrets are never stored in the clear: OAuth tokens, the GitHub App private key and cached repo content go through `encryptSecret`/`decryptSecret` (AES-256-GCM under `CONSOLE_MASTER_KEY`, `v1.iv.tag.ct` envelope). Environment variables are declared and validated in the zod schema in packages/core/src/config.ts and read as `cfg.X` — never `process.env` in app code.",
-    "Request bodies are validated by hand against Fastify's generic type parameters (`app.post<{ Body: {...} }>(...)` then explicit checks returning 400). zod is used for environment config only; do not introduce a second body-validation style without saying so in design.md.",
-    "Comments explain *why*, not what: most modules open with a block comment citing the plan/spec section it implements (`spec 01 §2.2`, `plan 02 §1a`). New modules follow that — a reader should be able to get from the code to the decision that shaped it.",
+    "Request bodies are validated by hand against Fastify's generic type parameters (`app.post<{ Body: {...} }>(...)` then explicit checks returning 400). zod is imported in exactly one source file — packages/core/src/config.ts, for environment config — so a second zod import is a deliberate change of style: say so in design.md rather than slipping it in.",
+    "Comments explain *why*, not what: most modules open with a block comment citing the decision they implement — a plan/spec section (`spec 01 §2.2`, `plan 02 §1a`) or, for the factory-policy modules, the FACTORY.md section. New modules follow that — a reader should be able to get from the code to the decision that shaped it.",
     "Anything the Console writes back to GitHub is an ordinary comment carrying a hidden marker (`<!-- console:thread=… -->`, `<!-- console:decision=… -->`, packages/core/src/markers.ts), built by `threadMarker()`/`decisionMarker()` rather than hand-written. That is what keeps the projection rebuildable and non-Console users first-class; never invent a new storage location for state that belongs on GitHub.",
-    "Tenant scoping has exactly one escape hatch: `systemScope()` in packages/db/src/index.ts, used by the reconciler and webhook workers because they act across tenants by design. It is deliberately greppable — cross-tenant access that does not go through it is a bug, and adding a second escape hatch defeats the audit.",
-    "The SPA talks to the API only through the `api.get/post/del` wrapper in apps/web/src/api.ts (same-origin credentials plus the `x-console-csrf` header on writes). Pages live in src/pages, shared widgets in src/components, server state goes through TanStack Query; do not call `fetch()` directly from a component."
+    "The Console commits FILES to GitHub in exactly two places, both for factory config the factory itself reads, and only one of them writes to the default branch directly. Onboarding (apps/api/src/routes/onboarding.ts) writes the stub files and `.github/factory-*.json` onto a `factory-console/*` branch and opens a PR. Saving 'Who can release' (apps/api/src/routes/projects.ts, POST /api/projects/:id/permissions) read-modify-writes `.github/factory-approvers.json` straight onto `repo.defaultBranch` as the user, then mirrors the result into `gateAssignments` and records an `auditLog` row. Anything else that wants to persist state writes a marked comment instead.",
+    "The SPA talks to the API only through the `api.get/post/del` wrapper in apps/web/src/api.ts (same-origin credentials plus the `x-console-csrf` header on writes). Pages live in src/pages, shared widgets in src/components, server state goes through TanStack Query; do not call `fetch()` directly from a component.",
+    "People-language is a module, not a habit: apps/web/src/lib/labels.ts holds `PEOPLE_LABEL`, `GATE_SHORT`, `peopleLabel()`, `attentionReason()` and `plainTitle()`, and apps/web/src/lib/work.ts folds the label machine into the product's five stages (Clarify, Design, Build, Test, Release). A new surface reads its wording from there rather than writing its own; `plainTitle` is also why the user view names work by title and never by issue number."
   ],
   "review_checklist": [
-    "New or changed API route: does it call `requireAuth` and scope every query to `ctx.orgIds`? An unscoped `db.select()` in a route is a cross-tenant leak, and apps/api/test/memberships.test.ts exists because that boundary has been got wrong before.",
+    "New or changed API route: does it call `requireAuth` and scope every query to `ctx.orgIds`? An unscoped `db.select()` in a route is a cross-tenant leak, and apps/api/test/memberships.test.ts exists because that boundary has been got wrong before. The one legitimate exception is an instance-wide, owner-only route gated by `setupAccess` and refusing with 403 — apps/api/src/routes/ops.ts is the whole set of those.",
     "State-changing route: it must be a non-GET method, so `requireAuth`'s CSRF-header check applies. A mutation behind `app.get` bypasses one of the two CSRF layers (there is deliberately no CORS — see the comment in apps/api/src/app.ts).",
-    "Authoritative GitHub operation (approve, merge, label, comment-as-user, file issue): must go through `userClient(deps, ctx)`, never `InstallationClient`. Check it also writes an `auditLog` row, as apps/api/src/routes/gate.ts and write.ts do.",
+    "Authoritative GitHub operation (approve, merge, label, comment-as-user, file issue, commit a file): must go through `userClient(deps, ctx)`, never `InstallationClient`. Check it also writes an `auditLog` row, as apps/api/src/routes/gate.ts, write.ts and projects.ts do.",
+    "A Console control that IS a factory gate must also check that this user holds that gate — `userClient` only proves who is asking, not that they may. `POST /api/prs/:id/merge` shipped without that check and any org member could merge a promotion PR from the Console; fea2a69 (#83) fixed it with `repoApprovers(deps, repoId, gate)` from apps/api/src/start-gate.ts, refusing with 403 and naming the gate. Any new approve/merge/verdict control needs the same pairing.",
     "Schema change: is there a new numbered file in packages/db/migrations/ (NNNN_name.sql, statements separated by `--> statement-breakpoint`)? The runner is forward-only and lexicographic — editing an already-applied migration is silently a no-op on any deployed database.",
     "Projection change: does the write still guard on `gh_updated_at` (last-writer-wins) and key on `gh_node_id`? Webhook delivery is at-least-once and out of order; a projection write without the guard reintroduces flapping state.",
     "Secrets: any new credential must be stored via `encryptSecret` and any new environment variable declared in the zod schema in packages/core/src/config.ts. A raw token column or a bare `process.env` read is a change request.",
-    "Factory label/state constants in packages/core/src/factory.ts mirror claude-software-factory's FACTORY.md §3. Changing them to make the UI nicer desynchronises the Console from the factory — the Console renders factory state, it never invents it.",
-    "Markdown from GitHub must stay sanitised server-side (apps/api/src/render.ts uses marked + sanitize-html). Rendering untrusted markdown anywhere else, or relaxing the sanitiser, is a change request.",
-    "Any new comment body the Console can post to GitHub: confirm it cannot trim to exactly `Approved` unless it is intentionally a gate approval. That literal is the factory router's live G1/G2 trigger (`isApprovedComment` in packages/core/src/markers.ts), so an incidental match approves a gate for real."
+    "Factory label/state constants and routing rules — packages/core/src/factory.ts plus the policy modules beside it (epic-status, next-step, start-gate, plan-tests, test-verdict, bug-report, testing-policy) — mirror claude-software-factory's FACTORY.md. Changing them to make the UI nicer desynchronises the Console from the factory: the Console renders factory state, it never invents it. A change here should cite the handbook section it follows.",
+    "Markdown and diagrams from GitHub or a model must stay sandboxed. apps/api/src/render.ts sanitises markdown server-side (marked + sanitize-html). Mermaid is initialised once in apps/web/src/lib/diagram.ts with `securityLevel: \"strict\"` and `htmlLabels: false`, and the three diagram libraries are bundled rather than fetched, because nginx sends `script-src 'self'`. Relaxing any of those, or rendering untrusted content through a new path, is a change request.",
+    "Any new comment body the Console can post to GitHub: confirm it cannot trim to exactly one of the factory's live trigger literals — `Approved` (G1/G2/GS and the task start), `Review Done`, `Test Passed`, `Test Failed`, `Plan tests`, `Skip tests` and `Bug`. The router matches strictly (`isApprovedComment` in packages/core/src/markers.ts), so an incidental exact match approves a gate or records a verdict for real.",
+    "Anything that can reach an unhandled error's message or stack is stored and shown: apps/api/src/app.ts writes a row into `api_errors` for every 500 — method, path, error name, message, stack and the actor's login — and the App owner reads them at `/api/ops/errors`. A token, a signed URL or a request body interpolated into an `Error` message therefore lands in the database and on that page. Keep secrets out of error strings.",
+    "A new image or attachment path: `shape_attachments.bytes_b64` and `work_attachments.bytes_b64` hold base64 in the clear, not `encryptSecret` output. Reuse `checkImageUpload` from apps/api/src/attachments.ts for the MIME allow-list and the 5 MB cap, keep the read joined to the owning conversation or repo, and do not widen the allow-list without saying why.",
+    "A dependabot PR can be a breaking upgrade that nothing exercises. `.github/dependabot.yml` ignores `version-update:semver-major` for the **npm** and **docker** ecosystems only — the **github-actions** ecosystem has no `ignore` block, so Action majors come through grouped as 'actions'. And because deploy.yml's `paths-ignore` covers `.github/**`, such a PR runs no check and its merge runs no deploy. Read Action version bumps by hand.",
+    "A new or reworked SPA surface must hold at 360, 768 and 1280px with no horizontal pan and no new axe violation (apps/web/e2e/ux.spec.ts). No CI job runs that suite, so ask the author for the output of `pnpm --filter @console/web test:e2e` rather than assuming a green PR covered it."
   ],
   "qa_notes": [
-    "Vitest 2 throughout; `pnpm test` runs `pnpm -r test` across the workspace. Tests live in a `test/` directory beside `src/` (apps/api/test, apps/worker/test, packages/core/test, packages/insight/test), named `*.test.ts`.",
-    "apps/web, packages/db and packages/insight run vitest with `--passWithNoTests`; apps/api (11 files, 116 tests) and apps/worker (4 files) are where the real coverage is. Adding the first meaningful test to apps/web means no config change — the runner is already wired.",
+    "Vitest 2 throughout; `pnpm test` runs `pnpm -r test` across the workspace. apps/api, apps/worker, packages/core and packages/insight keep tests in a `test/` directory beside `src/` as `*.test.ts`; apps/web puts them beside their subject under `src/` as `*.test.tsx` (and `*.test.ts` for lib modules).",
+    "`pnpm test` needs a prior `pnpm build` — run `commands.test` (`pnpm build && pnpm test`), not `pnpm test` on its own. packages/core, packages/db and packages/insight set `main`/`exports` to `./dist/index.js` while `types` points at `./src/index.ts`, so typecheck passes on a clean checkout but the consuming suites die at collection with `Failed to resolve entry for package \"@console/core\"`. Verified both ways this run: bare `pnpm test` exited 1 (apps/worker failed first, all 7 files, no test ran); `pnpm build && pnpm test` exited 0.",
     "Integration tests boot a real in-process Postgres (`new PGlite()` from @electric-sql/pglite, drizzle-orm/pglite adapter) and apply every file in packages/db/migrations in `beforeAll`, then build the whole Fastify app via `buildApp(deps)`. See apps/api/test/security.test.ts for the canonical setup and apps/worker/test/helpers.ts for the worker equivalent. No Docker, no external database — a new suite should follow the same shape rather than mocking the database.",
+    "apps/web tests run under jsdom, configured in the `test` block of apps/web/vite.config.ts (not a separate vitest.config.ts): `setupFiles: ./src/test-setup.ts` pulls in @testing-library/jest-dom and registers `afterEach(cleanup)`. Component and page suites use Testing Library queries plus @testing-library/user-event.",
     "GitHub is never called for real: tests point `apiUrl` at `https://api.invalid` and inject fakes through `AppDeps` (e.g. `CredentialStore({ load: async () => null })` to exercise the environment fallback). Queues are replaced with in-memory arrays that record what was enqueued.",
     "That PGlite warmup is why apps/api/vitest.config.ts and apps/worker/vitest.config.ts raise `testTimeout` to 30s (and the API's `hookTimeout` to 60s). A new suite that boots its own PGlite instance needs the same allowance.",
-    "CI (.github/workflows/ci.yml, and the identical gate in deploy.yml) runs `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm -r build`, `pnpm test` on every branch and PR. Typecheck is a real gate — a PR that compiles under `tsc --noEmit` in one package but not another still fails CI.",
-    "apps/worker/test carries the projection invariants, including an explicit replay test — 'is idempotent and order-tolerant: shuffled + duplicated replay converges to the same state'. Any change to apps/worker/src/project.ts must keep that green and, if it adds a projected entity, extend it rather than adding a separate happy-path test."
+    "Measured on this commit, all green: apps/api 35 files / 331 tests, apps/web 32 / 212, packages/core 15 / 179, apps/worker 7 / 57, packages/insight 1 / 8, packages/db 0 — 90 files and 787 tests in all. Only packages/db and packages/insight still pass `--passWithNoTests` (packages/db has no tests at all); apps/web has a real jsdom suite that has grown steadily, so treat these counts as a floor rather than a fixed number.",
+    "A pull request gets the full suite, and it is the ONLY place the suite runs. There is no ci.yml — that workflow is gone and only the README's badge still points at it. deploy.yml's `check` job (`typecheck-test-build`: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm -r build`, `pnpm test`) carries `if: github.event_name == 'pull_request'`, so it runs on EVERY pull request — 6956830 (#137) removed the `paths-ignore` from the `pull_request` trigger, so a docs-only PR now gets a check too — and never on a push to `main`. Read `commands.build`/`commands.test` as the local equivalent of that job.",
+    "Typecheck is a real gate in that job — a change that compiles under `tsc --noEmit` in one package but not another fails it. Run `pnpm typecheck` across the workspace before handing work on, not just the package you touched. Measured this run: 16s, exit 0.",
+    "apps/worker/test carries the projection invariants, including an explicit replay test — 'is idempotent and order-tolerant: shuffled + duplicated replay converges to the same state'. Any change to apps/worker/src/project.ts must keep that green and, if it adds a projected entity, extend it rather than adding a separate happy-path test.",
+    "There is a Playwright + axe responsive suite at apps/web/e2e/ux.spec.ts (with a harness.tsx), run by `pnpm --filter @console/web test:e2e`: it asserts no horizontal pan and no axe violation at 360, 768 and 1280px. It is NOT part of `pnpm test` and no CI job runs it, and it needs `pnpm exec playwright install` first. This run read it rather than executing it."
   ],
   "gotchas": [
-    "There is no linter or formatter in this repo — no eslint, prettier or biome config, and no package declares a `lint` script. The root `package.json` does have `\"lint\": \"pnpm -r lint\"`, but running it FAILS with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT` (verified, exit 1). `commands.lint` is null for that reason: treat a red `pnpm lint` as the absence of a gate, not as a defect introduced by your change.",
-    "`pnpm test` is slow — 3m07s wall clock measured on a GitHub-hosted ubuntu-latest runner, with apps/api alone taking ~120s (116 tests, most of them 1.5–3s each), because nearly every test boots a fresh PGlite Postgres and replays every migration. It is not hung; budget for it rather than killing it. Do not speed it up by cutting the vitest timeouts.",
+    "Run `pnpm build` before `pnpm test` or nothing runs. The workspace packages are consumed through their built `dist/`, which is gitignored, so `pnpm test` on a clean checkout fails at import resolution (`Failed to resolve entry for package \"@console/core\"`) rather than on any assertion. That failure is the missing build, never your delta — build and re-run before reading anything into it.",
+    "There is no linter or formatter in this repo — no eslint, prettier or biome config anywhere, and no package declares a `lint` script. The root `package.json` does have `\"lint\": \"pnpm -r lint\"`, but running it FAILS with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT` (verified again this run, exit 1). `commands.lint` is null for that reason: treat a red `pnpm lint` as the absence of a gate, not as a defect introduced by your change.",
+    "The suite is slow — budget 3 to 6 minutes for `commands.test`, not seconds. Measured this run on a GitHub-hosted ubuntu-latest runner: `pnpm build` 19s (exit 0) then `pnpm test` 2m53s (exit 0), of which apps/api is 108s and apps/worker 49s; core, web, insight and db together take under 20s. Earlier runs of the same command measured between 2m17s and 4m44s depending on the runner. Nearly every API and worker test boots a fresh PGlite Postgres and replays all 25 migrations. It is not hung; do not kill it, and do not speed it up by cutting the vitest timeouts.",
+    "Nothing forces the suite to be green before a production deploy. Two facts combine, both verified this run. (1) 6956830 (#137) made deploy.yml's `check` job `pull_request`-only and dropped `needs: check` from `deploy`, so the push to `main` deploys without running typecheck, build or test. The workflow comment justifies that by saying `main` requires a pull request to be up to date before it merges. (2) It does not: the only ruleset on the default branch, `PR for main` (id 24987970, active), carries just `deletion`, `non_fast_forward` and `pull_request` with `required_approving_review_count: 0` — there is NO `required_status_checks` rule and no strict/up-to-date requirement. So a pull request can be merged with a red or still-running check, or from a stale branch, and the merge deploys straight to production. `repos/.../branches/main/protection` 403s for the workflow token, so legacy branch protection could not be read and may add a required check — but the ruleset alone does not. Practical rule: before merging, look at the PR's `typecheck-test-build` check yourself and make sure the branch is current; CI will not stop you.",
     "`pnpm install --frozen-lockfile` is required: pnpm-lock.yaml is committed and CI uses the frozen flag, so a dependency added without updating the lockfile fails CI at the install step, before any test output exists to explain it.",
     "Relative imports need the `.js` extension (NodeNext). Omitting it typechecks in some editors but fails `tsc -p tsconfig.json` and at runtime — this is the single most common build break here.",
     "packages/db's build copies `migrations/` into `dist/migrations` as a second step; a migration added without running `pnpm build` is invisible to `runMigrations` in a built (Docker) image even though the tests, which read the source directory directly, pass.",
     "The api and worker both run `runMigrations` on boot and would race, so the runner takes a Postgres advisory lock (packages/db/src/migrate.ts). Do not 'simplify' that lock away — without it Postgres fails one process with a duplicate-key error on pg_type_typname_nsp_index.",
     "The webhook route deliberately sits outside session/CSRF middleware and reads the raw body in `preParsing` for HMAC verification. Moving it behind the normal request pipeline, or letting JSON parsing consume the body first, breaks signature verification for every delivery.",
+    "The product is called **Compass**; the code is still called `console`, on purpose. 709f5da (#82) renamed only user-facing strings — page title, header, the notes the Console posts on GitHub, the default GitHub App name, the insight prompt, docs and scripts. Everything an identifier touches was deliberately left alone: the repo is `software-factory-view`, the package scopes are `@console/*`, the env vars are `CONSOLE_*`, the containers are `factory-console-*` and the deploy directory is `~/factory-console`. Do not 'finish' the rename as a drive-by; write Compass in prose and leave the identifiers alone.",
+    "Base implementation PRs on `main`. `.github/factory-branches.json` sets `\"required\": false` with no `epics` key, which is this repo opting out of the staging step on purpose (its comment: the Console is released from `main`, and its deploy workflow runs on every merge there). So there is no release train to assemble and no epic branch: a task PR bases on `main`, and merging it deploys to production.",
+    "A `staging` branch does physically exist, and it is dead: it sits at 011946f (2026-10-13) and is 0 commits ahead of `main` while falling further behind every week (73 behind when this run checked it with `git rev-list --left-right --count`). A Profiler run cut it before the policy was set to `\"required\": false`. Nothing deploys from it and nothing merges into it. Do not base work on it, and do not read its existence as evidence that this repo has an integration branch.",
+    "FACTORY.md §8a layer 3 does not exist in this repo: .github/workflows/factory-branch-guard.yml is absent (the workflows directory holds only codeql.yml, deploy.yml and factory-pipeline.yml), so nothing detects a commit landing on `main` without a PR. Two files still claim otherwise — the `_comment` in .github/factory-branches.json (\"The branch guard still flags a commit that lands on `main` without a PR\") and the branch-guard mention in .github/REPOSITORY_SETTINGS.md §Rulesets. Believe the workflows directory, not those two lines.",
+    "A document PR can still deploy production, because deploy.yml's filter does not cover every path the factory writes. Its `paths-ignore` is `['.github/**', '**/*.md', 'docs/**']`, so merging a markdown-only or workflow-only PR to `main` deploys nothing. But `openspec/**` is not in that list and only its `*.md` files are caught by the glob: the `.openspec.yaml` file in every change folder (and any future `system-tests/data/*.json`) is a non-md path under openspec/, so a change folder that adds or edits one runs a full production deploy on merge. Expect it, and do not merge such a PR when production must stay still.",
+    "`apps/web/vite.config.ts.timestamp-1786244617305-2049876fd0fad.mjs` is committed (confirmed with `git ls-files`). .gitignore does cover the ordinary noise — node_modules/, dist/, build/, .env, *.tsbuildinfo, coverage/, test-results/, playwright-report/ and more — but it has no `vite.config.ts.timestamp-*` entry, and Vite regenerates one of these on every config load. So `git add -A` in apps/web sweeps a fresh copy into your commit. Add files by name, or add the ignore pattern as a deliberate fix. (An earlier profile said .gitignore held only node_modules/ and dist/; that was wrong.)",
+    "The workflow token cannot open pull requests in this repo. Verified again this run: `POST /repos/.../pulls` returns 403 `GitHub Actions is not permitted to create or approve pull requests`, and `gh api user` 403s with `Resource not accessible by integration` (the token is `github-actions[bot]`, a `ghs_` installation token — there is no FACTORY_CROSS_REPO_TOKEN secret, and `gh secret list` 403s too). Nine Profiler runs have now pushed a branch they could not turn into a pull request. .github/REPOSITORY_SETTINGS.md §Actions → General says to leave 'Allow GitHub Actions to create and approve pull requests' ON where the factory opens PRs with the workflow token — which is this repo — so either that setting or the PAT is the fix. Any role that must open a pull request here should expect the 403 and post the compare link instead of failing silently.",
+    "The factory pipeline ignores issues from authors without write access: the job-level `if:` in .github/workflows/factory-pipeline.yml requires OWNER/MEMBER/COLLABORATOR, a Bot sender, or a label applied by someone other than the author. An outside contributor's issue therefore sits with no `factory:*` label at all until a maintainer labels it. That is intended — it keeps untrusted text out of agent prompts — so do not 'fix' it.",
+    "The README's CI badge points at `.github/workflows/ci.yml`, which no longer exists. The suite lives in deploy.yml's `check` job. Do not take the badge, or any older note mentioning ci.yml, as evidence of a separate CI workflow.",
+    "Uploaded screenshots and mock-ups are stored in the clear. `shape_attachments.bytes_b64` and `work_attachments.bytes_b64` are base64 text, not `encryptSecret` output — unlike OAuth tokens, the GitHub App key and the artifact cache — at up to 5 MB each (`MAX_ATTACHMENT_BYTES` in apps/api/src/attachments.ts) and with no cap on how many. Access is protected by the query rather than by the storage: every read joins to the owning conversation or repo and filters on `ctx.userId`. Keep that join when touching these tables.",
     "GitHub forbids Actions secret names starting with `GITHUB_`, so the deploy workflow takes `GH_APP_*` / `GH_OAUTH_*` and writes them to the VPS `.env` as `GITHUB_APP_*` / `GITHUB_OAUTH_*`. Also: those values must come from `env_file` only — adding `${GITHUB_APP_*}` to a compose `environment:` block blanks them via empty interpolation (noted in the deploy workflow and infra/docker-compose.deploy.yml).",
-    "`DEV_FAKE_LOGIN=1` bypasses GitHub OAuth entirely. It is a local-development switch and must never reach a deployed environment.",
-    "This repo has no `staging` branch (verified against the GitHub branch list) and deploys to production on push to `main`. There is no release train to assemble: a task PR bases on `main`, and merging it deploys.",
-    ".github/workflows/deploy.yml fires on EVERY push to `main` with no `paths-ignore`. FACTORY.md §6 assumes deploy workflows ignore the document paths (openspec/**, docs/**, FACTORY.md, .claude/**, factory workflow files) so that merging a spec or design PR to main deploys nothing — this repo's workflow has no such filter, so merging a docs-only gate PR runs a full production deploy. Expect it, and do not merge document PRs when production must stay still."
+    "`DEV_FAKE_LOGIN=1` bypasses GitHub OAuth entirely (apps/api/src/auth.ts serves `/auth/dev-login` only when it is set). It is a local-development switch and must never reach a deployed environment.",
+    "nginx sends a strict CSP — `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://avatars.githubusercontent.com data:; connect-src 'self'; frame-ancestors 'none'` (infra/nginx.conf). No CDN script, font or image will load: bundle it, or proxy it through the API as apps/api/src/media.ts does for GitHub-hosted issue images. `/api/` also gets `proxy_read_timeout 600s` so a long Ask or Shape answer is not cut off."
+  ],
+  "plain_names": [
+    {
+      "code": [
+        "software-factory-view",
+        "@console/*",
+        "Console",
+        "CONSOLE_*",
+        "factory-console"
+      ],
+      "plain": "Compass",
+      "means": "This product: the web app people use to watch the factory and approve its work. The code still says `console` everywhere on purpose."
+    },
+    {
+      "code": [
+        "issues",
+        "epic",
+        "requirement issue"
+      ],
+      "plain": "the work item",
+      "means": "One thing being built, filed as a GitHub issue. A big one that breaks into tasks is an epic."
+    },
+    {
+      "code": [
+        "task(<epic>)",
+        "task sub-issue",
+        "taskDependencies"
+      ],
+      "plain": "the task",
+      "means": "One piece of an epic, built and reviewed on its own pull request. Named by its title, never its number."
+    },
+    {
+      "code": [
+        "test(<epic>)",
+        "ST-<n>",
+        "manual-test case"
+      ],
+      "plain": "the test case",
+      "means": "A numbered check a person runs by hand against the assembled work. Testers type its ST- number, so that identifier stays."
+    },
+    {
+      "code": [
+        "bug(<epic>)",
+        "bug-open",
+        "bug-retest"
+      ],
+      "plain": "the bug",
+      "means": "A fault a tester found that no test case predicted, repaired inside the work item that caused it."
+    },
+    {
+      "code": [
+        "factory:spec-ready",
+        "G1",
+        "proposal.md",
+        "specs/"
+      ],
+      "plain": "the spec, and its approval",
+      "means": "What the work item must do, written before anyone builds. Approving it is spec approval (G1)."
+    },
+    {
+      "code": [
+        "factory:design-ready",
+        "G2",
+        "design.md",
+        "tasks.md"
+      ],
+      "plain": "the design and the task list, and their approval",
+      "means": "How it will be built and the pieces it breaks into. Approving both is design approval (G2)."
+    },
+    {
+      "code": [
+        "factory:epic-ready",
+        "GS",
+        "integration branch",
+        "staging"
+      ],
+      "plain": "release to staging",
+      "means": "The moment all the work is assembled and someone says it may go to the test site. This repo has no staging step, so the gate does not appear here."
+    },
+    {
+      "code": [
+        "factory:in-staging",
+        "G3",
+        "promotion PR"
+      ],
+      "plain": "merge to ship",
+      "means": "The last step: a person merges the pull request and the change is live."
+    },
+    {
+      "code": [
+        "factory:blocked",
+        "blocked inbox",
+        "Questions for you"
+      ],
+      "plain": "the factory is waiting for an answer",
+      "means": "A role stopped and asked a question. Replying on the thread starts it again."
+    },
+    {
+      "code": [
+        "runs",
+        "orchestratorRun",
+        "FactoryRunStatus",
+        "the run"
+      ],
+      "plain": "the factory run",
+      "means": "One role working right now — reading the code, writing a document, opening a pull request."
+    },
+    {
+      "code": [
+        "clarify",
+        "design",
+        "build",
+        "test",
+        "release",
+        "STAGE_LABEL"
+      ],
+      "plain": "Clarify, Design, Build, Test, Release",
+      "means": "The five steps every work item passes through, as the product names them."
+    },
+    {
+      "code": [
+        "attention queue",
+        "AttentionEntry",
+        "mywork"
+      ],
+      "plain": "My work",
+      "means": "The list of things waiting on you, each with the reason it needs you."
+    },
+    {
+      "code": [
+        "board",
+        "PipelineBoard",
+        "flow"
+      ],
+      "plain": "Flow",
+      "means": "The board showing where every work item sits, across all connected repositories."
+    },
+    {
+      "code": [
+        "threads",
+        "threadEntries",
+        "console:thread marker"
+      ],
+      "plain": "the discussion",
+      "means": "A conversation held on the GitHub issue, so people who never open Compass still see it."
+    },
+    {
+      "code": [
+        "decisions",
+        "decisionMarker",
+        "decision log"
+      ],
+      "plain": "the decision log",
+      "means": "The record of what was decided and by whom, kept on the work item itself."
+    },
+    {
+      "code": [
+        "qaConversations",
+        "qaMessages",
+        "insight",
+        "Ask the Factory"
+      ],
+      "plain": "Ask",
+      "means": "A question answered only from this work item's own documents, with its sources cited."
+    },
+    {
+      "code": [
+        "shapeConversations",
+        "shapeMessages",
+        "shapeAttachments"
+      ],
+      "plain": "Shape",
+      "means": "A conversation that turns a rough idea — with screenshots and diagrams — into a filed work item."
+    },
+    {
+      "code": [
+        "workAttachments",
+        "checkImageUpload",
+        "Add work"
+      ],
+      "plain": "Add work, and the images attached to it",
+      "means": "Filing a work item by hand, with screenshots or mock-ups attached."
+    },
+    {
+      "code": [
+        "changes",
+        "changeArtifacts",
+        "artifactCache",
+        "openspec/changes"
+      ],
+      "plain": "the work item's documents",
+      "means": "The spec, design and task list the factory wrote, readable as proposed or as approved."
+    },
+    {
+      "code": [
+        "webhookDeliveries",
+        "ingest",
+        "projection"
+      ],
+      "plain": "the GitHub updates Compass has taken in",
+      "means": "GitHub tells Compass what changed; Compass stores a copy so pages load fast. The copy can always be rebuilt."
+    },
+    {
+      "code": [
+        "reconcileRuns",
+        "reconcile",
+        "sweep"
+      ],
+      "plain": "the catch-up check",
+      "means": "A periodic re-read of GitHub that repairs anything a missed update left wrong."
+    },
+    {
+      "code": [
+        "orgs",
+        "memberships",
+        "projects",
+        "repos",
+        "estates"
+      ],
+      "plain": "the organisation, its people, its projects and its repositories",
+      "means": "Who Compass serves and which GitHub repositories it watches."
+    },
+    {
+      "code": [
+        "gateAssignments",
+        "approvers",
+        "repoApprovers",
+        "Who can release"
+      ],
+      "plain": "who may approve each gate",
+      "means": "The named people allowed to approve at a given step. Saved to the repository so the factory reads the same list."
+    },
+    {
+      "code": [
+        "auditLog"
+      ],
+      "plain": "the record of who did what",
+      "means": "Every action taken through Compass, with the person who took it."
+    },
+    {
+      "code": [
+        "apiErrors",
+        "/api/ops/errors"
+      ],
+      "plain": "the error log",
+      "means": "Faults the server hit, kept so the owner can look at them."
+    },
+    {
+      "code": [
+        "onboardingRuns",
+        "stub files",
+        "self-registration"
+      ],
+      "plain": "setting up a repository",
+      "means": "Connecting a repository to the factory: creating labels, writing config files and checking the result."
+    },
+    {
+      "code": [
+        "factory:expedite",
+        "EXPEDITE_BADGE"
+      ],
+      "plain": "expedited",
+      "means": "The factory approves the spec and design itself and starts every task. The last two gates still need a person."
+    },
+    {
+      "code": [
+        "factory:fast-track"
+      ],
+      "plain": "fast track",
+      "means": "A change small enough to skip the spec, design and task list, going straight to a pull request."
+    },
+    {
+      "code": [
+        "EnvCard",
+        "EnvLane",
+        "EnvSession",
+        "envState",
+        "/api/environments",
+        "workspace",
+        "build environment"
+      ],
+      "plain": "the build environments",
+      "means": "Where the Claude sessions run. Each task is built in its own, merges into its epic's, and epics go onto staging one at a time; each runs one session at a time."
+    },
+    {
+      "code": [
+        "localTimesText",
+        "ISO",
+        "CLOCK",
+        "UTC"
+      ],
+      "plain": "the times the factory writes, in your own time",
+      "means": "The factory writes times in UTC; Compass rewrites each one into the reader's own zone and keeps the UTC original in the tooltip."
+    }
   ],
   "reuse_hotspots": [
-    "packages/core/src — before adding a helper, check here: factory.ts (label/state constants), markers.ts (hidden-comment parse/emit), derive.ts and phases.ts (factory state derivation), crypto.ts (envelope encrypt/decrypt), config.ts (env schema), github.ts (the whole REST surface, App JWT and OAuth), credentials.ts (App credential resolution, database-first with env fallback). It is re-exported wholesale from packages/core/src/index.ts.",
-    "apps/api/src/context.ts — `requireAuth`, `resolveSession`, `userClient` and the `AppDeps`/`RequestCtx` types. Any new route needs these rather than its own auth path.",
-    "apps/api/src/routes/read.ts — `loadEpic` and the epic/repo/org lookup helpers other route modules already import. apps/api/src/render.ts is the single markdown sanitiser.",
-    "packages/db/src/schema.ts — check for an existing table or column before adding one; several concerns that look separate (threads, decisions, gate views, audit log) already have homes here.",
-    "apps/worker/src/artifacts.ts and project.ts — projection and repair helpers (`refreshRepoProfile`, `repairDependencies`, `projectIssue`, `projectPull`, …) reused by both the ingest worker and the reconciler.",
-    "apps/web/src/api.ts (the fetch wrapper with the CSRF header), apps/web/src/lib/board.ts and lib/filter.tsx, and apps/web/src/components/ — the SPA's shared pieces; pages should compose these rather than re-implement fetching or filtering."
+    "packages/core/src — before adding a helper, check here: factory.ts (label/state constants), markers.ts (hidden-comment parse/emit), derive.ts and phases.ts (factory state derivation), crypto.ts (envelope encrypt/decrypt), config.ts (env schema), github.ts (the whole REST surface, App JWT and OAuth — including `getFileAtRef` on the shared `RepoReader` and `UserClient.putFile` for committing a file as the user), credentials.ts (App credential resolution, database-first with env fallback). It is re-exported wholesale from packages/core/src/index.ts.",
+    "packages/core/src, the factory-policy half — epic-status.ts, next-step.ts, start-gate.ts, plan-tests.ts, test-verdict.ts, bug-report.ts, testing-policy.ts, orchestrator.ts and orchestrator-client.ts. Any question of the form 'may the Console offer this control?' or 'what does this state mean?' is probably already answered by one of these. Check before writing the condition into a route or a component.",
+    "apps/api/src/context.ts — `requireAuth`, `resolveSession`, `userClient` and the `AppDeps`/`RequestCtx` types. Any new route needs these rather than its own auth path. Beside it: gh-write.ts and user-token.ts (authoritative writes and token renewal), setup.ts (`setupAccess`), start-gate.ts (`repoApprovers`, `loadApproversForGate`), start-role.ts (`ROLE_FOR_STATE` and starting a role through the orchestrator), expedite.ts, attention.ts, threads.ts, questions.ts (parsing a blocking comment's `Questions for you:` list), attachments.ts (`checkImageUpload`, `attachmentsSection`), media.ts (the GitHub image proxy, its host allow-list and signed-URL cache) render.ts (the single markdown sanitiser), openspec-draft.ts (splitting Shape's one text into the issue form plus one fold per OpenSpec file) and orchestrator-dispatch.ts (`fetchOrchestratorEnvironments`, `orchestratorClock`, and starting a role over the dispatch token).",
+    "apps/api/src/routes/read.ts — `loadEpic` and the epic/repo/org lookup helpers other route modules already import.",
+    "packages/db/src/schema.ts — 35 `pgTable` declarations; check for an existing table or column before adding one. Several concerns that look separate already have homes here: threads and threadEntries, decisions, gateViews, auditLog, notifications, artifactCache, onboardingRuns, reconcileRuns, `webhookDeliveries` (the at-least-once delivery ledger that makes webhook handling idempotent), apiErrors, and the Shape and Add-work attachment tables.",
+    "apps/worker/src/artifacts.ts and project.ts — projection and repair helpers (`refreshRepoProfile`, `repairDependencies`, `projectIssue`, `projectPull`, …) reused by both the ingest worker and the reconciler. reconcile.ts holds the sweep itself and openspec.ts the change-folder scaffolding. Note which refs `refreshEpicArtifacts` reads a change folder from — `factory/epic-<n>` first, then the default branch — because that pair is what the 'as proposed / as approved' reader shows.",
+    "apps/web/src/api.ts (the fetch wrapper with the CSRF header), apps/web/src/lib/ (board.ts, filter.tsx, labels.ts — the people-language map — reauth.ts, work.ts, docs.ts, runs.ts, testplan.ts, diagram.ts for Mermaid/SVG/PDF, images.ts and localTimes.ts (`localTimesText` — rewriting the UTC times the factory writes into the reader's zone; use it for any factory-written text a page renders), most with their own suite), apps/web/src/theme.ts, and apps/web/src/components/ (the shared widgets, including Diagram.tsx, RunsBadge.tsx, OpenQuestions.tsx and ErrorBoundary.tsx). Pages should compose these rather than re-implement fetching, filtering or wording."
   ],
   "deploy": {
     "health_checks": [
       "curl -fsS \"${PUBLIC_ORIGIN:-https://sf.genaipeople.com}/api/health\"   # expects {\"ok\":true,\"service\":\"console-api\"} — the route is registered in apps/api/src/app.ts. The authoritative origin is the PUBLIC_ORIGIN variable on the `production` GitHub Environment; the fallback here is the value documented in deploy.yml and the README, not one this run could confirm against a live host.",
+      "PUBLIC_ORIGIN=https://sf.genaipeople.com ./scripts/verify-public-origin.sh   # repo-local smoke test: asserts the origin serves Compass (nginx SPA at /, {\"ok\":true,\"service\":\"console-api\"} at /api/health) and NOT the LangGraph orchestrator, which shares the VPS and has taken this hostname before. deploy.yml runs it as its last step. It retries both requests for about two minutes before failing.",
       "ssh $DEPLOY_USER@$DEPLOY_HOST 'docker inspect -f \"{{.State.Health.Status}}\" factory-console-api-1'   # expects: healthy",
       "ssh $DEPLOY_USER@$DEPLOY_HOST 'cd ~/factory-console && docker compose ps'   # every service up; postgres and redis report healthy"
     ],
     "notes": [
-      "Deploy is .github/workflows/deploy.yml on push to main (or Run workflow): typecheck+build+test gate, then build both images, scp tarballs to the VPS, docker load, docker compose up in ~/factory-console. A merge to main IS the production deploy — there is no staging step to catch a bad change first.",
-      "The workflow's own gate polls the api container for `healthy` for 3 minutes and fails the deploy if it never gets there, dumping `docker compose ps` and the last 100 api log lines. That failure halts the release: the previous containers are already gone by then, so the site is down until it is fixed or rolled back.",
+      "Deploy is .github/workflows/deploy.yml. Its `check` job (typecheck + build + test) runs ONLY on pull requests (`if: github.event_name == 'pull_request'`), and the `deploy` job runs only off a push to `main` or Run workflow. That builds both images, scps tarballs to the VPS, docker loads them, runs docker compose up in ~/factory-console, then runs scripts/verify-public-origin.sh. A merge to `main` IS the production deploy — there is no staging step to catch a bad change first.",
+      "The `deploy` job does NOT depend on the suite: 6956830 (#137) dropped its `needs: check`, and the check no longer runs on the push at all. A pull request's green `typecheck-test-build` is therefore the only suite verdict that exists — and the `PR for main` ruleset does not require it (see gotchas). Deploys queue one behind another and never cancel, while a PR's check is per-branch and is cancelled by a newer push.",
+      "The deploy's own gate polls the api container for `healthy` for about 3 minutes and fails the deploy if it never gets there, dumping `docker compose ps` and the last 100 api log lines. That failure halts the release: the previous containers are already gone by then, so the site is down until it is fixed or rolled back.",
       "Migrations run automatically at api and worker boot. A migration that fails leaves the api container unhealthy and the deploy red — check the api logs first when a deploy fails immediately after a schema change.",
-      "The deploy pre-flight refuses to run unless every one of DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY, CONSOLE_MASTER_KEY, DB_PASSWORD, PUBLIC_ORIGIN, GH_APP_ID, GH_APP_PRIVATE_KEY, GH_APP_WEBHOOK_SECRET, GH_OAUTH_CLIENT_ID and GH_OAUTH_CLIENT_SECRET is set on the `production` GitHub Environment.",
+      "The deploy pre-flight refuses to run unless DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY, CONSOLE_MASTER_KEY, DB_PASSWORD and PUBLIC_ORIGIN are all set on the `production` GitHub Environment, plus either the full GH_APP_* / GH_OAUTH_* set or the variable APP_RESET=true (which lets an operator paste the App in the UI instead).",
       "CONSOLE_MASTER_KEY must never be rotated casually: it decrypts every stored OAuth token, the GitHub App private key and the artifact cache. Losing or changing it means every user must sign in again and the App must be re-registered.",
       "Traefik routes Host(CONSOLE_HOST) on the shared `lighthouse-network` docker network to this stack's nginx. If that network or the Traefik instance is missing, the containers come up healthy and the site is still unreachable — check from outside, not only from the host."
     ]
