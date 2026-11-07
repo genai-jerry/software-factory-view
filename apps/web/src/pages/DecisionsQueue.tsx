@@ -5,7 +5,7 @@ import { ApiError, api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
 import { ROLE_START_STATE, STAGE_LABEL, decisionCards, isRoleStart, roleStartLine, type WorkItem } from "../lib/work.js";
-import type { AttentionEntry, BoardCard, MyWork } from "../types.js";
+import type { AttentionEntry, BoardCard, MyWork, RunningItem } from "../types.js";
 
 /**
  * Decisions — what needs a person (redesign board 2). One card per work item
@@ -20,7 +20,13 @@ export function DecisionsQueuePage() {
     queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>(`/api/board${focus.qs}`),
   });
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
-  const cards = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou) : null;
+  // A live run on an epic means its decision is already being acted on.
+  const running = useQuery({
+    queryKey: ["running"],
+    queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"),
+    refetchInterval: 15_000,
+  });
+  const cards = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou, running.data?.running ?? []) : null;
   const tabs = cards ? byRepo(cards) : [];
   const [picked, setPicked] = useState<string | null>(null);
   const current = tabs.find((t) => t.repo === picked) ?? tabs[0];

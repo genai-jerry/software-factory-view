@@ -6,7 +6,7 @@ import { applyTheme, cycleTheme, getThemePref, type ThemePref } from "../theme.j
 import { useFocus } from "../lib/filter.js";
 import { isOrgAdminRole, canReachSettings } from "../lib/labels.js";
 import { decisionCards } from "../lib/work.js";
-import type { BoardCard, Me, MyWork, ProjectsData, SetupStatus } from "../types.js";
+import type { BoardCard, Me, MyWork, ProjectsData, RunningItem, SetupStatus } from "../types.js";
 import { repoColor } from "./RepoChip.js";
 import { Sheet } from "./Sheet.js";
 import { HaltBar } from "./HaltBar.js";
@@ -49,12 +49,18 @@ export function Shell({
   // The Decisions badge counts work items, not issues: sixteen test cases on
   // one epic are one decision for the tester.
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
+  // A live run on an epic means its decision is already being acted on.
+  const running = useQuery({
+    queryKey: ["running"],
+    queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"),
+    refetchInterval: 15_000,
+  });
   // Counted by the same function that draws the page, so the two agree.
   const board = useQuery({
     queryKey: ["board", focus.key],
     queryFn: () => api.get<{ columns: string[]; cards: BoardCard[] }>(`/api/board${focus.qs}`),
   });
-  const inboxCount = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou).length : 0;
+  const inboxCount = board.data && myWork.data ? decisionCards(board.data.cards, myWork.data.needsYou, running.data?.running ?? []).length : 0;
 
   return (
     <HaltCtx.Provider value={{ halt, setHalt }}>

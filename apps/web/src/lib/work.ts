@@ -383,13 +383,16 @@ export function workKey(e: AttentionEntry): string {
 }
 
 /** The Decisions page and its badge: one card per work item that waits on me, newest first. */
-export function decisionCards(cards: BoardCard[], needsYou: AttentionEntry[]): WorkItem[] {
+export function decisionCards(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[] = []): WorkItem[] {
+  // A run on the epic itself (the Release Manager after a release approval)
+  // is the factory acting on the decision, so it is not asked again while it
+  // runs: the same rule as the Work page.
   // A cross-repo epic waits on people in each of its repos: the beacon-web
   // task to merge is a different decision from the epic's staging release in
   // beacon-api. One card per item per repo, so neither hides the other.
   const repos = [...new Set(needsYou.map((e) => e.repo))];
   const items = repos.flatMap((repo) =>
-    buildWork(cards, needsYou.filter((e) => e.repo === repo), []).needsDecision.map((w) =>
+    buildWork(cards, needsYou.filter((e) => e.repo === repo), running).needsDecision.map((w) =>
       w.card.repo === repo ? w : { ...w, card: { ...w.card, repo } },
     ),
   );
