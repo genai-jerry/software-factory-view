@@ -426,6 +426,8 @@ export interface OrchestratorTurn {
   run_id: string | null;
   role: string | null;
   issue: number | null;
+  /** The issue's repo, when it is not the environment's (a cross-repo task waiting on its epic's home staging). */
+  repo?: string | null;
   state: string;
   since: string | null;
 }

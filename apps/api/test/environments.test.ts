@@ -99,7 +99,7 @@ const envs = {
   environments: [
     { id: "acme/api@staging", kind: "staging", repo: "acme/api", number: null, epic: null, last_used_at: "2026-11-06T04:00:00+00:00",
       active: { run_id: "rel", role: "release", issue: 34, state: "running", since: "2026-11-06T05:02:00+00:00" },
-      queue: [], notes: [{ at: "2026-11-06T04:00:00+00:00", role: "release", issue: 34, run_id: "old", outcome: "success", summary: "Merged onto staging." }] },
+      queue: [{ run_id: "relw", role: "release", issue: 7, repo: "acme/web", state: "waiting", since: "2026-11-06T05:04:00+00:00" }], notes: [{ at: "2026-11-06T04:00:00+00:00", role: "release", issue: 34, run_id: "old", outcome: "success", summary: "Merged onto staging." }] },
     { id: "acme/api#34", kind: "epic", repo: "acme/api", number: 34, epic: null, last_used_at: "2026-11-06T03:00:00+00:00", active: null, queue: [], notes: [] },
     { id: "acme/api#40", kind: "task", repo: "acme/api", number: 40, epic: "acme/api#34", last_used_at: "2026-11-06T05:00:00+00:00",
       active: { run_id: "r40", role: "reviewer", issue: 40, state: "running", since: "2026-11-06T05:00:00+00:00" },
@@ -128,6 +128,8 @@ describe("GET /api/environments", () => {
     expect(body.available).toBe(true);
     expect(body.staging).toHaveLength(1);
     expect(body.staging[0]).toMatchObject({ title: "Staging", active: { role: "Release Manager", title: "Booker status", state: "running" } });
+    // a sibling repo's task waiting on this staging is named from its own repo
+    expect(body.staging[0].queue[0]).toMatchObject({ role: "Release Manager", title: "The panel", state: "waiting" });
     expect(body.staging[0].notes[0]).toMatchObject({ summary: "Merged onto staging.", outcome: "success", role: "Release Manager" });
     expect(body.lanes).toHaveLength(1);
     const lane = body.lanes[0];

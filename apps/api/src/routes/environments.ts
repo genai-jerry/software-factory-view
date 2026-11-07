@@ -114,7 +114,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
       t && {
         runId: t.run_id,
         role: agentRoleLabel(t.role ?? undefined) ?? (t.role || "Factory"),
-        title: titleOf(repo, t.issue),
+        title: titleOf(t.repo || repo, t.issue),
         state: t.state,
         since: orchestratorClock(t.since),
       };
