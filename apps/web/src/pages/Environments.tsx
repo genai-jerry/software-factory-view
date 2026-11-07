@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
@@ -120,17 +120,28 @@ function stateWord(state: EnvState): string {
   return state === "running" ? "Running" : state === "waiting" ? "Waiting" : state === "failed" ? "Idle · last run failed" : "Idle";
 }
 
-/** Quiet hues that read on both themes; an epic keeps its hue wherever it appears. */
-const LANE_HUES = ["#4fb3a9", "#d9a441", "#9b7fd4", "#d4708f", "#5aa7d6", "#8fb357", "#e08a5f", "#7286d3"];
+/**
+ * Quiet hues that read on both themes, ordered so neighbours differ most.
+ * Epics take them in epic-number order, so two on the page never share one
+ * (up to eight) and an epic keeps its hue while the set of epics holds.
+ */
+const LANE_HUES = ["#4fb3a9", "#d9a441", "#a17fe0", "#e0709a", "#5aa7d6", "#9bbf5a", "#e5895a", "#c7b8a3"];
 
-export function laneColor(ref: string): string {
-  let h = 0;
-  for (let i = 0; i < ref.length; i++) h = (h * 31 + ref.charCodeAt(i)) | 0;
-  return LANE_HUES[Math.abs(h) % LANE_HUES.length]!;
+export function laneColors(refs: string[]): Map<string, string> {
+  const num = (r: string) => Number(r.slice(r.lastIndexOf("#") + 1)) || 0;
+  const sorted = [...new Set(refs)].sort((a, b) => num(a) - num(b) || a.localeCompare(b));
+  return new Map(sorted.map((r, i) => [r, LANE_HUES[i % LANE_HUES.length]!]));
 }
+
+const LaneColorCtx = createContext<Map<string, string>>(new Map());
+const useLaneColor = () => {
+  const colors = useContext(LaneColorCtx);
+  return (ref: string) => colors.get(ref) ?? "var(--border)";
+};
 
 /** The epics merged onto this staging, each in its lane's colour. */
 function OnStaging({ card }: { card: EnvCard }) {
+  const laneColor = useLaneColor();
   if (!card.onStaging?.length) return null;
   return (
     <span className="env-onstaging">
@@ -293,6 +304,10 @@ export function EnvironmentsPage() {
   const data = q.data;
   const lanes = data?.lanes ?? [];
   const staging = data?.staging ?? [];
+  const colors = useMemo(
+    () => laneColors([...lanes.map((l) => l.ref), ...staging.flatMap((st) => (st.onStaging ?? []).map((e) => e.ref))]),
+    [lanes, staging],
+  );
   const live = data ? [...staging, ...lanes.flatMap((l) => [l.epic, ...l.tasks]), ...data.other].filter((c): c is EnvCard => Boolean(c)) : [];
   const queued = live.reduce((n, c) => n + c.queue.length, 0);
   // Keep the open sheet current as the board refreshes.
@@ -322,6 +337,7 @@ export function EnvironmentsPage() {
           {lanes.length === 0 && staging.length === 0 && <p className="muted">No environments yet. One appears when the factory first runs on a piece of work.</p>}
 
           {(lanes.length > 0 || staging.length > 0) && (
+            <LaneColorCtx.Provider value={colors}>
             <div className="env-flow" style={{ ["--lanes" as string]: Math.max(1, lanes.length) }}>
               <div className="env-colhead">TASKS</div>
               <div aria-hidden="true" />
@@ -341,6 +357,7 @@ export function EnvironmentsPage() {
                 )}
               </div>
             </div>
+            </LaneColorCtx.Provider>
           )}
 
           <div className="env-legend" aria-label="What the dots mean">
@@ -377,6 +394,7 @@ export function EnvironmentsPage() {
 }
 
 function LaneRow({ lane, row, now, onOpen }: { lane: EnvLane; row: number; now: number; onOpen: (c: EnvCard) => void }) {
+  const laneColor = useLaneColor();
   return (
     <>
       <div className="env-lane-tasks" style={{ gridRow: row, ["--lane" as string]: laneColor(lane.ref) }}>

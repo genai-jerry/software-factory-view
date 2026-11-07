@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api.js";
 import { FocusProvider } from "../lib/filter.js";
 import type { EnvCard, EnvironmentsView } from "../types.js";
-import { EnvironmentsPage, envState, laneColor } from "./Environments.js";
+import { EnvironmentsPage, envState, laneColors } from "./Environments.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -119,12 +119,19 @@ describe("EnvironmentsPage", () => {
   it("colours each epic's lane, and shows the same colour on staging once it is merged there", async () => {
     show(view);
     const board = await screen.findByLabelText("Build environments");
-    const hue = laneColor("acme/api#34");
+    const hue = laneColors(["acme/api#34"]).get("acme/api#34")!;
     const epicCell = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!.parentElement!;
     expect(epicCell.style.getPropertyValue("--lane")).toBe(hue);
     const staged = within(board).getByText("Merged onto staging").parentElement!;
     expect(staged).toHaveTextContent("Booker status");
     expect((staged.querySelector(".env-swatch") as HTMLElement).style.background).not.toBe("");
+  });
+
+  it("gives every epic on the page its own colour, in epic-number order", () => {
+    const c = laneColors(["o/api#193", "o/api#138", "o/api#35", "o/api#193"]);
+    expect(c.size).toBe(3);
+    expect(new Set(c.values()).size).toBe(3);
+    expect([...c.keys()]).toEqual(["o/api#35", "o/api#138", "o/api#193"]);
   });
 
   it("opens an environment to show what it remembers, newest first, with its runs", async () => {
