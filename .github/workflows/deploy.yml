@@ -18,9 +18,11 @@
 
 name: Deploy
 
-# The check runs on every pull request so a failure shows before the merge,
-# and again on the push to main as the final gate; only the push deploys.
-# Changes that touch no code (workflows, docs) neither check nor deploy.
+# The check runs on every pull request, and only there: main requires a pull
+# request to be up to date with main before it merges, so the check has
+# already run on exactly what lands. The push to main only deploys (about 3
+# minutes instead of 9). A push that touches no code (workflows, docs) does
+# not deploy.
 on:
   push:
     branches: [main]
@@ -28,11 +30,9 @@ on:
       - ".github/**"
       - "**/*.md"
       - "docs/**"
+  # Every pull request: the check is required on main, and a required check
+  # that never runs would hold a docs-only pull request open for good.
   pull_request:
-    paths-ignore:
-      - ".github/**"
-      - "**/*.md"
-      - "docs/**"
   workflow_dispatch:
 
 # Deploys queue one behind another and never cancel. A pull request's check
@@ -48,6 +48,7 @@ permissions:
 jobs:
   check:
     name: typecheck-test-build
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -63,7 +64,6 @@ jobs:
 
   deploy:
     name: vps
-    needs: check
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
