@@ -89,7 +89,10 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
       onClick={() => onOpen(card)}
       aria-label={`${card.title}: ${stateWord(state)}. Open what this environment remembers.`}
     >
-      <span className="env-kind">{kindWord}</span>
+      <span className="env-kind">
+        {kindWord}
+        {(card.kind === "task" || card.kind === "issue") && <RepoChip fullName={card.repo} title={`Built in ${card.repo}`} />}
+      </span>
       <span className="env-title">{card.title}</span>
       <span className="env-line">
         <span className="env-dot" aria-hidden="true" />

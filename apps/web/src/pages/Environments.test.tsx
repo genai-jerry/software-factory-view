@@ -104,6 +104,15 @@ describe("EnvironmentsPage", () => {
     expect(board.textContent).not.toMatch(/#\d/);
   });
 
+  it("names the repo each task is built in, and not on epics", async () => {
+    show(view);
+    const board = await screen.findByLabelText("Build environments");
+    const task = within(board).getByRole("button", { name: /^The status map:/ });
+    expect(within(task).getByTitle("Built in acme/api")).toHaveTextContent("api");
+    const epic = within(board).getAllByRole("button", { name: /^Booker status:/ })[0]!;
+    expect(within(epic).queryByTitle(/^Built in/)).toBeNull();
+  });
+
   it("opens an environment to show what it remembers, newest first, with its runs", async () => {
     show(view);
     fireEvent.click(await screen.findByRole("button", { name: /^The status map: Running/ }));
