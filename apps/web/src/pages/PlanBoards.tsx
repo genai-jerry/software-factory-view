@@ -7,6 +7,7 @@ import { bullets, designParts, findSection, paragraphs, scenarios, sections } fr
 import { plain } from "../lib/testplan.js";
 import type { ArtifactView, EpicWorkspace, GatePanelData } from "../types.js";
 import { taskWord } from "./BuildBoard.js";
+import { localTimesHtml } from "../lib/localTimes.js";
 
 /**
  * Clarify (redesign board 4) and Design (board 5): the two documents a
@@ -67,7 +68,7 @@ export function ClarifyBoard({ data }: { data: EpicWorkspace }) {
         ) : proposalPath && proposal.isLoading ? (
           <p className="muted">Reading the write-up…</p>
         ) : data.epic.bodyHtml ? (
-          <div className="rel-body" dangerouslySetInnerHTML={{ __html: data.epic.bodyHtml }} />
+          <div className="rel-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(data.epic.bodyHtml, null) }} />
         ) : (
           <p className="muted">The factory has not written the plan yet.</p>
         )}

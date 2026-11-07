@@ -7,6 +7,7 @@ import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { lengthWords } from "../lib/runs.js";
 import type { EnvCard, EnvironmentsView, EnvLane, EnvSession, EnvTurn } from "../types.js";
+import { localTimesText } from "../lib/localTimes.js";
 
 /**
  * Environments: where the Claude sessions run. The page reads left to right,
@@ -81,7 +82,7 @@ function lastLine(card: EnvCard, now: number): string | null {
 function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; onOpen: (c: EnvCard) => void; wide?: boolean }) {
   const state = envState(card);
   const kindWord = card.kind === "staging" ? "STAGING · ONE AT A TIME" : card.kind === "epic" ? "EPIC" : card.kind === "task" ? "TASK" : "ISSUE";
-  const memory = card.notes[0]?.summary;
+  const memory = card.notes[0] && localTimesText(card.notes[0].summary, card.notes[0].at);
   return (
     <button
       type="button"
@@ -236,7 +237,7 @@ function EnvSheet({ card, onClose, now }: { card: EnvCard; onClose: () => void; 
                     </>
                   )}
                 </span>
-                <span className="env-note">{n.summary || "No closing summary."}</span>
+                <span className="env-note">{localTimesText(n.summary, n.at) || "No closing summary."}</span>
               </li>
             ))}
           </ul>

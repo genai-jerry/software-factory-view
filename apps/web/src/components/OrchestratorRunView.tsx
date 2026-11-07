@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api, ApiError } from "../api.js";
 import { Banner } from "./Banner.js";
+import { localTimesText } from "../lib/localTimes.js";
 
 export type RunEvent = {
   ts?: string;
@@ -184,7 +185,7 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
     <>
       {run.error && (
         <div style={{ marginTop: "0.75rem" }}>
-          <OrchestratorErrorBanner error={run.error} />
+          <OrchestratorErrorBanner error={run.error} at={run.finished_at ?? null} />
         </div>
       )}
       {noOpBanner && (
@@ -261,8 +262,8 @@ export function explainOrchestratorError(error: string): string {
   return error;
 }
 
-function OrchestratorErrorBanner({ error }: { error: string }) {
-  const explained = explainOrchestratorError(error);
+function OrchestratorErrorBanner({ error, at }: { error: string; at: string | null }) {
+  const explained = localTimesText(explainOrchestratorError(error), at);
   return (
     <Banner tone="error" technical={explained !== error ? error : undefined}>
       {explained}

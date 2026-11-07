@@ -26,6 +26,7 @@ import { HaltBar } from "../components/HaltBar.js";
 import { NextStepLine, StartRoleButton } from "../components/NextStep.js";
 import { RunningNow } from "../components/RunningNow.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel, factoryShort } from "../lib/labels.js";
+import { localTimesHtml } from "../lib/localTimes.js";
 
 type Tab = "overview" | "artifacts" | "gate" | "tree" | "tasks" | "tests" | "threads" | "decisions";
 
@@ -474,7 +475,7 @@ function OverviewTab({ data }: { data: EpicWorkspace }) {
     <div>
       <div className="card">
         <h3>Requirement</h3>
-        <div className="markdown-body" dangerouslySetInnerHTML={{ __html: data.epic.bodyHtml || "<p class='muted'>(no body)</p>" }} />
+        <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(data.epic.bodyHtml, null) || "<p class='muted'>(no body)</p>" }} />
         <p className="muted">
           Filed by @{data.epic.author} in {data.repo.fullName}
         </p>
@@ -570,7 +571,7 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
             <p className="muted">
               rendering <code>{artifact.data.sha.slice(0, 7)}</code> ({artifact.data.ref})
             </p>
-            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: artifact.data.html }} />
+            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(artifact.data.html, null) }} />
           </>
         )}
       </div>
@@ -874,7 +875,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
                 <span className="muted">{new Date(g.assembly.report.at).toLocaleString()}</span>
                 {g.assembly.report.htmlUrl && <GitHubLink href={g.assembly.report.htmlUrl} />}
               </h4>
-              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: g.assembly.report.html }} />
+              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(g.assembly.report.html, g.assembly.report.at) }} />
             </>
           ) : (
             <p className="muted">
@@ -891,7 +892,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
             <span className="muted">@{a.sha?.slice(0, 7) ?? "?"}</span>
           </h3>
           {a.html ? (
-            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: a.html }} />
+            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(a.html, null) }} />
           ) : (
             <p className="muted">Content not cached yet — run a reconcile.</p>
           )}
@@ -1304,7 +1305,7 @@ function ThreadCard({
                 <span>{new Date(e.createdAt).toLocaleString()}</span>
                 {e.htmlUrl && <GitHubLink href={e.htmlUrl} />}
               </div>
-              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: e.bodyHtml }} />
+              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(e.bodyHtml, e.createdAt) }} />
             </div>
           ))}
           {thread.data.blocked && (

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api.js";
 import type { ThreadDetail } from "../types.js";
+import { localTimesHtml } from "../lib/localTimes.js";
 
 /**
  * The questions a gate is holding on, shown in full. A count alone ("1
@@ -55,7 +56,7 @@ function OpenQuestion({ id, title }: { id: string; title: string }) {
       {entries.map((e) => (
         <div className="oq-entry" key={e.id}>
           {e.author && <span className="muted">{e.author}: </span>}
-          <div className="rel-body" dangerouslySetInnerHTML={{ __html: e.bodyHtml }} />
+          <div className="rel-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(e.bodyHtml, e.createdAt ?? null) }} />
         </div>
       ))}
       <div className="decision-actions">

@@ -75,6 +75,8 @@ export const ANSWER_STYLE = `Writing standard (every answer):
 - Write a label or a config key only when the reader must type it. Do not
   explain how the factory works. Do not describe how you decided.
 - Write an issue or PR as #21, or owner/repo#21 in another repo, so it is a link.
+- Write a clock time in UTC with the zone, like "04:44 UTC" or "2026-11-06
+  04:44 UTC". The Compass shows it in the reader's own time.
 - If the sources do not answer the question, say what is missing in one sentence.`;
 
 export const SYSTEM_PROMPT = `You are "Ask the Factory", the insight panel of the Compass — a review
