@@ -207,7 +207,7 @@ describe("EnvironmentsPage", () => {
     expect(epic.textContent).not.toMatch(/#\d/);
     fireEvent.click(epic);
     const sheet = await screen.findByRole("dialog");
-    const merged = within(sheet).getByText(/^Merged:/).closest(".env-merged")!;
+    const merged = within(sheet).getByText(/^Merged:/).closest(".env-merged") as HTMLElement;
     expect(merged).toHaveTextContent("#240 → factory/epic-34, #241 → factory/epic-34");
     expect(within(merged).getByRole("link", { name: "#240" }).getAttribute("href")).toBe("https://github.com/acme/api/pull/240");
   });
