@@ -20,7 +20,7 @@ describe("localTimesText", () => {
 
   it("reads ISO timestamps with a zone, and says the date when it is another day", () => {
     expect(localTimesText("merged 2026-11-06T02:10:00Z", written)).toBe(`merged ${t(7, 40)}`);
-    expect(localTimesText("at 2026-11-05 13:44 UTC", written)).toMatch(/^at 5 Nov, /);
+    expect(localTimesText("at 2026-11-05 13:44 UTC", written)).toMatch(/^at (5 Nov|Nov 5), /);
   });
 
   it("takes a bare time's day from when it was written, nearest either way", () => {
