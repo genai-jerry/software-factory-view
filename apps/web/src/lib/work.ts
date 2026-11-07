@@ -298,6 +298,8 @@ export function workLink(epicId: string, entryLink?: string): string {
   return `/work/${m ? m[1] : epicId}`;
 }
 
+const ASK_RANK: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, review: 5, start: 6 };
+
 export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[]): WorkLists {
   // Housekeeping stays off the lists unless it waits on someone: then it is
   // a decision like any other, and the Decisions badge counts it.
@@ -354,8 +356,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
     }
   }
 
-  const rank: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, review: 5, start: 6 };
-  needsDecision.sort((a, b) => newestAge(a) - newestAge(b) || rank[a.ask!] - rank[b.ask!]);
+  needsDecision.sort((a, b) => newestAge(a) - newestAge(b) || ASK_RANK[a.ask!] - ASK_RANK[b.ask!]);
   working.sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.card.daysInState - b.card.daysInState);
 
   return {
@@ -383,5 +384,14 @@ export function workKey(e: AttentionEntry): string {
 
 /** The Decisions page and its badge: one card per work item that waits on me, newest first. */
 export function decisionCards(cards: BoardCard[], needsYou: AttentionEntry[]): WorkItem[] {
-  return buildWork(cards, needsYou, []).needsDecision;
+  // A cross-repo epic waits on people in each of its repos: the beacon-web
+  // task to merge is a different decision from the epic's staging release in
+  // beacon-api. One card per item per repo, so neither hides the other.
+  const repos = [...new Set(needsYou.map((e) => e.repo))];
+  const items = repos.flatMap((repo) =>
+    buildWork(cards, needsYou.filter((e) => e.repo === repo), []).needsDecision.map((w) =>
+      w.card.repo === repo ? w : { ...w, card: { ...w.card, repo } },
+    ),
+  );
+  return items.sort((a, b) => newestAge(a) - newestAge(b) || ASK_RANK[a.ask!] - ASK_RANK[b.ask!]);
 }
