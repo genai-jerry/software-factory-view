@@ -1,7 +1,7 @@
 # Repository settings for open-source maintenance
 
 Some protections live in files in this repo: `CODEOWNERS`, the issue and PR
-templates, `dependabot.yml`, the CodeQL workflow, and the guard on the factory
+templates, `dependabot.yml`, and the guard on the factory
 pipeline that ignores issues from people without write access. The rest are
 repository settings, which can't be committed. Apply them once, in
 **Settings**, before making the repository public.
@@ -32,8 +32,8 @@ repository settings, which can't be committed. Apply them once, in
   - [ ] Dismiss stale pull request approvals when new commits are pushed
   - [ ] Require review from Code Owners
   - [ ] Require conversation resolution before merging
-- [ ] Require status checks to pass: add the CI job and the CodeQL `Analyze`
-      jobs once they have run at least once
+- [ ] Require status checks to pass: add the CI job (`typecheck-test-build`)
+      once it has run at least once
 - [ ] Bypass list: add the **Repository admin** role with mode
       *For pull requests only*. GitHub doesn't let you approve your own PR,
       so a solo maintainer needs this to merge their own changes. They still
@@ -75,8 +75,8 @@ control the server enforces.
 - [ ] Dependency graph and Dependabot alerts: **on**
 - [ ] Dependabot security updates: **on**
 - [ ] Secret scanning and **push protection**: **on**
-- [ ] Code scanning: the CodeQL workflow in `.github/workflows/codeql.yml`
-      covers it. Don't also enable *default setup*, or the two will conflict.
+- [ ] Code scanning: **off**. CodeQL was removed to keep GitHub Actions for
+      deploys; Dependabot and secret scanning still run.
 
 ## Moderation
 
