@@ -15,3 +15,5 @@ export * from "./github.js";
 export * from "./credentials.js";
 export * from "./orchestrator.js";
 export * from "./orchestrator-client.js";
+
+export * from "./decisions/index.js";

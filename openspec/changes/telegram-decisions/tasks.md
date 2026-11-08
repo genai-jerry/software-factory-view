@@ -2,27 +2,24 @@
 
 ## 1. One source of decisions
 
-- [ ] 1.1 Move `buildWork`, `decisionCards`, `askOf`, `pointerFor`,
+- [x] 1.1 Move `buildWork`, `decisionCards`, `askOf`, `pointerFor`,
       `newestAge`, `byRepo` and their types from `apps/web/src/lib/work.ts`
       to `packages/core/src/decisions.ts`; re-export from the web file; keep
       `work.test.ts` passing unchanged.
-- [ ] 1.2 Extract the bodies of `/api/board`, `/api/my-work` (needsYou) and
-      `/api/running` into functions taking `(deps, ctx, focus)`; routes call
-      them.
+- [ ] 1.2 Read `/api/board`, `/api/my-work` (needsYou) and `/api/running`
+      in-process as the person (design §2a).
 - [ ] 1.3 `decisionsFor(deps, ctx)` in `apps/api/src/decisions.ts`, with a
       test that it equals what the page computes for the same fixtures.
-- [ ] 1.4 `ctxForUser(deps, userId)` builds a `RequestCtx` (login, orgIds,
-      `userToken` via `UserTokenStore`).
+- [ ] 1.4 `asUser(app, deps, userId)` — mint a 2-minute session, inject,
+      delete it (design §2a).
 
 ## 2. Actions callable without a request
 
-- [ ] 2.1 Extract gate approve (`routes/gate.ts`) into
-      `approveGate(deps, ctx, epicId, opts)` throwing typed errors; route
-      maps errors to the same status codes and messages as today.
-- [ ] 2.2 Same for issue reply (`routes/write.ts`), start-role
-      (`start-role.ts`) and task-start approval.
-- [ ] 2.3 Existing route tests still pass; add unit tests for the error
-      mapping.
+- [ ] 2.1 Gate approve, issue reply and start-role go through `asUser`
+      against the existing routes; their status and error message are what
+      the bot reports.
+- [ ] 2.2 Test: an injected call is authored by the linked person, and the
+      minted session is gone afterwards.
 
 ## 3. Config, schema, client
 

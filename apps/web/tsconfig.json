@@ -9,7 +9,8 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "paths": { "@console/decisions/*": ["../../packages/core/src/decisions/*"] }
   },
   "include": ["src"]
 }

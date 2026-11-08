@@ -43,11 +43,26 @@ the `telegram-inbound` BullMQ queue and returns 200 at once (Telegram retries
 slow webhooks; a Claude turn can take a minute). Updates are deduplicated by
 `update_id`.
 
+### 2a. Amendment (during build): call the routes in-process, do not extract them
+
+Extracting the board / my-work / running reads and the gate / reply /
+start-role writes into request-free functions would touch six large route
+files for no behavioural gain. Instead Telegram calls the **same HTTP routes
+in-process** with Fastify `app.inject`, as the linked person: it mints a
+`sessions` row for them (random id, 2-minute expiry, deleted right after the
+call) and injects with that cookie and the CSRF header. Every permission
+check, approver rule, error message and GitHub write is then exactly the
+page's, by construction. `app.inject` never touches the network, so the
+minted session cannot be used from outside. Tasks 1.2, 1.4 and 2.x are done
+this way (`apps/api/src/telegram/as-user.ts`).
+
 ### 3. One source of truth for "decisions for a person"
 
 Move `buildWork`/`decisionCards`/`askOf`/`pointerFor` and their types from
-`apps/web/src/lib/work.ts` to `packages/core/src/decisions.ts`; the web file
-re-exports them, so the page and badge are unchanged. On the server,
+`apps/web/src/lib/work.ts` to `packages/core/src/decisions/` (browser-safe,
+no Node imports); the web files re-export them through a Vite/tsconfig alias
+`@console/decisions`, and `infra/Dockerfile.web` copies that one folder, so the
+page and badge are unchanged and the web bundle still carries no core. On the server,
 `decisionsFor(deps, ctx)` runs the same queries as `/api/board`,
 `/api/my-work` and `/api/running` (extracted from those routes into
 functions) and returns `decisionCards(...)`. The notifier and the button
