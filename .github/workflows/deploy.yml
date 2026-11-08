@@ -11,6 +11,8 @@
 #   GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET              optional when APP_RESET
 #   ORCHESTRATOR_DISPATCH_TOKEN              optional, match factory-orchestrator DISPATCH_TOKEN
 #   ORCHESTRATOR_URL                         optional variable, default http://factory-orchestrator:8080
+#   TELEGRAM_BOT_TOKEN / TELEGRAM_WEBHOOK_SECRET   optional secrets; set both to turn on Telegram decisions
+#   TELEGRAM_BOT_USERNAME                    optional variable, the bot's username (no @)
 #
 # GitHub forbids secret names that start with GITHUB_. The GH_* secrets above
 # are written to the VPS .env as GITHUB_APP_* / GITHUB_OAUTH_*.
@@ -195,13 +197,16 @@ jobs:
           GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
           ORCHESTRATOR_URL: ${{ vars.ORCHESTRATOR_URL }}
           ORCHESTRATOR_DISPATCH_TOKEN: ${{ secrets.ORCHESTRATOR_DISPATCH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          TELEGRAM_BOT_USERNAME: ${{ vars.TELEGRAM_BOT_USERNAME }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           timeout: 60s
           command_timeout: 30m
-          envs: CONSOLE_HOST,PUBLIC_ORIGIN,APP_RESET,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET,ORCHESTRATOR_URL,ORCHESTRATOR_DISPATCH_TOKEN
+          envs: CONSOLE_HOST,PUBLIC_ORIGIN,APP_RESET,CONSOLE_MASTER_KEY,DB_PASSWORD,ANTHROPIC_API_KEY,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY,GITHUB_APP_WEBHOOK_SECRET,GITHUB_OAUTH_CLIENT_ID,GITHUB_OAUTH_CLIENT_SECRET,ORCHESTRATOR_URL,ORCHESTRATOR_DISPATCH_TOKEN,TELEGRAM_BOT_TOKEN,TELEGRAM_WEBHOOK_SECRET,TELEGRAM_BOT_USERNAME
           script: |
             set -euo pipefail
 
@@ -238,7 +243,8 @@ jobs:
                        ANTHROPIC_API_KEY GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY \
                        GITHUB_APP_WEBHOOK_SECRET GITHUB_OAUTH_CLIENT_ID \
                        GITHUB_OAUTH_CLIENT_SECRET ORCHESTRATOR_URL \
-                       ORCHESTRATOR_DISPATCH_TOKEN; do
+                       ORCHESTRATOR_DISPATCH_TOKEN TELEGRAM_BOT_TOKEN \
+                       TELEGRAM_WEBHOOK_SECRET TELEGRAM_BOT_USERNAME; do
               VALUE="${!KEY-}"
               [ -z "$VALUE" ] && continue
               TMP="$(mktemp)"

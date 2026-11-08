@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
@@ -5,6 +6,11 @@ import { defineConfig } from "vitest/config";
 // always sees one origin — mirroring the nginx layout in deployment.
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // The decision logic the API also uses (Telegram), as plain browser-safe
+    // source: the bundle never carries the rest of @console/core.
+    alias: { "@console/decisions": fileURLToPath(new URL("../../packages/core/src/decisions", import.meta.url)) },
+  },
   server: {
     port: 5173,
     allowedHosts: [".ngrok-free.app"],

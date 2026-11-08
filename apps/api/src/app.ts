@@ -20,6 +20,7 @@ import { registerActivityRoutes } from "./routes/activity.js";
 import { registerShapeRoutes } from "./routes/shape.js";
 import { registerEstateRoutes } from "./routes/estates.js";
 import { registerSetupRoutes } from "./setup.js";
+import { registerTelegramRoutes } from "./telegram/index.js";
 import type { AppDeps } from "./context.js";
 import { SignInRequiredError } from "./user-token.js";
 
@@ -89,6 +90,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerOpsRoutes(app, deps);
   registerActivityRoutes(app, deps);
   registerShapeRoutes(app, deps);
+  registerTelegramRoutes(app, deps);
 
   return app;
 }

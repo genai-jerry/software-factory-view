@@ -3,6 +3,8 @@ RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY apps/web ./apps/web
+# The decision logic shared with the API (aliased as @console/decisions).
+COPY packages/core/src/decisions ./packages/core/src/decisions
 RUN pnpm install --frozen-lockfile --filter @console/web
 RUN pnpm --filter @console/web build
 

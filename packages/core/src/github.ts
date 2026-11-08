@@ -603,7 +603,8 @@ export class RepoReader {
 
 /**
  * The app's identity. Reads, onboarding automation, config PRs. There is
- * deliberately no merge / no gate-comment method here.
+ * deliberately no merge / no gate-comment method here (the one comment it
+ * writes is a Telegram discussion record, which the factory ignores).
  */
 export class InstallationClient extends RepoReader {
   constructor(apiUrl: string, auth: AppAuth, installationId: number) {
@@ -624,6 +625,16 @@ export class InstallationClient extends RepoReader {
       }
       throw e;
     }
+  }
+
+  /**
+   * A record comment as the App — the one comment the App writes on an issue:
+   * the summary of a Telegram discussion (openspec telegram-decisions). It can
+   * never act as a decision: the factory skips bot-authored comments, and the
+   * decision that follows is posted on the person's own token.
+   */
+  async createRecordComment(owner: string, repo: string, issueNumber: number, body: string): Promise<GhComment> {
+    return (await this.req("POST", `/repos/${owner}/${repo}/issues/${issueNumber}/comments`, { body })) as GhComment;
   }
 
   async putActionsSecret(owner: string, repo: string, name: string, value: string): Promise<void> {

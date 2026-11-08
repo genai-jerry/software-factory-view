@@ -45,6 +45,17 @@ const envSchema = z.object({
   /** Bearer token matching the orchestrator's DISPATCH_TOKEN. */
   ORCHESTRATOR_DISPATCH_TOKEN: z.string().default(""),
 
+  /**
+   * Telegram decisions (openspec telegram-decisions). Empty token = the
+   * feature is off: no Settings section, no webhook, no notifier. Never
+   * logged and never sent to the browser.
+   */
+  TELEGRAM_BOT_TOKEN: z.string().default(""),
+  /** The bot's username without @, for the t.me link. */
+  TELEGRAM_BOT_USERNAME: z.string().default(""),
+  /** Secret Telegram echoes in X-Telegram-Bot-Api-Secret-Token (1-256 of A-Z a-z 0-9 _ -). */
+  TELEGRAM_WEBHOOK_SECRET: z.string().default(""),
+
   /** Staleness banner threshold, minutes since last successful sync. */
   STALENESS_THRESHOLD_MINUTES: z.coerce.number().default(15),
   /** Dev-only bypass: "1" allows login as a fixed dev user without GitHub OAuth. */
