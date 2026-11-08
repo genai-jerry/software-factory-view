@@ -367,6 +367,33 @@ describe("discussing a decision", () => {
     expect(String(asked[1]!.context)).toContain("Person: first question");
   });
 
+  it("writes the summary in a fresh session with its own instructions, leaving the discussion's session alone", async () => {
+    await relink();
+    const msg = tg.sent.find((m) => m.html.includes("Approve the plan"))!;
+    answers = ["It changes the reminder window."];
+    await say("what changes?", msg.id);
+    answers = ["Fine.\n\nPROPOSED COMMENT:\nApproved", "- Decided: approve."];
+    await say("approve it");
+    const summaryCall = asked.at(-1)!;
+    expect(asked.at(-2)!.session).toBe("s1");
+    expect(summaryCall.session).toBeUndefined();
+    expect(String(summaryCall.instructions)).toContain("permanent record");
+    expect(String(summaryCall.context)).toContain("Person: approve it");
+  });
+
+  it("offers no Post it when the summary comes back empty, and says so", async () => {
+    await relink();
+    const msg = tg.sent.find((m) => m.html.includes("Approve the plan"))!;
+    // A session that ignores the summary request and proposes the comment again.
+    answers = ["PROPOSED COMMENT:\nApproved", "PROPOSED COMMENT:\nApproved"];
+    await say("approve it", msg.id);
+    expect(tg.last().html).toMatch(/could not write the discussion summary \(it came back empty\)/);
+    expect(tg.last().keyboard ?? []).toEqual([]);
+    const conv = (await deps.dbh.db.select().from(telegramConversations))[0]!;
+    expect(conv.status).toBe("open");
+    expect(github).toEqual([]);
+  });
+
   it("retries only the decision when the summary went in but the comment failed", async () => {
     await relink();
     const msg = tg.sent.find((m) => m.html.includes("Approve the plan"))!;
