@@ -8,27 +8,29 @@ Compass SHALL let a signed-in person link one Telegram private chat to their
 Compass user through a one-time deep link `https://t.me/<bot>?start=<token>`.
 The token SHALL be random, single-use and expire after 15 minutes. When the
 bot receives `/start <token>` it SHALL bind that chat id to the token's user,
-reply naming the GitHub login it linked, and Settings SHALL show the link. A
+reply naming the GitHub login it linked, and the Telegram page (`/telegram`,
+reachable by every signed-in person) SHALL show the link. A
 chat SHALL be linked to at most one user and a user to at most one chat;
 linking again replaces the old chat. The person SHALL be able to pause
-notifications and to disconnect, from Settings or with `/stop` in the chat.
+notifications and to disconnect, from the Telegram page or with `/pause`,
+`/resume` and `/stop` in the chat.
 The feature SHALL be off (no Settings section, no webhook, no job) when
 `TELEGRAM_BOT_TOKEN` is unset.
 
 #### Scenario: Linking
 
-- **WHEN** Jerry clicks "Connect Telegram" in Settings and taps Start in the bot
-- **THEN** the bot replies "Linked to GitHub @genai-jerry. Decisions waiting on you will arrive here." and Settings shows "Connected"
+- **WHEN** Jerry clicks "Connect Telegram" on the Telegram page and taps Start in the bot
+- **THEN** the bot replies "Linked to GitHub @genai-jerry. Decisions waiting on you will arrive here." and the page shows "Connected"
 
 #### Scenario: Expired or reused token
 
 - **WHEN** the bot receives `/start` with a token that is expired or already used
-- **THEN** it links nothing and replies that the link has expired, pointing to Settings for a new one
+- **THEN** it links nothing and replies that the link has expired, pointing to the Telegram page for a new one
 
 #### Scenario: Unknown chat
 
 - **WHEN** a message or button press arrives from a chat that is not linked
-- **THEN** the bot acts on nothing and replies how to connect from Compass Settings
+- **THEN** the bot acts on nothing and replies how to connect from the Telegram page
 
 ### Requirement: Each decision waiting on a person is sent to them once
 
@@ -59,7 +61,7 @@ in Compass.
 #### Scenario: Resolved elsewhere
 
 - **WHEN** the person approves the same gate on the Compass Decisions page
-- **THEN** the Telegram message is edited to "Done — approved in Compass" with no buttons
+- **THEN** the Telegram message is edited to "Done — no longer waiting on you" with no buttons
 
 #### Scenario: Run already acting
 

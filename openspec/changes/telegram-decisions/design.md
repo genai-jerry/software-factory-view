@@ -70,14 +70,16 @@ re-check both use it.
 
 ### 4. The notifier
 
-A BullMQ job scheduler `telegram-notify` (every 60 s) in the API process
-(which owns the query code). For each linked, unpaused user:
+A 60-second timer in the API process (which owns the query code), started
+after the API listens, skipping a tick while the previous one still runs.
+*Amendment:* a timer rather than a BullMQ job scheduler, for the same
+one-process reason as §2. For each linked, unpaused user:
 
-1. Build a `RequestCtx` for the user (`userId`, `login`, `orgIds` from
-   memberships, `userToken` from `UserTokenStore`). A user whose grant cannot
-   be renewed still gets notifications (reads use the App installation where
-   the routes already do); actions will ask them to sign in.
-2. `decisionsFor` → key each card `epicId|repo|ask|issueId|state`.
+1. Read the person's board, attention queue and running list as them
+   (§2a). If a read fails (a lapsed grant), change nothing this round.
+2. `decisionsFor` → key each card `epicId|repo|ask|issue@state` (the issue
+   and state only for gate, ship and answer asks; a second task joining a
+   review list edits the same message in place).
 3. New keys → send message, insert `telegram_notifications` row
    (user, key, chat id, message id, epicId, repo, ask, issueId, sentAt).
 4. Rows whose key vanished and are still open → edit to "Done — <how>" (how:

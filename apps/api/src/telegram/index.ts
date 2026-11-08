@@ -83,7 +83,7 @@ export function registerTelegramRoutes(app: FastifyInstance, deps: AppDeps): voi
     return { url: `https://t.me/${deps.cfg.TELEGRAM_BOT_USERNAME}?start=${token}`, expiresInMinutes: 15 };
   });
 
-  app.patch<{ Body: { paused?: boolean } }>("/api/me/telegram", async (req, reply) => {
+  app.post<{ Body: { paused?: boolean } }>("/api/me/telegram/pause", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const paused = req.body?.paused === true;

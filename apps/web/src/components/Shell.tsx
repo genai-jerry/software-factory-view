@@ -90,6 +90,7 @@ export function Shell({
           <nav className="sidenav" aria-label="Primary">
             <PrimaryLinks inboxCount={inboxCount} />
             <div className="sidenav-foot">
+              <NavLink to="/telegram">Telegram</NavLink>
               {showSettings && (
                 <NavLink to="/settings">{setup?.canEditApp && !me.orgs.some((o) => isOrgAdminRole(o.role)) ? "GitHub App" : "Settings"}</NavLink>
               )}
@@ -227,6 +228,9 @@ function MoreMenu({
         Environments
       </NavLink>
       <EngineerLinks onNavigate={onNavigate} />
+      <NavLink to="/telegram" onClick={onNavigate}>
+        Telegram
+      </NavLink>
       {showSettings && setup?.canEditApp && (
         <NavLink to="/settings" onClick={onNavigate}>
           GitHub App

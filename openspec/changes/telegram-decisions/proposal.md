@@ -82,14 +82,15 @@ verification plus paid, pre-approved templates for every unprompted message.)
 - **DB:** new tables `telegram_links`, `telegram_notifications`,
   `telegram_conversations` (+ migration).
 - **API:** `POST /api/telegram/webhook` (public, secret-checked),
-  `GET/POST/DELETE /api/me/telegram` (link status, start link, pause,
-  disconnect). Decision actions in `routes/gate.ts`, `routes/write.ts` and
+  `GET/DELETE /api/me/telegram`, `POST /api/me/telegram/link`,
+  `POST /api/me/telegram/pause` (status, start link, pause, disconnect). Decision actions in `routes/gate.ts`, `routes/write.ts` and
   `start-role.ts` are extracted into functions callable with a server-built
   `RequestCtx`.
 - **API process:** a repeating `telegram-notify` job (every minute, BullMQ
   job scheduler so only one runs) and a `telegram-inbound` queue so the
   webhook answers Telegram at once and slow Claude turns run behind it.
-- **Web:** a Telegram section in Settings.
+- **Web:** a Telegram page (`/telegram`) every signed-in person can reach —
+  Settings is admin-only.
 - **Shared logic:** `decisionCards` and its helpers move from
   `apps/web/src/lib/work.ts` to `packages/core` so the server notifies about
   exactly what the page shows.
