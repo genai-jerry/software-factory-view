@@ -8,29 +8,9 @@ on:
     types: [opened, labeled, closed]
   issue_comment:
     types: [created]
-  # Profile drift (FACTORY.md §2c): the paths a repo's stack facts go stale
-  # from. A push touching one re-runs the Profiler, which opens a PR only where
-  # it disagrees with .factory/profile.json. Delete this block to turn the
-  # check off; add the manifests your stack actually uses.
-  push:
-    paths:
-      - "package.json"
-      - "**/package.json"
-      - "pnpm-lock.yaml"
-      - "package-lock.json"
-      - "yarn.lock"
-      - "pyproject.toml"
-      - "requirements*.txt"
-      - "go.mod"
-      - "Cargo.toml"
-      - "pom.xml"
-      - "build.gradle*"
-      - "Gemfile"
-      - "composer.json"
-      - "Makefile"
-      - "Dockerfile"
-      - "docker-compose*.yml"
-      - ".github/workflows/**"
+  # Profile drift (FACTORY.md §2c) is off here: every merge touching a
+  # manifest or workflow re-ran the Profiler, a full Claude session. Re-run it
+  # by hand when the stack changes (Run workflow → role: profiler).
   workflow_dispatch:
     inputs:
       issue_number:
