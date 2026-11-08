@@ -1231,6 +1231,14 @@ ol.run-events time {
 .decision-reply { display: grid; gap: 0.4rem; }
 .decision-reply textarea { width: 100%; box-sizing: border-box; font: inherit; }
 .decision-failure { color: var(--error-fg); background: var(--error-bg); border: 1px solid var(--red); border-radius: 6px; padding: 0.4rem 0.6rem; margin: 0.5rem 0 0; }
+/* Ask about the factory's question before answering it: an offer line, then the exchange. */
+.ask-about-offer { margin: 0.5rem 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.ask-about { display: grid; gap: 0.4rem; margin: 0.5rem 0 0.75rem; padding: 0.6rem 0.8rem; border: 1px dashed var(--border); border-radius: 8px; background: var(--bg-raised); }
+.ask-about textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.ask-turn { display: grid; gap: 0.3rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+.ask-q { margin: 0; color: var(--text-dim); }
+.ask-q b { color: var(--text); }
+.ask-answer { white-space: pre-wrap; line-height: 1.45; }
 a.button {
   display: inline-flex; align-items: center; justify-content: center; min-height: var(--target); padding: 0 0.9rem;
   border: 1px solid var(--border); border-radius: 6px; color: var(--text); text-decoration: none; font-weight: 600; background: var(--bg-raised);

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { TaskStartGate } from "../components/Approve.js";
+import { AskAboutQuestion } from "../components/AskAboutQuestion.js";
 import { StartRoleButton } from "../components/NextStep.js";
 import { namesOf, plainTitle } from "../lib/labels.js";
 import type { EpicWorkspace, IssuePeekData, NextStep } from "../types.js";
@@ -292,6 +293,7 @@ function NeedsAnswer({ task, epicId }: { task: Task; epicId: string }) {
       ) : (
         <p className="muted">{peek.isLoading ? "Reading the question…" : "The factory stopped; its question is in the conversation."}</p>
       )}
+      {!reply.isSuccess && <AskAboutQuestion issueId={task.id} />}
       {reply.isSuccess ? (
         <p className="muted">Sent. The factory continues from your answer.</p>
       ) : (

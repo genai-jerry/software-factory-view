@@ -244,6 +244,82 @@ describe("POST /api/threads/:id/ask", () => {
   });
 });
 
+describe("POST /api/issues/:id/ask", () => {
+  async function seedBlockedTask() {
+    const { comments, issues, repos } = await import("@console/db");
+    const estate = (await deps.dbh.db.select().from(estates))[0]!;
+    const repo = (
+      await deps.dbh.db
+        .insert(repos)
+        .values({ orgId: estate.orgId, estateId: estate.id, ghNodeId: "r1", fullName: "acme/api", defaultBranch: "main" } as never)
+        .returning()
+    )[0]!;
+    const epic = (
+      await deps.dbh.db
+        .insert(issues)
+        .values({ orgId: estate.orgId, repoId: repo.id, number: 34, kind: "epic", title: "Epic", state: "open", labels: [], ghNodeId: "n1", ghId: 1, ghCreatedAt: new Date(), ghUpdatedAt: new Date() } as never)
+        .returning()
+    )[0]!;
+    const task = (
+      await deps.dbh.db
+        .insert(issues)
+        .values({
+          orgId: estate.orgId, repoId: repo.id, number: 40, kind: "task", title: "task(34): Calling not happening on all the lines", body: "Every line should dial.",
+          state: "open", labels: [], factoryState: "factory:blocked", parentIssueId: epic.id, ghNodeId: "n40", ghId: 40, ghCreatedAt: new Date(), ghUpdatedAt: new Date(),
+        } as never)
+        .returning()
+    )[0]!;
+    await deps.dbh.db.insert(comments).values([
+      { orgId: estate.orgId, issueId: task.id, ghNodeId: "c1", ghId: 1001, author: "factory-bot", isAgent: true, body: "Take the sentence out of this task, or keep it? (Recommended: take it out)", ghCreatedAt: new Date("2026-11-07T01:00:00Z"), ghUpdatedAt: new Date() },
+      { orgId: estate.orgId, issueId: task.id, ghNodeId: "c2", ghId: 1002, author: "jerry", isAgent: false, body: "Why does it matter?", ghCreatedAt: new Date("2026-11-07T02:00:00Z"), ghUpdatedAt: new Date() },
+    ] as never);
+    return task;
+  }
+
+  it("requires a session and a question", async () => {
+    const t = await seedBlockedTask();
+    expect((await app.inject({ method: "POST", url: `/api/issues/${t.id}/ask`, payload: { question: "why?" } })).statusCode).toBe(401);
+    const res = await app.inject({ method: "POST", url: `/api/issues/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: " " } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("asks the orchestrator about the question, with the issue and its conversation, and answers the person only", async () => {
+    const t = await seedBlockedTask();
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(init.body as string) });
+      return new Response(JSON.stringify({ answer: "Option 1 splits the sentence into its own task; the rest ships now.", model: "claude-sonnet-5-5" }), { status: 200 });
+    });
+    const res = await app.inject({
+      method: "POST", url: `/api/issues/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "What does option 1 change?" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, answer: "Option 1 splits the sentence into its own task; the rest ships now.", model: "claude-sonnet-5-5" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
+    expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "api", question: "What does option 1 change?", branch: "factory/epic-34" });
+    const context = String(calls[0]!.body.context);
+    expect(context).toContain("Issue #40: task(34): Calling not happening on all the lines");
+    expect(context).toContain("Every line should dial.");
+    expect(context).toContain("[agent] Take the sentence out of this task, or keep it?");
+    expect(context).toContain("@jerry Why does it matter?");
+    expect(String(calls[0]!.body.instructions)).toContain("deciding how to answer a question the factory asked");
+    expect(String(calls[0]!.body.instructions)).toContain("Writing standard");
+    // nothing reaches GitHub and nothing is saved in a thread: the answer is the person's
+    const { threadEntries, auditLog } = await import("@console/db");
+    expect(await deps.dbh.db.select().from(threadEntries)).toEqual([]);
+    const audit = await deps.dbh.db.select().from(auditLog);
+    expect(audit.map((a) => [a.action, a.target])).toEqual([["blocked.ask", "acme/api#40"]]);
+  });
+
+  it("shows the orchestrator's reason when it cannot answer", async () => {
+    const t = await seedBlockedTask();
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "Claude usage limit reached: resets 2:50pm (UTC)." }), { status: 429 }));
+    const res = await app.inject({ method: "POST", url: `/api/issues/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "why?" } });
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error).toContain("usage limit");
+  });
+});
+
 describe("POST /api/epics/:id/qa with a Claude token", () => {
   async function seedEpicWithToken() {
     const { issues, orchestratorSecrets, repos } = await import("@console/db");

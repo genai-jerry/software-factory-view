@@ -203,6 +203,23 @@ describe("BuildBoard", () => {
     expect(screen.getByText("Reviewer on task 5.")).toBeInTheDocument();
   });
 
+  it("lets the reader ask about the question before answering it, without posting anything", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true, answer: "Option 1 keeps this task small; the sentence becomes its own task.", model: "m" });
+    renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, tasks)} />);
+    const card = await screen.findByRole("region", { name: "Needs an answer" });
+    await within(card).findByText("May the status column be the phone column?");
+    await userEvent.click(within(card).getByRole("button", { name: "Ask about this" }));
+    const ask = within(card).getByRole("group", { name: "Ask about this question" });
+    await userEvent.type(within(ask).getByLabelText("Ask about this question"), "What would option 1 change?");
+    await userEvent.click(within(ask).getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/b/ask", { question: "What would option 1 change?" }));
+    expect(await within(ask).findByText("Option 1 keeps this task small; the sentence becomes its own task.")).toBeInTheDocument();
+    expect(within(ask).getByText(/Nothing here posts to GitHub/)).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalledWith("/api/issues/b/reply", expect.anything());
+    // the answer box is still there to reply with
+    expect(within(card).getByLabelText("Your answer")).toBeInTheDocument();
+  });
+
   /**
    * The complaint this came from: three tasks sat at in-review with nobody
    * running, the board said "Nothing waits on you. The factory has it.", and

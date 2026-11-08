@@ -96,6 +96,22 @@ Rules, in priority order:
 ${ANSWER_STYLE}`;
 
 /**
+ * For a question about the question the factory asked on a blocked issue
+ * (POST /api/issues/:id/ask): the person is deciding what to answer, and
+ * needs the choice laid out — not made for them on GitHub.
+ */
+export const QUESTION_INSTRUCTIONS = `A person is deciding how to answer a question the factory asked on this
+issue; the question is in the material you are given. Help them decide: say
+in plain words what is being asked and why the factory stopped on it, what
+each option would mean for the work and for the people who use the product,
+what the conversation and the code already settle, and which option you
+would take and why. Where the code decides a point, say where. If the
+material does not settle something, say what is missing. Do not guess. Your
+answer is for this person alone: nothing you write is posted to the issue.
+
+${ANSWER_STYLE}`;
+
+/**
  * The same rules for a session that can also read the repository (the
  * orchestrator's Claude CLI): the sources stay the basis, and the code is
  * there to check them, not to widen the answer.
