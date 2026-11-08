@@ -111,9 +111,9 @@ export class TelegramClient implements TelegramApi {
   }
 }
 
-/** Escape text for Telegram's HTML parse mode. */
+/** Escape text for Telegram's HTML parse mode — safe in text and in a quoted attribute (an href). */
 export function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 /** Telegram caps a message at 4096 characters; keep room for the frame. */

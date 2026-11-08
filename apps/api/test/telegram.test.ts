@@ -22,6 +22,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 import { handleUpdate, type BotEnv } from "../src/telegram/bot.js";
+import { esc } from "../src/telegram/client.js";
 import type { Keyboard, TelegramApi, TgMessage } from "../src/telegram/client.js";
 import { makeLinkToken, readLinkToken } from "../src/telegram/link-token.js";
 import { sweepUser } from "../src/telegram/notifier.js";
@@ -225,6 +226,10 @@ describe("linking a chat", () => {
     tg.reset();
     await say(`/start ${token}`);
     expect(tg.last().html).toMatch(/expired or was already used/);
+  });
+
+  it("escapes what goes into the bot's HTML, quotes included (links are href attributes)", () => {
+    expect(esc(`a<b>&"c"`)).toBe("a&lt;b&gt;&amp;&quot;c&quot;");
   });
 
   it("refuses an expired or forged token", () => {
