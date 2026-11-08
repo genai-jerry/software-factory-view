@@ -10,7 +10,8 @@ import {
   expediteAvailability,
 } from "../expedite.js";
 import { postComment, writeLabel } from "../gh-write.js";
-import { THREAD_INSTRUCTIONS } from "@console/insight";
+import { QUESTION_INSTRUCTIONS, THREAD_INSTRUCTIONS } from "@console/insight";
+import { loadBlockedMeta } from "../attention.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadEpic } from "./read.js";
@@ -234,6 +235,71 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       payload: { commentNodeId: comment.node_id, commentUrl: comment.html_url },
     });
     return { ok: true, commentUrl: comment.html_url };
+  });
+
+  /**
+   * Ask about the question the factory asked on a blocked issue — what it
+   * means, what each option would do, which to take — before answering it.
+   * The orchestrator answers with its Claude CLI from a checkout of the
+   * issue's epic branch, as the thread Ask does, reading the issue, the
+   * factory's question and the conversation. The answer is for the person
+   * deciding: nothing is posted to GitHub and nothing is saved but an audit
+   * line.
+   */
+  app.post<{ Params: { id: string }; Body: { question?: string } }>("/api/issues/:id/ask", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const question = req.body?.question?.trim() ?? "";
+    if (!question) return reply.code(400).send({ error: "question required" });
+    if (question.length > 2000) return reply.code(400).send({ error: "the question is over 2000 characters" });
+    const issue = (
+      await db.select().from(issues).where(and(eq(issues.id, req.params.id), inArray(issues.orgId, ctx.orgIds))).limit(1)
+    )[0];
+    if (!issue) return reply.code(404).send({ error: "issue not found" });
+    const repo = (await db.select().from(repos).where(eq(repos.id, issue.repoId)).limit(1))[0]!;
+    const [owner, name] = repo.fullName.split("/") as [string, string];
+    const epic =
+      issue.kind === "epic"
+        ? issue
+        : issue.parentIssueId
+          ? (await db.select().from(issues).where(eq(issues.id, issue.parentIssueId)).limit(1))[0]
+          : undefined;
+
+    const asked = (await loadBlockedMeta(deps, [issue.id])).get(issue.id);
+    const questions = asked?.questions?.length ? asked.questions : asked?.question ? [asked.question] : [];
+    const talk = await db.select().from(comments).where(eq(comments.issueId, issue.id)).orderBy(comments.ghCreatedAt);
+    const context = [
+      `Issue #${issue.number}: ${issue.title}`,
+      issue.body?.trim() ?? "",
+      questions.length
+        ? `The factory's question${questions.length > 1 ? "s" : ""}, which the person must answer:\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
+        : "",
+      ...talk.map((c) => `${c.isAgent ? "[agent]" : `@${c.author ?? "?"}`} ${c.body.trim()}`),
+    ]
+      .filter(Boolean)
+      .join("\n\n---\n\n")
+      .slice(-24_000);
+
+    const secrets = await readRetainedAgentSecrets(deps, issue.orgId);
+    const got = await askOrchestrator(deps.cfg, {
+      owner,
+      repo: name,
+      question,
+      context,
+      instructions: QUESTION_INSTRUCTIONS,
+      ...(epic ? { branch: `factory/epic-${epic.number}` } : {}),
+      anthropicApiKey: secrets.anthropicApiKey,
+      claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+    });
+    if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
+    await db.insert(auditLog).values({
+      orgId: issue.orgId,
+      actorUserId: ctx.userId,
+      action: "blocked.ask",
+      target: `${repo.fullName}#${issue.number}`,
+      payload: { model: got.model },
+    });
+    return { ok: true, answer: got.answer, model: got.model };
   });
 
   /**

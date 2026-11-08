@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { AskAboutQuestion } from "../components/AskAboutQuestion.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
 import { ROLE_START_STATE, STAGE_LABEL, decisionCards, isRoleStart, roleStartLine, type WorkItem } from "../lib/work.js";
@@ -251,6 +252,7 @@ function AnswerDecision({ item: w }: { item: WorkItem }) {
         {entry.question && <li className="question">“{entry.question}”</li>}
         {entry.rank === 4 && <li>Nobody owns this one. Anyone may reply.</li>}
       </ul>
+      {!reply.isSuccess && <AskAboutQuestion issueId={entry.issueId} />}
       {reply.isSuccess ? (
         <p className="muted">Sent. The builder continues from your answer.</p>
       ) : (
