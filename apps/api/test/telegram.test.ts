@@ -91,6 +91,7 @@ let answers: string[] = [];
 let failRecord = false;
 let failDecision = false;
 let asked: Array<Record<string, unknown>> = [];
+let askFails: { status: number; detail: string } | null = null;
 function stubNetwork() {
   github = [];
   vi.stubGlobal(
@@ -99,6 +100,7 @@ function stubNetwork() {
       const u = String(url);
       if (u === `${ORCH}/ask`) {
         asked.push(JSON.parse(String(init?.body)));
+        if (askFails) return new Response(JSON.stringify({ detail: askFails.detail }), { status: askFails.status });
         const answer = answers.shift() ?? "ok";
         return new Response(JSON.stringify({ answer, model: "m", session: "s1" }), { status: 200 });
       }
@@ -191,6 +193,7 @@ beforeEach(() => {
   stubNetwork();
   answers = [];
   asked = [];
+  askFails = null;
   failRecord = false;
   failDecision = false;
 });
@@ -379,5 +382,14 @@ describe("discussing a decision", () => {
     failDecision = false;
     await tap(failed.keyboard!.flat().find((b) => /Try again/.test(b.text))!.callback_data!, draft.id);
     expect(github.map((g) => (/inst-token/.test(g.auth) ? "summary" : "decision"))).toEqual(["summary", "decision"]);
+  });
+
+  it("repeats the orchestrator's reason when Claude cannot answer, and posts nothing", async () => {
+    await relink();
+    const msg = tg.sent.find((m) => m.html.includes("Approve the plan"))!;
+    askFails = { status: 503, detail: "The factory orchestrator cannot read acme/app: it has no GitHub access to that repository." };
+    await say("what is needed here?", msg.id);
+    expect(tg.last().html).toBe("Claude could not answer this: The factory orchestrator cannot read acme/app: it has no GitHub access to that repository.\n\nNothing was posted.");
+    expect(github).toEqual([]);
   });
 });

@@ -410,7 +410,8 @@ async function turn(env: BotEnv, link: Link, conv: Conversation, text: string): 
   const question = editing ? `${text}\n\n(The drafted comment was:\n${conv.draft}\nRedraft it with this change.)` : text;
   const got = await typingWhile(env, link.chatId, ask(deps, current, question, discussInstructions(login, line)));
   if (!got.ok) {
-    await say(env, current, `I could not reach Claude just now (${esc(got.error)}). Nothing was posted. Try again in a moment.`);
+    // The orchestrator's own reason (it cannot read this repo, a usage limit…), not a guess.
+    await say(env, current, `Claude could not answer this: ${esc(got.error)}\n\nNothing was posted.`);
     return;
   }
   const { text: shown, proposed } = splitProposal(got.answer);
