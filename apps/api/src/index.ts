@@ -4,6 +4,7 @@ import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { buildApp } from "./app.js";
+import { startTelegram } from "./telegram/index.js";
 
 const cfg = loadConfig();
 
@@ -37,8 +38,11 @@ async function main(): Promise<void> {
   const reconcileQueue = new Queue("reconcile", { connection });
   const openspecQueue = new Queue("openspec", { connection });
 
-  const app = await buildApp({ cfg, dbh, credentials, ingestQueue, reconcileQueue, openspecQueue });
+  // One deps object for the app and Telegram: the user-token store is keyed on it.
+  const deps = { cfg, dbh, credentials, ingestQueue, reconcileQueue, openspecQueue };
+  const app = await buildApp(deps);
   await app.listen({ port: cfg.API_PORT, host: "0.0.0.0" });
+  await startTelegram(app, deps);
 
   const resolved = await credentials.resolve();
   console.log(`api up on :${cfg.API_PORT}`);

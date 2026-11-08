@@ -702,3 +702,77 @@ export const workAttachments = pgTable(
   },
   (t) => [index("work_attachments_user_created").on(t.userId, t.createdAt), index("work_attachments_repo_issue").on(t.repoId, t.issueUrl)],
 );
+
+/* ------------------------------ Telegram decisions (console-native) ------------------------------ */
+
+/** One Telegram private chat linked to one Compass user (openspec telegram-decisions). */
+export const telegramLinks = pgTable(
+  "telegram_links",
+  {
+    userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    tgUsername: text("tg_username"),
+    paused: boolean("paused").notNull().default(false),
+    /** Set once the first sweep after linking has sent its capped backlog. */
+    primed: boolean("primed").notNull().default(false),
+    linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("telegram_links_chat").on(t.chatId)],
+);
+
+/** A decision sent to a person; open until it leaves their Decisions list. */
+export const telegramNotifications = pgTable(
+  "telegram_notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    messageId: bigint("message_id", { mode: "number" }).notNull(),
+    epicId: text("epic_id").notNull(),
+    repo: text("repo").notNull(),
+    ask: text("ask").notNull(),
+    /** What the message was built from: the work item at send time. */
+    item: jsonb("item").$type<Record<string, unknown>>().notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [index("telegram_notifications_user_open").on(t.userId, t.resolvedAt), index("telegram_notifications_chat_msg").on(t.chatId, t.messageId)],
+);
+
+/** A discussion about one decision with the read-only Claude session. */
+export const telegramConversations = pgTable(
+  "telegram_conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    notificationId: uuid("notification_id").references(() => telegramNotifications.id, { onDelete: "set null" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    /** The issue the discussion — and the comment it ends in — is about. */
+    issueId: text("issue_id").notNull(),
+    epicId: text("epic_id").notNull(),
+    session: text("session"),
+    messages: jsonb("messages").$type<Array<{ role: "user" | "assistant"; text: string; at: string }>>().notNull().default([]),
+    /** open · drafted (a comment awaits Post it) · posted · cancelled · expired */
+    status: text("status").notNull().default("open"),
+    draft: text("draft"),
+    summary: text("summary"),
+    summaryCommentId: bigint("summary_comment_id", { mode: "number" }),
+    /** Telegram message ids that belong to this conversation, for reply routing. */
+    messageIds: jsonb("message_ids").$type<number[]>().notNull().default([]),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("telegram_conversations_user").on(t.userId, t.status, t.updatedAt)],
+);
+
+/** Telegram update ids already handled (webhook retries are deduplicated). */
+export const telegramUpdates = pgTable("telegram_updates", {
+  updateId: bigint("update_id", { mode: "number" }).primaryKey(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Start-link nonces already used: a link token links once. Pruned after a day. */
+export const telegramLinkNonces = pgTable("telegram_link_nonces", {
+  nonce: text("nonce").primaryKey(),
+  usedAt: timestamp("used_at", { withTimezone: true }).notNull().defaultNow(),
+});
