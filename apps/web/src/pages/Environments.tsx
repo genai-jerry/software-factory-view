@@ -65,18 +65,30 @@ export function clockWords(iso: string | null, now = Date.now()): string {
   return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`;
 }
 
+/** "claude-opus-5-5" → "Opus 5.5": the model in the words a person says it. */
+export function modelName(model: string | null | undefined): string | null {
+  if (!model) return null;
+  const m = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/i.exec(model);
+  if (!m) return model;
+  const family = m[1]![0]!.toUpperCase() + m[1]!.slice(1).toLowerCase();
+  return `${family} ${m[2]}${m[3] && m[3].length < 3 ? `.${m[3]}` : ""}`;
+}
+
 /** What the run holding an environment is doing, in one line. */
 function turnLine(turn: EnvTurn, card: EnvCard, now: number): string {
   const on = turn.title && turn.title !== card.title ? ` on “${turn.title}”` : "";
-  if (turn.state === "waiting for a session") return `${turn.role}${on} · waiting for a free session`;
+  const model = modelName(turn.model);
+  const who = `${turn.role}${model ? ` (${model})` : ""}`;
+  if (turn.state === "waiting for a session") return `${who}${on} · waiting for a free session`;
   const took = since(turn.since, now);
-  return `${turn.role}${on} · running${took ? ` · ${took}` : ""}`;
+  return `${who}${on} · running${took ? ` · ${took}` : ""}`;
 }
 
 function lastLine(card: EnvCard, now: number): string | null {
   const n = card.notes[0];
   if (!n) return card.lastUsedAt ? `Last used ${clockWords(card.lastUsedAt, now)}` : null;
-  return `Last: ${n.role}, ${clockWords(n.at, now)}, ${outcomeShort(n.outcome)}`;
+  const model = modelName(n.model);
+  return `Last: ${n.role}${model ? ` (${model})` : ""}, ${clockWords(n.at, now)}, ${outcomeShort(n.outcome)}`;
 }
 
 function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; onOpen: (c: EnvCard) => void; wide?: boolean }) {
@@ -275,7 +287,11 @@ function StagingQueue({ card }: { card: EnvCard }) {
 
 function SessionMeter({ sessions }: { sessions: NonNullable<EnvironmentsView["sessions"]> }) {
   const free = Math.max(0, sessions.total - sessions.inUse.length);
-  const label = (s: EnvSession) => (s.staging ? `${s.role} · staging` : s.title ? `${s.role} · ${s.title}` : s.role);
+  const label = (s: EnvSession) => {
+    const model = modelName(s.model);
+    const role = model ? `${s.role} (${model})` : s.role;
+    return s.staging ? `${role} · staging` : s.title ? `${role} · ${s.title}` : role;
+  };
   return (
     <div className="env-sessions" aria-label={`${sessions.inUse.length} of ${sessions.total} Claude sessions in use`}>
       <span className="muted">Claude sessions</span>
@@ -371,6 +387,7 @@ function EnvSheet({ card, onClose, now }: { card: EnvCard; onClose: () => void; 
               <li key={`${n.runId ?? i}`} className={FAILED.has(n.outcome) ? "bad" : ""}>
                 <span className="env-when">
                   {clockWords(n.at, now)} · {n.role}
+                  {modelName(n.model) ? ` (${modelName(n.model)})` : ""}
                   {n.title && n.title !== card.title ? ` on “${n.title}”` : ""} · {outcomeShort(n.outcome)}
                   {n.runId && (
                     <>

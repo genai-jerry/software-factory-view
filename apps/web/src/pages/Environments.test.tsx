@@ -91,6 +91,18 @@ describe("EnvironmentsPage", () => {
     expect(meter).toHaveTextContent("1 waiting for a free session");
   });
 
+  it("says which model a run uses, in words", async () => {
+    const withModel: EnvironmentsView = {
+      ...view,
+      sessions: { ...view.sessions!, inUse: [{ runId: "r40", model: "claude-opus-5-5", role: "Implementer", title: "The status map", staging: false, since: at(12) }, view.sessions!.inUse[1]!] },
+    };
+    show(withModel);
+    const meter = await screen.findByLabelText("2 of 4 Claude sessions in use");
+    expect(within(meter).getByRole("link", { name: "Implementer (Opus 5.5) · The status map" })).toBeTruthy();
+    const { modelName } = await import("./Environments.js");
+    expect([modelName("claude-opus-5-5"), modelName("claude-sonnet-5"), modelName("claude-haiku-4-5-20251001"), modelName("gpt-x"), modelName(null)]).toEqual(["Opus 5.5", "Sonnet 5", "Haiku 4.5", "gpt-x", null]);
+  });
+
   it("draws staging with its order: who is on it now, then who is next", async () => {
     show(view);
     const order = await screen.findByLabelText("Order onto staging");

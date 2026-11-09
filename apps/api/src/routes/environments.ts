@@ -3,6 +3,7 @@ import { and, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import {
+  fetchActiveRuns,
   fetchOrchestratorEnvironments,
   fetchPastRuns,
   orchestratorClock,
@@ -36,6 +37,8 @@ interface IssueRow {
 
 export interface EnvTurn {
   runId: string | null;
+  /** The model the run used ("claude-opus-5-5"), once the orchestrator has recorded it. */
+  model: string | null;
   role: string;
   title: string | null;
   /** running · starting · waiting for a session · waiting (queued for the environment) */
@@ -80,6 +83,7 @@ export interface EnvNote {
   outcome: string;
   summary: string;
   runId: string | null;
+  model: string | null;
   /**
    * The pull requests of this repo merged while the run ran, oldest first: a
    * release run in the staging environment may have assembled an epic
@@ -201,11 +205,16 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     // fell within the run, by the orchestrator's own record of when it ran.
     // A run it no longer lists (older than its newest hundred) gets none.
     const ran = new Map<string, { from: number; to: number }>();
+    // The model each run used, by run id: finished runs from the past list,
+    // live ones from the active list (the orchestrator records it as a run starts).
+    const modelOf = new Map<string, string>();
     for (const r of await fetchPastRuns(deps.cfg)) {
       const from = Date.parse(r.startedAt);
       const to = Date.parse(r.finishedAt);
       if (!Number.isNaN(from) && !Number.isNaN(to)) ran.set(r.id, { from, to });
+      if (r.model) modelOf.set(r.id, r.model);
     }
+    for (const a of (await fetchActiveRuns(deps.cfg)).values()) if (a.model) modelOf.set(a.id, a.model);
     const MERGE_SLACK = 60_000; // the merge's clock and the orchestrator's need not agree to the second
     const mergedDuring = (repo: string, runId: string | null): EnvMerge[] => {
       const w = runId ? ran.get(runId) : undefined;
@@ -250,6 +259,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
         title: titleOf(t.repo || repo, t.issue),
         state: t.state,
         since: orchestratorClock(t.since),
+        model: t.run_id ? (modelOf.get(t.run_id) ?? null) : null,
       };
 
     const card = (e: OrchestratorEnvironment): EnvCard => {
@@ -271,6 +281,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
           outcome: n.outcome ?? "",
           summary: n.summary,
           runId: n.run_id,
+          model: n.run_id ? (modelOf.get(n.run_id) ?? null) : null,
           merged: mergedDuring(e.repo, n.run_id),
         })),
         lastUsedAt: orchestratorClock(e.last_used_at),
@@ -351,6 +362,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
 
     const session = (s: OrchestratorSession) => ({
       runId: s.run_id,
+      model: s.run_id ? (modelOf.get(s.run_id) ?? null) : null,
       role: agentRoleLabel(s.role ?? undefined) ?? (s.role || "Factory"),
       title: s.repo ? titleOf(s.repo, s.issue) : null,
       staging: Boolean(s.environment?.endsWith("@staging")),
@@ -360,7 +372,7 @@ export function registerEnvironmentRoutes(app: FastifyInstance, deps: AppDeps): 
     const sessions = got.sessions && {
       total: got.sessions.total,
       // Every session counts toward the total; only this org's are named.
-      inUse: got.sessions.in_use.map((s) => (mineSession(s) ? session(s) : { runId: null, role: "Another team's run", title: null, staging: false, since: null })),
+      inUse: got.sessions.in_use.map((s) => (mineSession(s) ? session(s) : { runId: null, model: null, role: "Another team's run", title: null, staging: false, since: null })),
       waiting: got.sessions.waiting.filter(mineSession).map(session),
     };
 

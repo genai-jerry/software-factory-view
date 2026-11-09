@@ -288,6 +288,8 @@ export interface ActiveRun {
   /** The orchestrator's role name: implementer, reviewer, qa, release, … */
   role: string;
   startedAt: string;
+  /** The model the run resolved to, once it has (the orchestrator records it as the run starts). */
+  model: string | null;
 }
 
 /**
@@ -301,12 +303,12 @@ export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, A
   const out = new Map<string, ActiveRun>();
   const got = await orchestratorGet(cfg, "/runs?active=true");
   if ("error" in got || !Array.isArray(got.body)) return out;
-  for (const r of got.body as Array<{ id?: string; repo?: string; issue?: number; role?: string; started_at?: string }>) {
+  for (const r of got.body as Array<{ id?: string; repo?: string; issue?: number; role?: string; started_at?: string; model?: string | null }>) {
     if (!r.id || !r.repo || typeof r.issue !== "number") continue;
     const key = `${r.repo}#${r.issue}`;
     const startedAt = orchestratorClock(r.started_at) ?? "";
     const prior = out.get(key);
-    if (!prior || startedAt > prior.startedAt) out.set(key, { id: r.id, role: r.role ?? "", startedAt });
+    if (!prior || startedAt > prior.startedAt) out.set(key, { id: r.id, role: r.role ?? "", startedAt, model: typeof r.model === "string" && r.model ? r.model : null });
   }
   return out;
 }

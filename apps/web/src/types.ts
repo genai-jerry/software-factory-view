@@ -743,6 +743,8 @@ export interface ShapeConversation {
 /** GET /api/environments: where the Claude sessions run. */
 export interface EnvTurn {
   runId: string | null;
+  /** The model the run uses, e.g. "claude-opus-5-5", once the orchestrator has recorded it. */
+  model?: string | null;
   role: string;
   title: string | null;
   /** running · starting · waiting for a session · waiting (queued for the environment) */
@@ -757,6 +759,8 @@ export interface EnvNote {
   outcome: string;
   summary: string;
   runId: string | null;
+  /** The model the run used, e.g. "claude-opus-5-5". */
+  model?: string | null;
   /** The pull requests the run merged, oldest first, each with the branch it went onto. */
   merged?: EnvMerge[];
 }
@@ -807,6 +811,7 @@ export interface EnvLane {
 
 export interface EnvSession {
   runId: string | null;
+  model?: string | null;
   role: string;
   title: string | null;
   staging: boolean;
