@@ -529,3 +529,64 @@ describe("Shape answers in the background", () => {
     expect(String(v.conversation.specError)).toContain("interrupted");
   });
 });
+
+describe("Shape about a new product", () => {
+  it("runs with no repository, writes the requirement from scratch, and opens where the person picks", async () => {
+    const d = deps.dbh.db;
+    await d.update(repos).set({ factoryEnabled: true }).where(eq(repos.id, id.repo!));
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { newProduct: true } });
+    expect(created.statusCode).toBe(200);
+    const convId = (created.json() as { id: string }).id;
+    const got = (await view(convId)) as { conversation: { scope: string; repo: string | null; repoId: string | null; homes: Array<{ fullName: string }> } };
+    expect(got.conversation).toMatchObject({ scope: "new", repo: null, repoId: null });
+    expect(got.conversation.homes.map((h) => h.fullName)).toContain("acme/app");
+    const listed = (await app.inject({ method: "GET", url: "/api/shape", headers: { cookie: jerryCookie } })).json() as { conversations: Array<{ id: string; scope: string; repo: string | null }> };
+    expect(listed.conversations.find((c) => c.id === convId)).toMatchObject({ scope: "new", repo: null });
+
+    let calls = stubNetwork("A camera translator: point, read, translate.");
+    await say(convId, { text: "A mobile app that translates Malayalam text from the camera" });
+    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(ask.body).not.toHaveProperty("owner");
+    expect(ask.body).not.toHaveProperty("repo");
+    expect(ask.body).not.toHaveProperty("repos");
+    expect(String(ask.body!.context)).toContain("A new product: there is no repository and no code yet.");
+    expect(String(ask.body!.instructions)).toContain("organisation's tools");
+    expect(String(ask.body!.instructions)).not.toContain("never reach the network");
+
+    calls = stubNetwork("## What should be built?\nA camera translator.");
+    await writeSpec(convId);
+    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(specAsk.body).not.toHaveProperty("repo");
+    expect(String(specAsk.body!.context)).toContain("a new repository is needed");
+
+    const nowhere = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Camera translator" } });
+    expect(nowhere.statusCode).toBe(400);
+    expect(nowhere.json().error).toMatch(/pick the repository/);
+    calls = stubNetwork("");
+    const opened = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Camera translator", repoId: id.repo } });
+    expect(opened.statusCode).toBe(200);
+    expect(calls.some((c) => c.url.endsWith("/repos/acme/app/issues"))).toBe(true);
+    expect(((await view(convId)) as { conversation: { scope: string; repo: string } }).conversation).toMatchObject({ scope: "repo", repo: "acme/app" });
+  });
+
+  it("turns an idea started under a product into a new product, keeping the talk and dropping the session", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    const convId = (created.json() as { id: string }).id;
+    let calls = stubNetwork("The leads page lives in app.", { session: "sess-code" });
+    await say(convId, { text: "A translator app" });
+    expect(calls.find((c) => c.url === `${ORCH}/ask`)!.body).toMatchObject({ owner: "acme", repo: "app" });
+
+    const switched = await app.inject({ method: "POST", url: `/api/shape/${convId}/new-product`, headers: headers(jerryCookie), payload: {} });
+    expect(switched.statusCode).toBe(200);
+    calls = stubNetwork("From scratch, then.");
+    await say(convId, { text: "This is independent of acme" });
+    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(ask.body).not.toHaveProperty("session");
+    expect(ask.body).not.toHaveProperty("repo");
+    // Cold start: the earlier turns come along in the context.
+    expect(String(ask.body!.context)).toContain("Person: A translator app");
+    expect(((await view(convId)) as { messages: unknown[] }).messages).toHaveLength(4);
+
+    expect((await app.inject({ method: "POST", url: `/api/shape/${convId}/new-product`, headers: headers("console_session=sess-other"), payload: {} })).statusCode).toBe(404);
+  });
+});

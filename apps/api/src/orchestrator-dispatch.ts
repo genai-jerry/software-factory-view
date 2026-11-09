@@ -319,8 +319,9 @@ export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, A
 export async function askOrchestrator(
   cfg: ConsoleConfig,
   body: {
-    owner: string;
-    repo: string;
+    /** Both, or neither for Shape about a new product (no repository yet). */
+    owner?: string;
+    repo?: string;
     question: string;
     context: string;
     branch?: string;
@@ -350,8 +351,7 @@ export async function askOrchestrator(
       method: "POST",
       headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
       body: JSON.stringify({
-        owner: body.owner,
-        repo: body.repo,
+        ...(body.owner && body.repo ? { owner: body.owner, repo: body.repo } : {}),
         question: body.question,
         context: body.context,
         ...(body.branch ? { branch: body.branch } : {}),

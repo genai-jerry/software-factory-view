@@ -326,3 +326,43 @@ describe("ShapePage answers in the background", () => {
     expect(screen.queryByText(/Writing the requirement…/)).toBeNull();
   }, 10_000);
 });
+
+describe("ShapePage for a new product", () => {
+  it("offers something new, and starts it with no repository", async () => {
+    vi.mocked(api.post).mockResolvedValue({ id: "c9" });
+    renderAt("/shape");
+    await userEvent.selectOptions(await screen.findByLabelText("Which product"), "Something new (no repository yet)");
+    expect(screen.getByText(/Claude reads no code/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "New idea" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { newProduct: true }));
+  });
+
+  it("turns an idea about Beacon into a new product", async () => {
+    vi.mocked(api.post).mockResolvedValue({ scope: "new" });
+    renderAt("/shape/c1");
+    await userEvent.click(await screen.findByRole("button", { name: /Not about beacon-web\? Treat it as a new product/ }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/new-product", {}));
+  });
+
+  it("shows a new product as such, and makes the person pick where the work opens", async () => {
+    const fresh: ShapeConversation = {
+      conversation: { ...conversation.conversation, scope: "new", repo: null, repoId: null, spec: "## What should be built?\nA translator.", homes: [{ id: "r1", fullName: "genai-jerry/beacon-web" }] },
+      messages: conversation.messages,
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [{ ...summaries[0]!, scope: "new", repo: null, repoId: null }] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return fresh;
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ number: 1, htmlUrl: "https://github.com/genai-jerry/beacon-web/issues/1" });
+    renderAt("/shape/c1");
+    expect(await screen.findByText(/shaped from scratch/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Treat it as a new product/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open as work" }));
+    expect(screen.getByText(/A new product usually gets its own repository/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: false, repoId: "r1" }));
+  });
+});

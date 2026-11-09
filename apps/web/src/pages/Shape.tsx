@@ -74,6 +74,18 @@ function ProjectChip({ name }: { name: string }) {
   );
 }
 
+/** The chip for a new product: no repository yet. */
+function NewProductChip() {
+  return (
+    <span className="repo-chip" title="A new product: no repository, no code yet">
+      <span className="repo-dot" />
+      New product
+    </span>
+  );
+}
+
+const NEW_PRODUCT = "new";
+
 /**
  * What the "Which product" select offers: each project's repositories, led
  * by "All of <project>" when the project has more than one, so an idea can
@@ -92,6 +104,7 @@ function targetOptions(enabled: Target[]): Array<{ value: string; label: string 
     for (const t of g.repos) out.push({ value: t.id, label: shortRepo(t.fullName) });
   }
   for (const t of loose) out.push({ value: t.id, label: shortRepo(t.fullName) });
+  out.push({ value: NEW_PRODUCT, label: "Something new (no repository yet)" });
   return out;
 }
 
@@ -120,12 +133,16 @@ export function ShapePage() {
     options[0]?.value ||
     "";
   const spanning = chosen.startsWith("project:");
+  const fresh = chosen === NEW_PRODUCT;
   const epics = openEpics(board.data?.cards ?? []);
   const chosenEpic = epicId || epics[0]?.epicId || "";
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<{ id: string }>("/api/shape", start === "epic" ? { epicId: chosenEpic } : spanning ? { projectId: chosen.slice("project:".length) } : { repoId: chosen }),
+      api.post<{ id: string }>(
+        "/api/shape",
+        start === "epic" ? { epicId: chosenEpic } : fresh ? { newProduct: true } : spanning ? { projectId: chosen.slice("project:".length) } : { repoId: chosen },
+      ),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["shape"] });
       navigate(`/shape/${r.id}`);
@@ -155,10 +172,6 @@ export function ShapePage() {
             </label>
             {targets.isLoading ? (
               <p className="muted">Reading the projects…</p>
-            ) : enabled.length === 0 ? (
-              <p className="muted">
-                No repository is set up for the factory yet. <Link to="/onboarding">Finish setup on Onboarding</Link>.
-              </p>
             ) : (
               <select id="shape-repo" value={chosen} onChange={(e) => setRepoId(e.target.value)}>
                 {options.map((o) => (
@@ -169,7 +182,11 @@ export function ShapePage() {
               </select>
             )}
             <p className="muted shape-hint">
-              {spanning ? "The idea can span every repository in the project. You pick where the work opens." : "Runs against the latest main of every repository in the project."}
+              {fresh
+                ? "Starts from a blank page: Claude reads no code. When it is ready, you pick the repository the work opens in."
+                : spanning
+                  ? "The idea can span every repository in the project. You pick where the work opens."
+                  : "Runs against the latest main of every repository in the project."}
             </p>
           </>
         ) : (
@@ -209,7 +226,7 @@ export function ShapePage() {
                   <span className="shape-conv-title">{c.title}</span>
                   {c.epic && <span className="shape-conv-epic muted">About {c.epic.title}</span>}
                   <span className="shape-conv-meta">
-                    {c.scope === "project" && !c.epic ? <ProjectChip name={c.projectName ?? "the project"} /> : <RepoChip fullName={c.repo} />}
+                    {c.scope === "new" || !c.repo ? <NewProductChip /> : c.scope === "project" && !c.epic ? <ProjectChip name={c.projectName ?? "the project"} /> : <RepoChip fullName={c.repo} />}
                     {c.issueUrl ? <span className="stage-chip done">opened</span> : c.hasSpec ? <span className="stage-chip decide">spec</span> : null}
                   </span>
                 </Link>
@@ -279,6 +296,12 @@ function Conversation({ id }: { id: string }) {
     onSuccess: refresh,
   });
 
+  // "Not about this product": the idea becomes a new product; the next answer starts cold, without the code.
+  const goNew = useMutation({
+    mutationFn: () => api.post(`/api/shape/${id}/new-product`, {}),
+    onSuccess: refresh,
+  });
+
   const writeSpec = useMutation({
     mutationFn: () => api.post<{ specStatus: string }>(`/api/shape/${id}/spec`),
     onSuccess: () => {
@@ -344,6 +367,9 @@ function Conversation({ id }: { id: string }) {
   const composerBusy = send.isPending || answering;
   // Spanning the project until it becomes an epic, which lives in one repository.
   const acrossProject = conversation.scope === "project" && !conversation.epic;
+  const newProduct = conversation.scope === "new" || !conversation.repo;
+  const canGoNew = !newProduct && !conversation.epic && !conversation.issueUrl && opened === null;
+  const where = acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo ?? "");
 
   return (
     <div className="shape-conv">
@@ -354,17 +380,28 @@ function Conversation({ id }: { id: string }) {
           </p>
           <h1>{conversation.title}</h1>
           <p className="muted">
-            {acrossProject ? <ProjectChip name={conversation.project?.name ?? "the project"} /> : <RepoChip fullName={conversation.repo} />}
-            {conversation.epic ? (
+            {newProduct ? <NewProductChip /> : acrossProject ? <ProjectChip name={conversation.project?.name ?? "the project"} /> : <RepoChip fullName={conversation.repo!} />}
+            {newProduct ? (
+              <> · shaped from scratch — Claude reads no code</>
+            ) : conversation.epic ? (
               <>
                 {" · "}About <Link to={`/work/${conversation.epic.id}`}>{conversation.epic.title}</Link> · reads its branch and documents
               </>
             ) : acrossProject ? (
               <> · reads the latest main of every repository in {conversation.project?.name ?? "the project"}</>
             ) : (
-              <> · reads the latest main of {shortRepo(conversation.repo)} and the project's other repositories</>
+              <> · reads the latest main of {shortRepo(conversation.repo!)} and the project's other repositories</>
+            )}
+            {canGoNew && (
+              <>
+                {" · "}
+                <button type="button" className="link-button" disabled={goNew.isPending} onClick={() => goNew.mutate()}>
+                  Not about {where}? Treat it as a new product
+                </button>
+              </>
             )}
           </p>
+          {goNew.isError && <p className="decision-failure">{failureText(goNew.error)}</p>}
         </div>
         <div className="shape-actions">
           <button
@@ -395,7 +432,9 @@ function Conversation({ id }: { id: string }) {
                 <p className="muted">
                   {conversation.epic
                     ? `Ask anything about ${conversation.epic.title}, or paste a screenshot. Some ways to start:`
-                    : `Ask anything about ${acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo)}, or paste a screenshot. Some ways to start:`}
+                    : newProduct
+                      ? "Describe the product: who it is for, what they do with it, and anything you already know it needs. Paste a sketch if you have one."
+                      : `Ask anything about ${where}, or paste a screenshot. Some ways to start:`}
                 </p>
                 <div className="shape-chips">
                   {(conversation.epic ? EPIC_SUGGESTIONS : SUGGESTIONS).map((s) => (
@@ -505,8 +544,9 @@ function Conversation({ id }: { id: string }) {
           <OpenAsWork
             id={id}
             defaultTitle={conversation.title}
-            homes={acrossProject ? (conversation.project?.repos ?? []) : []}
-            defaultRepoId={conversation.repoId}
+            homes={newProduct ? (conversation.homes ?? []) : acrossProject ? (conversation.project?.repos ?? []) : []}
+            newProduct={newProduct}
+            defaultRepoId={conversation.repoId ?? conversation.homes?.[0]?.id ?? ""}
             onCancel={() => setOpening(false)}
             onDone={(r) => {
               setOpening(false);
@@ -756,6 +796,7 @@ function OpenAsWork({
   id,
   defaultTitle,
   homes,
+  newProduct = false,
   defaultRepoId,
   onCancel,
   onDone,
@@ -764,6 +805,8 @@ function OpenAsWork({
   defaultTitle: string;
   /** For an idea that spans the project: the repositories the work may open in. Empty when the idea is about one. */
   homes: Array<{ id: string; fullName: string }>;
+  /** A new product: no home yet, so the person must pick one. */
+  newProduct?: boolean;
   defaultRepoId: string;
   onCancel: () => void;
   onDone: (r: { title: string; htmlUrl: string; epicId?: string }) => void;
@@ -792,14 +835,27 @@ function OpenAsWork({
               </option>
             ))}
           </select>
-          <p className="muted shape-hint">The epic lives in this repository. Work in the others is planned from there.</p>
+          <p className="muted shape-hint">
+            {newProduct ? (
+              <>
+                A new product usually gets its own repository: create it on GitHub and connect it on <Link to="/onboarding">Onboarding</Link>, then pick it here.
+              </>
+            ) : (
+              "The epic lives in this repository. Work in the others is planned from there."
+            )}
+          </p>
         </>
+      )}
+      {newProduct && homes.length === 0 && (
+        <p className="muted shape-hint">
+          No repository is set up for the factory yet. Create one on GitHub and connect it on <Link to="/onboarding">Onboarding</Link> first.
+        </p>
       )}
       <label className="shape-fast">
         <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} /> Fast lane: the factory approves the plan and the design itself. You still release it.
       </label>
       <div className="decision-actions">
-        <button type="button" className="primary" disabled={!title.trim() || open.isPending} onClick={() => open.mutate()}>
+        <button type="button" className="primary" disabled={!title.trim() || open.isPending || (newProduct && !repoId)} onClick={() => open.mutate()}>
           {open.isPending ? "Opening…" : "Open it"}
         </button>
         <button type="button" className="secondary" onClick={onCancel} disabled={open.isPending}>
