@@ -73,6 +73,11 @@ class FakeGitHub implements OpenspecRepoClient {
     this.merged.push(n);
     return { sha: "m", merged: true };
   }
+
+  forwarded: Array<[string, string]> = [];
+  async fastForward(_o: string, _r: string, branch: string, sha: string) {
+    this.forwarded.push([branch, sha]);
+  }
 }
 
 const scaffold = async (dir: string) => {
@@ -120,7 +125,13 @@ describe("runOpenspecInit", () => {
     const gh = new FakeGitHub();
     await runOpenspecInit(db, cfg, auth, { repoId, autoMerge: true }, { scaffold, client: gh });
     expect(gh.merged).toEqual([1]);
+    expect(gh.forwarded).toEqual([]); // no staging branch in this repo: nothing to bring level
     expect((await stepRow())?.detail).toMatchObject({ prNumber: 1, merged: true });
+
+    const withStaging = new FakeGitHub();
+    withStaging.branches.set("staging", new Map());
+    await runOpenspecInit(db, cfg, auth, { repoId, autoMerge: true, stagingBranch: "staging" }, { scaffold, client: withStaging });
+    expect(withStaging.forwarded).toEqual([["staging", "head-main"]]);
 
     const other = new FakeGitHub();
     await runOpenspecInit(db, cfg, auth, { repoId }, { scaffold, client: other });

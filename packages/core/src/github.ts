@@ -664,6 +664,11 @@ export class InstallationClient extends RepoReader {
     await this.req("POST", `/repos/${owner}/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: fromSha });
   }
 
+  /** Move a branch forward to `sha`; GitHub refuses (422) anything that is not a fast-forward. */
+  async fastForward(owner: string, repo: string, branch: string, sha: string): Promise<void> {
+    await this.req("PATCH", `/repos/${owner}/${repo}/git/refs/heads/${encodePath(branch)}`, { sha, force: false });
+  }
+
   /** Merge a PR as the App: only for one Compass opened on a repository it just created (the OpenSpec scaffold). */
   async mergePull(
     owner: string,

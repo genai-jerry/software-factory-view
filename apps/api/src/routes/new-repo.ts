@@ -199,7 +199,7 @@ export function registerNewRepoRoutes(app: FastifyInstance, deps: AppDeps): void
     }
     // OpenSpec's scaffold comes from its own CLI; the worker opens that PR.
     // Merged as soon as it opens: a repository Compass just made has nothing in it to review.
-    await deps.openspecQueue.add("init", { repoId: repoRow.id, autoMerge: true }, { removeOnComplete: 100, removeOnFail: 100 }).catch(() => undefined);
+    await deps.openspecQueue.add("init", { repoId: repoRow.id, autoMerge: true, stagingBranch: org.stagingBranch ?? "staging" }, { removeOnComplete: 100, removeOnFail: 100 }).catch(() => undefined);
     await db.insert(auditLog).values({
       orgId: org.id,
       actorUserId: ctx.userId,
