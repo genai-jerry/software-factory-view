@@ -195,6 +195,14 @@ describe("BuildBoard", () => {
     expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on another task"]);
   });
 
+  it("says a merged task's release is still running, rather than Done", () => {
+    const merging = task({ id: "m", number: 8, title: "task(34): bring the loaders into one", state: "factory:on-epic", running: true, runningRole: "release", runId: "run-7" });
+    expect(taskWord(merging)).toEqual({ word: "merging", text: "Merged · release running" });
+    expect(taskWord({ ...merging, running: false })).toEqual({ word: "done", text: "Done" });
+    renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, [merging])} />);
+    expect(screen.getByRole("link", { name: /Merged · release running/ })).toHaveAttribute("href", "/runs/run-7");
+  });
+
   it("links a task's chip to its live run, and leaves the others as plain words", () => {
     const writing = task({ id: "w", number: 8, title: "task(34): bring the two test data loaders into one", state: "factory:in-progress", running: true, runningRole: "implementer", runId: "run-42" });
     const quiet = task({ id: "q", number: 9, title: "task(34): no run yet", state: "factory:in-progress" });
