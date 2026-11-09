@@ -68,7 +68,7 @@
   ],
   "deploy": {
     "health_checks": [
-      "curl -fsS \"${PUBLIC_ORIGIN:-https://sf.genaipeople.com}/api/health\"   # expects {\"ok\":true,\"service\":\"console-api\"} — the route is registered in apps/api/src/app.ts. The authoritative origin is the PUBLIC_ORIGIN variable on the `production` GitHub Environment; the fallback here is the value documented in deploy.yml and the README, not one this run could confirm against a live host.",
+      "curl -fsS \"${PUBLIC_ORIGIN:-https://compass.genaipeople.com}/api/health\"   # expects {\"ok\":true,\"service\":\"console-api\"} — the route is registered in apps/api/src/app.ts. The authoritative origin is the PUBLIC_ORIGIN variable on the `production` GitHub Environment; the fallback here is the value documented in deploy.yml and the README, not one this run could confirm against a live host.",
       "ssh $DEPLOY_USER@$DEPLOY_HOST 'docker inspect -f \"{{.State.Health.Status}}\" factory-console-api-1'   # expects: healthy",
       "ssh $DEPLOY_USER@$DEPLOY_HOST 'cd ~/factory-console && docker compose ps'   # every service up; postgres and redis report healthy"
     ],
