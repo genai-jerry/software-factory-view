@@ -430,4 +430,40 @@ describe("ShapePage for a new product", () => {
       focusState.project = "";
     }
   });
+
+  it("shows Claude's proposed repository as a card, and creates it only when the person confirms", async () => {
+    const proposing: ShapeConversation = {
+      conversation: { ...conversation.conversation, title: "Lens", orgId: "o1", scope: "new", repo: null, repoId: null, homes: [] },
+      messages: [
+        conversation.messages[0]!,
+        {
+          ...conversation.messages[1]!,
+          mocks: [],
+          bodyHtml: "<p>Proposed a repository.</p>",
+          repoProposal: { name: "lens", description: "Camera translator", private: true, project: "new" },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return proposing;
+      if (path === "/api/orgs/o1/repo-homes") return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }] };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) =>
+      path === "/api/orgs/o1/repos" ? { repoId: "r9", fullName: "genai-jerry/lens", htmlUrl: "https://github.com/genai-jerry/lens", setUp: true } : { repoId: "r9", repo: "genai-jerry/lens" },
+    );
+    renderAt("/shape/c1");
+    const card = await screen.findByRole("region", { name: "Proposed repository" });
+    expect(await within(card).findByLabelText("Repository name")).toHaveValue("lens");
+    expect(within(card).getByLabelText("Project")).toHaveValue(""); // "new": a project of its own
+    expect(api.post).not.toHaveBeenCalled();
+    await userEvent.click(within(card).getByRole("button", { name: "Create it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ name: "lens", description: "Camera translator", private: true })));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/repo", { repoId: "r9" }));
+    expect(await screen.findByText(/The idea now lives there/)).toBeInTheDocument();
+  });
 });
+

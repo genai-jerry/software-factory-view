@@ -107,10 +107,40 @@ export async function settleStale(db: Db, conversationId?: string): Promise<void
  * diagram in the markdown would send it through the factory-comment renderer,
  * which flattens a flowchart into a list of chains for phone readers.
  */
-export function splitMocks(body: string): { text: string; mocks: Array<{ html: string }>; diagrams: Array<{ code: string }> } {
+export interface RepoProposal {
+  name: string;
+  description: string;
+  private: boolean;
+  /** "new", or the name of an existing project. */
+  project: string;
+}
+
+/** A ```create-repository block (SHAPE_INSTRUCTIONS): JSON, checked; anything else is no proposal. */
+export function readRepoProposal(raw: string): RepoProposal | null {
+  try {
+    const j = JSON.parse(raw) as Record<string, unknown>;
+    const name = typeof j.name === "string" ? j.name.trim() : "";
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(name)) return null;
+    return {
+      name,
+      description: typeof j.description === "string" ? j.description.trim().slice(0, 300) : "",
+      private: j.private !== false,
+      project: typeof j.project === "string" && j.project.trim() ? j.project.trim().slice(0, 80) : "new",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function splitMocks(body: string): { text: string; mocks: Array<{ html: string }>; diagrams: Array<{ code: string }>; repoProposal: RepoProposal | null } {
   const mocks: Array<{ html: string }> = [];
   const diagrams: Array<{ code: string }> = [];
+  let repoProposal: RepoProposal | null = null;
   const text = body
+    .replace(/```create-repository[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
+      repoProposal = readRepoProposal(inner) ?? repoProposal;
+      return "*(The proposed repository is below — check it, then Create it.)*";
+    })
     .replace(/```html[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
       mocks.push({ html: inner.slice(0, MAX_MOCK_CHARS) });
       return `*(Mock ${mocks.length} — shown below.)*`;
@@ -119,7 +149,7 @@ export function splitMocks(body: string): { text: string; mocks: Array<{ html: s
       diagrams.push({ code: inner.trim().slice(0, MAX_DIAGRAM_CHARS) });
       return `*(Diagram ${diagrams.length} — shown below.)*`;
     });
-  return { text: text.trim(), mocks, diagrams };
+  return { text: text.trim(), mocks, diagrams, repoProposal };
 }
 
 function firstLine(text: string): string {
@@ -128,7 +158,7 @@ function firstLine(text: string): string {
 }
 
 function messageDto(m: Message) {
-  const { text, mocks, diagrams } = m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [], diagrams: [] };
+  const { text, mocks, diagrams, repoProposal } = m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [], diagrams: [], repoProposal: null };
   return {
     id: m.id,
     role: m.role,
@@ -136,6 +166,7 @@ function messageDto(m: Message) {
     bodyHtml: renderMarkdown(text),
     mocks,
     diagrams,
+    repoProposal,
     attachments: (m.attachments ?? []).map((a) => ({ ...a, url: `/api/shape/attachments/${a.id}` })),
     status: m.status,
     error: m.error,
@@ -690,6 +721,26 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
    * new product. The Claude session is dropped so the next message starts
    * cold, without the code it read; the conversation so far is kept.
    */
+  /**
+   * The repository a new product now lives in (made from Claude's proposal
+   * card): the idea moves into it. The Claude session is dropped so the next
+   * answer starts in a checkout of the new repository.
+   */
+  app.post<{ Params: { id: string }; Body: { repoId?: string } }>("/api/shape/:id/repo", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const conv = await own(ctx, req.params.id, reply);
+    if (!conv) return;
+    if (conv.scope !== "new") return reply.code(409).send({ error: "this idea already has a repository" });
+    const pick = (await orgRepos(conv.orgId)).find((r) => r.id === req.body?.repoId);
+    if (!pick) return reply.code(400).send({ error: "that repository is not set up for the factory" });
+    await db
+      .update(shapeConversations)
+      .set({ scope: "repo", repoId: pick.id, askSession: null, askSessionAt: null, updatedAt: new Date() })
+      .where(eq(shapeConversations.id, conv.id));
+    return { repoId: pick.id, repo: pick.fullName };
+  });
+
   app.post<{ Params: { id: string } }>("/api/shape/:id/new-product", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
