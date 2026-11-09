@@ -21,6 +21,7 @@ import { registerShapeRoutes } from "./routes/shape.js";
 import { registerEstateRoutes } from "./routes/estates.js";
 import { registerSetupRoutes } from "./setup.js";
 import { registerTelegramRoutes } from "./telegram/index.js";
+import { registerToolRoutes } from "./routes/tools.js";
 import type { AppDeps } from "./context.js";
 import { SignInRequiredError } from "./user-token.js";
 
@@ -91,6 +92,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerActivityRoutes(app, deps);
   registerShapeRoutes(app, deps);
   registerTelegramRoutes(app, deps);
+  registerToolRoutes(app, deps);
 
   return app;
 }

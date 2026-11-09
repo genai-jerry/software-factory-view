@@ -91,6 +91,7 @@ export function Shell({
             <PrimaryLinks inboxCount={inboxCount} />
             <div className="sidenav-foot">
               <NavLink to="/telegram">Telegram</NavLink>
+              <NavLink to="/tools">Tools</NavLink>
               {showSettings && (
                 <NavLink to="/settings">{setup?.canEditApp && !me.orgs.some((o) => isOrgAdminRole(o.role)) ? "GitHub App" : "Settings"}</NavLink>
               )}
@@ -230,6 +231,9 @@ function MoreMenu({
       <EngineerLinks onNavigate={onNavigate} />
       <NavLink to="/telegram" onClick={onNavigate}>
         Telegram
+      </NavLink>
+      <NavLink to="/tools" onClick={onNavigate}>
+        Tools
       </NavLink>
       {showSettings && setup?.canEditApp && (
         <NavLink to="/settings" onClick={onNavigate}>

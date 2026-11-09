@@ -10,6 +10,7 @@ import { MissionControl } from "./pages/MissionControl.js";
 import { WorkPage } from "./pages/Work.js";
 import { DecisionsQueuePage } from "./pages/DecisionsQueue.js";
 import { TelegramPage } from "./pages/Telegram.js";
+import { ToolsPage } from "./pages/Tools.js";
 import { WorkItemPage } from "./pages/WorkItem.js";
 import { NewWorkPage } from "./pages/NewWork.js";
 import { ActivityPage } from "./pages/Activity.js";
@@ -133,6 +134,7 @@ export function App() {
         <Route path="/blocked" element={<BlockedPage />} />
         <Route path="/decisions" element={<DecisionsQueuePage />} />
         <Route path="/telegram" element={<TelegramPage />} />
+        <Route path="/tools" element={<ToolsPage me={user!} />} />
         <Route path="/decision-log" element={<DecisionsPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/runs/:runId" element={<OrchestratorRunPage />} />
