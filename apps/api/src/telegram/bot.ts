@@ -422,13 +422,16 @@ async function turn(env: BotEnv, link: Link, conv: Conversation, text: string): 
   if (!proposed) return;
 
   // A decision: draft the record of the discussion too, so the person confirms both texts.
-  const sum = await typingWhile(env, link.chatId, ask(deps, withAnswer, "Summarise this discussion for the issue record.", SUMMARY_INSTRUCTIONS));
-  if (!sum.ok) {
-    await say(env, withAnswer, `I could not write the summary (${esc(sum.error)}), so nothing can be posted yet. Say “try again”.`);
+  // Fresh, so the summary instructions apply; the discussion keeps its own session.
+  const sum = await typingWhile(env, link.chatId, ask(deps, withAnswer, "Summarise this discussion for the issue record.", SUMMARY_INSTRUCTIONS, { fresh: true }));
+  const summary = sum.ok ? splitProposal(sum.answer).text : "";
+  if (!summary) {
+    // Never offer "Post it" without the record it posts first.
+    const why = sum.ok ? "it came back empty" : esc(sum.error);
+    await say(env, withAnswer, `I could not write the discussion summary (${why}), so nothing can be posted yet. Say “try again”.`);
     return;
   }
-  const summary = splitProposal(sum.answer).text;
-  await touch(env, conv.id, { status: "drafted", draft: proposed, summary, ...(sum.session ? { session: sum.session } : {}) });
+  await touch(env, conv.id, { status: "drafted", draft: proposed, summary });
   await showDraft(env, withAnswer, login, summary, proposed);
 }
 
@@ -451,8 +454,12 @@ async function showDraft(env: BotEnv, conv: Conversation, login: string, summary
 
 async function postDecision(env: BotEnv, link: Link, conv: Conversation, at: number): Promise<void> {
   const { deps, tg } = env;
-  if (conv.status !== "drafted" || !conv.draft || !conv.summary) {
-    await tg.editMessage(link.chatId, at, "There is no drafted comment to post. Tell me what you decided.", []);
+  if (conv.status !== "drafted" || !conv.draft) {
+    await tg.editMessage(link.chatId, at, "This draft was replaced by a newer one, so nothing was posted. Use the buttons on the latest draft, or tell me what you decided.", []);
+    return;
+  }
+  if (!conv.summary) {
+    await tg.editMessage(link.chatId, at, "The discussion summary is missing, so nothing was posted. Say “try again” and I will redraft both.", []);
     return;
   }
   const { n } = await decisionLine(env, conv);
@@ -522,8 +529,8 @@ async function endConversation(env: BotEnv, link: Link, conv: Conversation, stat
   const { deps } = env;
   let note = status === "expired" ? "Closed after a day without replies." : "Cancelled — no decision was posted.";
   if (hasExchange(conv) && !conv.summaryCommentId) {
-    const sum = await ask(deps, conv, "Summarise this discussion for the issue record. Nothing was decided.", SUMMARY_INSTRUCTIONS);
-    if (sum.ok) {
+    const sum = await ask(deps, conv, "Summarise this discussion for the issue record. Nothing was decided.", SUMMARY_INSTRUCTIONS, { fresh: true });
+    if (sum.ok && splitProposal(sum.answer).text) {
       try {
         await postRecord(deps, conv.issueId, recordBody(await loginOf(deps, link.userId), splitProposal(sum.answer).text, false));
         note += " The discussion summary is on the issue.";

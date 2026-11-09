@@ -118,6 +118,24 @@ services:
       - traefik.http.routers.factory-console-http.entrypoints=web
       - traefik.http.routers.factory-console-http.middlewares=factory-console-https
       - traefik.http.middlewares.factory-console-https.redirectscheme.scheme=https
+      # Old hostname (LEGACY_CONSOLE_HOST, e.g. sf.genaipeople.com) keeps a
+      # certificate and redirects every path to https://${CONSOLE_HOST}.
+      # 302, not 301, so browsers do not cache it while the move settles.
+      # Machine callers that do not follow redirects (GitHub webhooks, OAuth
+      # callbacks) must be pointed at CONSOLE_HOST directly.
+      - traefik.http.routers.factory-console-legacy.priority=100
+      - traefik.http.routers.factory-console-legacy.rule=Host(`${LEGACY_CONSOLE_HOST}`)
+      - traefik.http.routers.factory-console-legacy.entrypoints=websecure
+      - traefik.http.routers.factory-console-legacy.tls=true
+      - traefik.http.routers.factory-console-legacy.tls.certresolver=letsencrypt
+      - traefik.http.routers.factory-console-legacy.middlewares=factory-console-moved
+      - traefik.http.routers.factory-console-legacy-http.priority=100
+      - traefik.http.routers.factory-console-legacy-http.rule=Host(`${LEGACY_CONSOLE_HOST}`)
+      - traefik.http.routers.factory-console-legacy-http.entrypoints=web
+      - traefik.http.routers.factory-console-legacy-http.middlewares=factory-console-moved
+      - traefik.http.middlewares.factory-console-moved.redirectregex.regex=^https?://[^/]+(.*)
+      - traefik.http.middlewares.factory-console-moved.redirectregex.replacement=https://${CONSOLE_HOST}$${1}
+      - traefik.http.middlewares.factory-console-moved.redirectregex.permanent=false
     networks:
       - default
       - lighthouse-network

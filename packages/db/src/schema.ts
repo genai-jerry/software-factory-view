@@ -627,9 +627,9 @@ export const shapeConversations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     userId: uuid("user_id").notNull(),
-    /** The home repository: the session's working directory, and where the issue opens. */
-    repoId: uuid("repo_id").notNull().references(() => repos.id, { onDelete: "cascade" }),
-    /** `repo`: about one repository. `project`: spans every factory-enabled repository of the home repo's project. */
+    /** The home repository: the session's working directory, and where the issue opens. Null for a new product (scope `new`) until it is opened as work. */
+    repoId: uuid("repo_id").references(() => repos.id, { onDelete: "cascade" }),
+    /** `repo`: about one repository. `project`: spans every factory-enabled repository of the home repo's project. `new`: a new product with no repository; Claude reads no code. */
     scope: text("scope").notNull().default("repo"),
     title: text("title").notNull(),
     spec: text("spec"),
@@ -776,3 +776,46 @@ export const telegramLinkNonces = pgTable("telegram_link_nonces", {
   nonce: text("nonce").primaryKey(),
   usedAt: timestamp("used_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** One tool a server offers, as Compass last listed it, and whether sessions may use it. */
+export interface McpTool {
+  name: string;
+  title?: string;
+  description?: string;
+  readOnly: boolean;
+  allowed: boolean;
+}
+
+/**
+ * Compass → Tools: a remote MCP server an org gives its Claude sessions
+ * (Shape, Ask, builds). The orchestrator reads this table directly, like
+ * orchestrator_secrets; headers are sealed with CONSOLE_MASTER_KEY.
+ */
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    /** Short id Claude sees in `mcp__<name>__<tool>`: [a-z][a-z0-9_]*. */
+    name: text("name").notNull(),
+    label: text("label").notNull(),
+    transport: text("transport").$type<"http" | "sse">().notNull().default("http"),
+    url: text("url").notNull(),
+    /** Sealed JSON object of request headers (API keys); never sent to the browser. */
+    encryptedHeaders: text("encrypted_headers"),
+    headerNames: jsonb("header_names").$type<string[]>().notNull().default([]),
+    tools: jsonb("tools").$type<McpTool[]>().notNull().default([]),
+    useShape: boolean("use_shape").notNull().default(true),
+    useAsk: boolean("use_ask").notNull().default(true),
+    useBuild: boolean("use_build").notNull().default(true),
+    enabled: boolean("enabled").notNull().default(true),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    checkError: text("check_error"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mcp_servers_org_name").on(t.orgId, t.name)],
+);

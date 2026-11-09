@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { InstallationClient } from "@console/core";
 import { comments, estates, issues, repos, telegramConversations } from "@console/db";
 import { eq } from "drizzle-orm";
@@ -95,8 +96,16 @@ function transcript(messages: Msg[]): string {
 
 export type TurnResult = { ok: true; answer: string; session?: string } | { ok: false; error: string };
 
-/** One Claude turn on the conversation, resuming its session when there is one. */
-export async function ask(deps: AppDeps, conv: Conversation, question: string, instructions: string): Promise<TurnResult> {
+/**
+ * One Claude turn on the conversation, resuming its session when there is one.
+ *
+ * `fresh` starts a new session instead. A resumed session is sent the question
+ * alone — the orchestrator drops new instructions — so a turn that needs its
+ * own instructions (the summary) must not resume the discussion's session, or
+ * Claude keeps following the discussion's rules and answers with a proposed
+ * comment only. The transcript goes in `context`, so nothing is lost.
+ */
+export async function ask(deps: AppDeps, conv: Conversation, question: string, instructions: string, opts: { fresh?: boolean } = {}): Promise<TurnResult> {
   const home = await issueHome(deps, conv.issueId);
   if (!home) return { ok: false, error: "the issue is no longer in Compass" };
   const secrets = await readRetainedAgentSecrets(deps, home.issue.orgId);
@@ -109,10 +118,11 @@ export async function ask(deps: AppDeps, conv: Conversation, question: string, i
     instructions,
     mode: "ask",
     conversation: `tg-${conv.id}`,
-    ...(conv.session ? { session: conv.session } : {}),
+    ...(conv.session && !opts.fresh ? { session: conv.session } : {}),
     ...(home.epicNumber ? { branch: `factory/epic-${home.epicNumber}` } : {}),
     anthropicApiKey: secrets.anthropicApiKey,
     claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+    mcpServers: await mcpPayloadFor(deps, home.issue.orgId),
   });
   if ("error" in got) return { ok: false, error: got.error };
   return { ok: true, answer: got.answer, ...(got.session ? { session: got.session } : {}) };

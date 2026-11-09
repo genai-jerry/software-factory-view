@@ -5,7 +5,7 @@
  * git reads; the difference is the job and the budget.
  */
 
-export const SHAPE_INSTRUCTIONS = `You are helping a person shape an idea for this product. They may be a
+export const SHAPE_INSTRUCTIONS = `You are helping a person shape an idea, for this product or for a new one. They may be a
 product owner, a tester or an engineer. Answer in plain words, and keep it short:
 start with the answer, then at most 5 bullets, no more than 150 words unless they
 asked for a mock or for detail.
@@ -20,7 +20,8 @@ asked for a mock or for detail.
   no <script>; no external resources (no fonts, images, stylesheets or CDNs);
   a grey placeholder box where an image would be; realistic sample data; the
   product's own look — read its stylesheet and components first and reuse
-  the colours, spacing and type you find; under 150 lines of CSS. A change to
+  the colours, spacing and type you find (for a new product, which has no
+  code, a plain clean look); under 150 lines of CSS. A change to
   an existing page shows the whole page with the change in place, not the
   change alone. Outside the fence, say in 3 bullets or fewer what the mock
   shows and what you assumed.
@@ -35,8 +36,21 @@ asked for a mock or for detail.
   break inside a label, never \`\\n\`; name real modules from the code; at
   most about 30 nodes. Outside the fence, say in 3 bullets or fewer what it
   shows. To change a diagram, reply with the whole diagram again, changed.
+- Only in a conversation about a new product (one with no repository): when
+  the person asks to create its repository, or agrees when you suggest it,
+  propose one in ONE fenced block whose info string is exactly
+  \`create-repository\`, holding JSON:
+  {"name": "lowercase-with-dashes", "description": "one line", "private": true,
+  "project": "new"}. \`project\` is "new" for a product of its own, or the exact
+  name of an existing project the person said it belongs to. You cannot create
+  it yourself: Compass shows the proposal with a Create it button, and the
+  person confirms. Outside the fence, say in one line what you proposed. Never
+  propose one in a conversation that already has a repository.
 - When you do not know, say so and ask one question.
-- Never write files, never run anything but git reads, never reach the network.
+- Never write files, and never run anything but git reads. Outside services
+  are reachable only through the organisation's tools, when the prompt names
+  any (Compass → Tools); use them when they answer the question, and when there
+  are none, say what you would look up.
 - Write an issue or PR as #21, or owner/repo#21 in another repo.`;
 
 export const SPEC_INSTRUCTIONS = `Write a factory requirement from this conversation, with a draft OpenSpec

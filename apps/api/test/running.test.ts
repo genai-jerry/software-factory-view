@@ -137,6 +137,23 @@ describe("GET /api/running", () => {
     expect(by["acme/api#40"]).toMatchObject({ runId: "r40", role: "QA" });
     expect(by["acme/api#34"]).toMatchObject({ runId: null, role: "Dispatcher" }); // no run listed: the stage's guess
   });
+
+  it("counts a live session on a task that carries no run label, and not an Ask session", async () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify([
+          { id: "rev", repo: "acme/api", issue: 41, role: "reviewer", started_at: "2026-11-09 13:00:00" },
+          { id: "ask", repo: "acme/api", issue: 0, role: "ask", started_at: "2026-11-09 13:01:00" },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const items = (await get()).json().running as Array<{ repo: string; number: number; role: string; runId: string | null }>;
+    expect(items.find((i) => i.number === 41)).toMatchObject({ runId: "rev", role: "Reviewer", repo: "acme/api" });
+    expect(items.some((i) => i.number === 0)).toBe(false);
+  });
 });
 
 describe("GET /api/runs/recent", () => {

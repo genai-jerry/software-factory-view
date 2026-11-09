@@ -675,10 +675,11 @@ export interface ShapeEpicRef {
 export interface ShapeConversationSummary {
   id: string;
   title: string;
-  repo: string;
-  repoId: string;
-  /** `project`: the idea spans every factory-enabled repository of the project; `repo` is the default. */
-  scope?: "repo" | "project";
+  /** Null for a new product, which has no repository until it is opened as work. */
+  repo: string | null;
+  repoId: string | null;
+  /** `project`: the idea spans every factory-enabled repository of the project; `new`: a new product, no code; `repo` is the default. */
+  scope?: "repo" | "project" | "new";
   projectName?: string | null;
   updatedAt: string;
   hasSpec: boolean;
@@ -701,6 +702,8 @@ export interface ShapeMessage {
   mocks: Array<{ html: string }>;
   /** Mermaid diagrams the answer carried, drawn below its prose. */
   diagrams?: Array<{ code: string }>;
+  /** A repository Claude proposed for a new product; Compass asks the person to confirm it. */
+  repoProposal?: { name: string; description: string; private: boolean; project: string } | null;
   attachments: ShapeAttachment[];
   /** An answer is written in the background: pending until it lands, failed with `error` when it did not. */
   status?: "pending" | "done" | "failed";
@@ -712,11 +715,14 @@ export interface ShapeConversation {
   conversation: {
     id: string;
     title: string;
-    repoId: string;
-    repo: string;
-    scope?: "repo" | "project";
+    repoId: string | null;
+    repo: string | null;
+    scope?: "repo" | "project" | "new";
     /** The project around the idea, with the repositories the work may open in. */
     project?: { id: string; name: string; repos: Array<{ id: string; fullName: string }> } | null;
+    /** A new product: every factory repository it may open in. */
+    homes?: Array<{ id: string; fullName: string }>;
+    orgId?: string;
     spec: string | null;
     specUpdatedAt: string | null;
     /** The requirement is written in the background. */
