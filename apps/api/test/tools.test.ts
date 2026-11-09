@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
-import { sseMessages } from "../src/mcp-client.js";
+import { isPublicAddress, sseMessages } from "../src/mcp-client.js";
 import { mergeTools, slugFor } from "../src/routes/tools.js";
 
 /**
@@ -17,6 +17,15 @@ import { mergeTools, slugFor } from "../src/routes/tools.js";
  * before saving, read-only tools start allowed, headers are sealed and never
  * returned, and members can see but not change.
  */
+
+/** DNS without the network: the test hosts, plus one that points inside. */
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async (host: string) => {
+    if (host === "docs.example.com") return [{ address: "93.184.215.14", family: 4 }];
+    if (host === "metadata.example.com") return [{ address: "169.254.169.254", family: 4 }];
+    throw new Error("ENOTFOUND");
+  }),
+}));
 
 const MASTER_KEY = randomBytes(32).toString("base64");
 const SERVER = "https://docs.example.com/_mcp/server";
@@ -144,6 +153,15 @@ describe("adding a server", () => {
     expect((await add({ url: "https://u:p@docs.example.com/mcp" })).json().error).toMatch(/header/);
   });
 
+  it("refuses servers that are, or resolve to, private addresses, and redirects", async () => {
+    expect((await add({ url: "https://10.0.0.5/mcp" })).json().error).toMatch(/10\.0\.0\.5 is not a public address/);
+    expect((await add({ url: "https://metadata.example.com/mcp" })).json().error).toMatch(/metadata\.example\.com is not a public address/);
+    expect((await add({ url: "https://[fd00::1]/mcp" })).json().error).toMatch(/not a public address/);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } })));
+    expect((await add({ url: SERVER })).json().error).toMatch(/redirected to http:\/\/169\.254\.169\.254\/; use that URL/);
+    expect(await deps.dbh.db.select().from(mcpServers)).toEqual([]);
+  });
+
   it("is for admins: a member sees the list but cannot add", async () => {
     expect((await add({ url: SERVER }, member)).statusCode).toBe(403);
     const list = await app.inject({ method: "GET", url: `/api/orgs/${orgId}/tools`, headers: member });
@@ -193,6 +211,12 @@ describe("helpers", () => {
     expect(slugFor("Sarvam Docs!", new Set())).toBe("sarvam_docs");
     expect(slugFor("docs.sarvam.ai", new Set(["docs_sarvam_ai"]))).toBe("docs_sarvam_ai_2");
     expect(slugFor("42", new Set())).toBe("s_42");
+  });
+
+  it("tells public addresses from private ones", () => {
+    for (const ip of ["93.184.215.14", "2606:4700::1"]) expect(isPublicAddress(ip)).toBe(true);
+    for (const ip of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "nonsense"])
+      expect(isPublicAddress(ip), ip).toBe(false);
   });
 
   it("reads multi-line SSE events", () => {

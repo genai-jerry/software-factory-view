@@ -4,7 +4,7 @@ set -euo pipefail
 # Smoke-test that PUBLIC_ORIGIN serves the Compass (nginx + api), not the
 # LangGraph orchestrator. Run after deploy from CI or local-deploy.
 #
-# Usage: PUBLIC_ORIGIN=https://sf.genaipeople.com ./scripts/verify-public-origin.sh
+# Usage: PUBLIC_ORIGIN=https://compass.genaipeople.com ./scripts/verify-public-origin.sh
 
 ORIGIN="${PUBLIC_ORIGIN:-}"
 if [[ -z "$ORIGIN" ]]; then
@@ -40,7 +40,7 @@ should answer / with HTML; /api/health should return {"ok":true,"service":"conso
 Fix on the VPS:
   1. In claude-software-factory GitHub Environment production, set
      PUBLIC_BASE_URL to a different host (e.g. https://factory.genaipeople.com)
-     — never sf.genaipeople.com.
+     — never compass.genaipeople.com.
   2. SSH to the VPS and repoint the orchestrator Traefik rule:
        cd ~/factory-orchestrator
        # pick any hostname that is NOT the Console host; DNS is not required

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-shot VPS fix when sf.genaipeople.com serves factory-orchestrator JSON instead
+# One-shot VPS fix when compass.genaipeople.com serves factory-orchestrator JSON instead
 # of the Console SPA. Run ON the Hostinger VPS (or via ssh user@host 'bash -s' < ...).
 #
 # Root cause: orchestrator PUBLIC_BASE_URL was set to the Console hostname, so Traefik
-# routes sf.genaipeople.com to factory-orchestrator. The orchestrator only needs
+# routes compass.genaipeople.com to factory-orchestrator. The orchestrator only needs
 # docker-internal access (http://factory-orchestrator:8080); it should not share the
 # Console's public host.
 
-CONSOLE_HOST="${CONSOLE_HOST:-sf.genaipeople.com}"
+CONSOLE_HOST="${CONSOLE_HOST:-compass.genaipeople.com}"
 ORCHESTRATOR_TRAEFIK_HOST="${ORCHESTRATOR_TRAEFIK_HOST:-factory-orchestrator.internal}"
 
 log() { echo "[fix-vps-host-routing] $*"; }

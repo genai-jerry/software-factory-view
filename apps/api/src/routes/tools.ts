@@ -138,7 +138,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
       if ("error" in sealed) return reply.code(409).send({ error: sealed.error });
 
       // Nothing is saved until the server answers: a typo should not become a broken tool.
-      const listed = await listMcpTools(url.url, transport, hdr.headers);
+      const listed = await listMcpTools(url.url, transport, hdr.headers, { allowLocal: !production });
       if (!listed.ok) return reply.code(422).send({ error: `Compass could not list this server's tools: ${listed.error}.` });
       if (listed.tools.length === 0) return reply.code(422).send({ error: "The server answered but offers no tools." });
 
@@ -216,7 +216,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
     } catch {
       return reply.code(409).send({ error: "The saved headers will not open with this Compass's master key. Enter them again." });
     }
-    const listed = await listMcpTools(row.url, row.transport, headers);
+    const listed = await listMcpTools(row.url, row.transport, headers, { allowLocal: !production });
     const set: Partial<typeof mcpServers.$inferInsert> = listed.ok
       ? { tools: mergeTools(listed.tools, row.tools), checkedAt: new Date(), checkError: null }
       : { checkedAt: new Date(), checkError: listed.error };

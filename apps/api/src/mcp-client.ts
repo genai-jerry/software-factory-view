@@ -6,7 +6,15 @@
  * Two transports: streamable HTTP (one POST per message; the reply is JSON
  * or a short SSE stream) and the older HTTP+SSE (a GET stream that names a
  * POST endpoint; replies arrive on the stream).
+ *
+ * The URL is typed by an admin, and Compass fetches it from its own network,
+ * so every request goes only to a public address (no loopback, private,
+ * link-local or cloud-metadata ranges), never follows a redirect, and an SSE
+ * server's message endpoint must be on the same origin.
  */
+
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 export interface ListedTool {
   name: string;
@@ -16,6 +24,70 @@ export interface ListedTool {
 }
 
 export type ListResult = { ok: true; tools: ListedTool[]; serverName?: string } | { ok: false; error: string };
+
+/** True when an address may be fetched: not loopback, private, link-local, CGNAT, multicast or reserved. */
+export function isPublicAddress(ip: string): boolean {
+  const v = isIP(ip);
+  if (v === 4) {
+    const [a, b] = ip.split(".").map(Number) as [number, number];
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && (b === 168 || ip.startsWith("192.0.0."))) return false;
+    if (a === 198 && (b === 18 || b === 19)) return false;
+    return true;
+  }
+  if (v === 6) {
+    const x = ip.toLowerCase();
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(x);
+    if (mapped) return isPublicAddress(mapped[1]!);
+    if (x === "::" || x === "::1") return false;
+    if (/^f[cd]/.test(x) || /^fe[89ab]/.test(x) || x.startsWith("ff") || x.startsWith("64:ff9b:")) return false;
+    return true;
+  }
+  return false;
+}
+
+export interface Reach {
+  /** Development only: allow http://localhost servers. */
+  allowLocal?: boolean;
+}
+
+/** Refuse a URL whose host is, or resolves to, a non-public address. */
+export async function checkReachable(raw: string, reach: Reach = {}): Promise<string | null> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "that is not a URL";
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  const local = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (reach.allowLocal && local) return null;
+  if (u.protocol !== "https:") return "the URL must start with https://";
+  let addresses: string[];
+  try {
+    addresses = isIP(host) ? [host] : (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
+  } catch {
+    return `${host} does not resolve`;
+  }
+  if (addresses.length === 0 || !addresses.every(isPublicAddress)) return `${host} is not a public address`;
+  return null;
+}
+
+/** fetch to a checked public address, without following redirects. */
+async function guardedFetch(url: string, init: RequestInit, reach: Reach): Promise<Response> {
+  const refused = await checkReachable(url, reach);
+  if (refused) throw new Refused(refused);
+  const res = await fetch(url, { ...init, redirect: "manual" });
+  if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+    throw new Refused(`the server redirected${res.headers.get("location") ? ` to ${res.headers.get("location")}` : ""}; use that URL`);
+  }
+  return res;
+}
+
+class Refused extends Error {}
 
 const PROTOCOL = "2025-06-18";
 const TIMEOUT_MS = 15_000;
@@ -74,16 +146,17 @@ function replyFor(id: number, bodies: string[]): RpcReply | null {
 
 function failed(err: unknown): string {
   const e = err as Error;
+  if (e instanceof Refused) return e.message;
   if (e?.name === "TimeoutError" || e?.name === "AbortError") return "the server did not answer within 15 seconds";
   return `could not reach the server (${e?.message ?? String(err)})`;
 }
 
-async function listOverHttp(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<ListResult> {
+async function listOverHttp(url: string, headers: Record<string, string>, signal: AbortSignal, reach: Reach): Promise<ListResult> {
   let session: string | null = null;
   let nextId = 1;
   const send = async (method: string, params?: unknown, notify = false): Promise<RpcReply | { error: string }> => {
     const id = nextId++;
-    const res = await fetch(url, {
+    const res = await guardedFetch(url, {
       method: "POST",
       headers: {
         ...headers,
@@ -94,7 +167,7 @@ async function listOverHttp(url: string, headers: Record<string, string>, signal
       },
       body: JSON.stringify(notify ? { jsonrpc: "2.0", method, ...(params ? { params } : {}) } : { jsonrpc: "2.0", id, method, ...(params ? { params } : {}) }),
       signal,
-    });
+    }, reach);
     session = res.headers.get("mcp-session-id") ?? session;
     if (notify) return {};
     if (res.status === 401 || res.status === 403) return { error: `the server refused the request (${res.status}) — check the headers` };
@@ -128,8 +201,8 @@ async function listOverHttp(url: string, headers: Record<string, string>, signal
   return { ok: true, tools, ...(typeof info?.name === "string" ? { serverName: info.name } : {}) };
 }
 
-async function listOverSse(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<ListResult> {
-  const res = await fetch(url, { method: "GET", headers: { ...headers, accept: "text/event-stream" }, signal });
+async function listOverSse(url: string, headers: Record<string, string>, signal: AbortSignal, reach: Reach): Promise<ListResult> {
+  const res = await guardedFetch(url, { method: "GET", headers: { ...headers, accept: "text/event-stream" }, signal }, reach);
   if (res.status === 401 || res.status === 403) return { ok: false, error: `the server refused the request (${res.status}) — check the headers` };
   if (!res.ok || !res.body) return { ok: false, error: `the server answered ${res.status}` };
   const reader = res.body.getReader();
@@ -159,15 +232,15 @@ async function listOverSse(url: string, headers: Record<string, string>, signal:
       }
     }
     if (!endpoint) return { ok: false, error: "the SSE stream never named its message endpoint" };
+    if (new URL(endpoint).origin !== new URL(url).origin) return { ok: false, error: "the SSE stream named a message endpoint on another server" };
     let nextId = 1;
     const call = async (method: string, params?: unknown): Promise<RpcReply> => {
       const id = nextId++;
-      const post = await fetch(endpoint!, {
-        method: "POST",
-        headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) }),
-        signal,
-      });
+      const post = await guardedFetch(
+        endpoint!,
+        { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) }), signal },
+        reach,
+      );
       if (!post.ok && post.status !== 202) return { error: { message: `the server answered ${post.status}` } };
       for (let ev = await nextEvent(); ev; ev = await nextEvent()) {
         const reply = replyFor(id, [ev.data]);
@@ -177,12 +250,11 @@ async function listOverSse(url: string, headers: Record<string, string>, signal:
     };
     const init = await call("initialize", INIT);
     if (init.error) return { ok: false, error: `the server refused to start: ${init.error.message ?? "unknown error"}` };
-    await fetch(endpoint, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-      signal,
-    });
+    await guardedFetch(
+      endpoint,
+      { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }), signal },
+      reach,
+    );
     const tools: ListedTool[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -203,10 +275,10 @@ async function listOverSse(url: string, headers: Record<string, string>, signal:
 }
 
 /** Connect, list every tool, disconnect. Never throws: the error is the reason to show. */
-export async function listMcpTools(url: string, transport: "http" | "sse", headers: Record<string, string>): Promise<ListResult> {
+export async function listMcpTools(url: string, transport: "http" | "sse", headers: Record<string, string>, reach: Reach = {}): Promise<ListResult> {
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
-    return transport === "sse" ? await listOverSse(url, headers, signal) : await listOverHttp(url, headers, signal);
+    return transport === "sse" ? await listOverSse(url, headers, signal, reach) : await listOverHttp(url, headers, signal, reach);
   } catch (err) {
     return { ok: false, error: failed(err) };
   }
