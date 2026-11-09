@@ -127,9 +127,17 @@ export function BuildBoard({ data, past = false }: { data: EpicWorkspace; past?:
                 {plainTitle(t.title)}
                 {word === "waiting-on" && <span className="task-after">After {namesOf(t.blockedBy.filter((d) => d.open))}</span>}
               </span>
-              <span className={`stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : word === "waiting-start" || ROLE_START_WORDS.includes(word) ? "decide" : IN_FLIGHT_WORDS.includes(word) ? "wait" : ""}`}>
-                {text}
-              </span>
+              {(() => {
+                const chip = `stage-chip ${word === "done" ? "done" : word === "stopped" ? "halt" : word === "waiting-start" || ROLE_START_WORDS.includes(word) ? "decide" : IN_FLIGHT_WORDS.includes(word) ? "wait" : ""}`;
+                // A live run opens its log: what the factory is doing on this task right now.
+                return t.running && t.runId ? (
+                  <Link to={`/runs/${t.runId}`} className={`${chip} chip-link`} title="Watch the run">
+                    {text} ›
+                  </Link>
+                ) : (
+                  <span className={chip}>{text}</span>
+                );
+              })()}
               {word === "waiting-start" && (
                 <span className="task-start">
                   <TaskStartGate epicId={data.epic.id} taskId={t.id} number={t.number} startGate={data.startGate} status={t.startStatus} />
