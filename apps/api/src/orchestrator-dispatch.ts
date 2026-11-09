@@ -1,3 +1,4 @@
+import type { McpServerPayload } from "./mcp-servers.js";
 import type { ConsoleConfig } from "@console/core";
 
 /**
@@ -339,6 +340,8 @@ export async function askOrchestrator(
     conversation?: string;
     /** A Claude session id from an earlier answer on the same conversation, to resume instead of starting cold. */
     session?: string;
+    /** The org's Compass → Tools servers (mcpPayloadFor); the orchestrator picks the ones for this mode. */
+    mcpServers?: McpServerPayload[];
   },
 ): Promise<
   { ok: true; answer: string; model: string; inputTokens: number; outputTokens: number; session?: string; resumed?: boolean } | OrchestratorProxyError
@@ -365,6 +368,7 @@ export async function askOrchestrator(
         ...(body.repos && body.repos.length > 0 ? { repos: body.repos } : {}),
         ...(body.conversation ? { conversation: body.conversation } : {}),
         ...(body.session ? { session: body.session } : {}),
+        ...(body.mcpServers ? { mcp_servers: body.mcpServers } : {}),
       }),
       signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
     });

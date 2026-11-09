@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { sourcesBlock } from "@console/insight";
 import { issues, projects, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
 import { and, asc, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
@@ -484,6 +485,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
+        mcpServers: await mcpPayloadFor(deps, conv.orgId),
         context: session ? header : await grounding(conv, epic, earlier, header),
         instructions: SHAPE_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
@@ -626,6 +628,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: "Write the requirement from this conversation.",
+        mcpServers: await mcpPayloadFor(deps, conv.orgId),
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,

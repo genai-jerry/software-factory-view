@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { InstallationClient } from "@console/core";
 import { comments, estates, issues, repos, telegramConversations } from "@console/db";
 import { eq } from "drizzle-orm";
@@ -121,6 +122,7 @@ export async function ask(deps: AppDeps, conv: Conversation, question: string, i
     ...(home.epicNumber ? { branch: `factory/epic-${home.epicNumber}` } : {}),
     anthropicApiKey: secrets.anthropicApiKey,
     claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+    mcpServers: await mcpPayloadFor(deps, home.issue.orgId),
   });
   if ("error" in got) return { ok: false, error: got.error };
   return { ok: true, answer: got.answer, ...(got.session ? { session: got.session } : {}) };

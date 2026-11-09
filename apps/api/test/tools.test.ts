@@ -206,6 +206,26 @@ describe("changing a server", () => {
   });
 });
 
+describe("serving the orchestrator", () => {
+  it("gives the orchestrator the org's allowed tools with their headers, for its dispatch token only", async () => {
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "dispatch-tok";
+    const { estates, repos } = await import("@console/db");
+    const estate = (await deps.dbh.db.insert(estates).values({ orgId, name: "acme", installationId: 5 }).returning())[0]!;
+    await deps.dbh.db.insert(repos).values({ orgId, estateId: estate.id, ghNodeId: "R-mcp", fullName: "acme/mcp-app" }).onConflictDoNothing();
+    await add({ label: "Docs", url: SERVER, headers: [{ name: "x-api-key", value: "sk-very-secret" }] });
+    const off = (await add({ label: "Off", url: SERVER })).json();
+    await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${off.id}`, headers: admin, payload: { enabled: false } });
+
+    const url = "/api/orchestrator/mcp-servers?repo=acme/mcp-app";
+    expect((await app.inject({ method: "GET", url })).statusCode).toBe(401);
+    const got = await app.inject({ method: "GET", url, headers: { authorization: "Bearer dispatch-tok" } });
+    expect(got.json()).toEqual({
+      servers: [{ name: "docs", label: "Docs", transport: "http", url: SERVER, headers: { "x-api-key": "sk-very-secret" }, tools: ["searchDocs"], use_shape: true, use_ask: true, use_build: true }],
+    });
+    expect((await app.inject({ method: "GET", url: "/api/orchestrator/mcp-servers?repo=nobody/x", headers: { authorization: "Bearer dispatch-tok" } })).statusCode).toBe(404);
+  });
+});
+
 describe("helpers", () => {
   it("makes ids Claude can use, unique in the org", () => {
     expect(slugFor("Sarvam Docs!", new Set())).toBe("sarvam_docs");
