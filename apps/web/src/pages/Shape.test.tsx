@@ -365,4 +365,39 @@ describe("ShapePage for a new product", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open it" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: false, repoId: "r1" }));
   });
+
+  it("creates a repository for the new product, then opens the work in it", async () => {
+    const fresh: ShapeConversation = {
+      conversation: { ...conversation.conversation, title: "Lens — camera translator", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What should be built?\nA translator.", homes: [] },
+      messages: conversation.messages,
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return fresh;
+      if (path === "/api/orgs/o1/repo-homes")
+        return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }, { estateId: "e2", login: "other", type: "User", canCreate: false }] };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path === "/api/orgs/o1/repos") return { repoId: "r9", fullName: "genai-jerry/lens-camera-translator", setUp: true };
+      return { number: 1, htmlUrl: "https://github.com/genai-jerry/lens-camera-translator/issues/1" };
+    });
+    renderAt("/shape/c1");
+    await userEvent.click(await screen.findByRole("button", { name: "Open as work" }));
+    expect(await screen.findByLabelText("Repository name")).toHaveValue("lens-camera-translator");
+    expect(screen.queryByRole("option", { name: "other" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", {
+        estateId: "e1",
+        name: "lens-camera-translator",
+        description: "Lens — camera translator",
+        private: true,
+        projectName: "Lens — camera translator",
+      }),
+    );
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Lens — camera translator", fast: false, repoId: "r9" }));
+  });
 });

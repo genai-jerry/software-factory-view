@@ -1603,3 +1603,5 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 /* A button that reads as an inline link (Shape: "Treat it as a new product"). */
 .link-button { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
 .link-button:disabled { color: var(--text-dim); cursor: default; }
+.shape-where { border: 0; padding: 0; margin: 0.25rem 0 0.6rem; display: grid; gap: 0.35rem; }
+.shape-where legend { font-weight: 600; margin-bottom: 0.25rem; }

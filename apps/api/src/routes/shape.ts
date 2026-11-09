@@ -391,6 +391,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return {
       conversation: {
         id: conv.id,
+        orgId: conv.orgId,
         title: conv.title,
         repoId: conv.repoId,
         repo: conv.repoFullName,

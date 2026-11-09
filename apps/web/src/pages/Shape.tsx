@@ -60,6 +60,18 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** A repository name from an idea's title: "Lens — camera translator" → "lens-camera-translator". */
+function slugName(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40)
+      .replace(/-+$/g, "") || "new-product"
+  );
+}
+
 function shortRepo(fullName: string): string {
   return fullName.split("/").pop() ?? fullName;
 }
@@ -546,6 +558,7 @@ function Conversation({ id }: { id: string }) {
             defaultTitle={conversation.title}
             homes={newProduct ? (conversation.homes ?? []) : acrossProject ? (conversation.project?.repos ?? []) : []}
             newProduct={newProduct}
+            orgId={conversation.orgId}
             defaultRepoId={conversation.repoId ?? conversation.homes?.[0]?.id ?? ""}
             onCancel={() => setOpening(false)}
             onDone={(r) => {
@@ -797,6 +810,7 @@ function OpenAsWork({
   defaultTitle,
   homes,
   newProduct = false,
+  orgId,
   defaultRepoId,
   onCancel,
   onDone,
@@ -807,6 +821,8 @@ function OpenAsWork({
   homes: Array<{ id: string; fullName: string }>;
   /** A new product: no home yet, so the person must pick one. */
   newProduct?: boolean;
+  /** The idea's org: where a new repository is created. */
+  orgId?: string;
   defaultRepoId: string;
   onCancel: () => void;
   onDone: (r: { title: string; htmlUrl: string; epicId?: string }) => void;
@@ -814,9 +830,39 @@ function OpenAsWork({
   const [title, setTitle] = useState(defaultTitle);
   const [fast, setFast] = useState(false);
   const [repoId, setRepoId] = useState(defaultRepoId);
+  // A new product goes in a repository of its own unless the person picks an existing one.
+  const [where, setWhere] = useState<"create" | "existing">(newProduct ? "create" : "existing");
+  const creating = newProduct && where === "create" && Boolean(orgId);
+  const [repoName, setRepoName] = useState(() => slugName(defaultTitle));
+  const [estateId, setEstateId] = useState("");
+  const [privateRepo, setPrivateRepo] = useState(true);
+  const accounts = useQuery({
+    queryKey: ["repo-homes", orgId],
+    queryFn: () => api.get<{ canEdit: boolean; accounts: Array<{ estateId: string; login: string; type: string; canCreate: boolean }> }>(`/api/orgs/${orgId}/repo-homes`),
+    enabled: creating,
+  });
+  const usable = (accounts.data?.accounts ?? []).filter((a) => a.canCreate);
+  const chosenAccount = estateId || usable[0]?.estateId || "";
   const open = useMutation({
-    mutationFn: () =>
-      api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, { title: title.trim(), fast, ...(homes.length ? { repoId } : {}) }),
+    mutationFn: async () => {
+      let target = repoId;
+      if (creating) {
+        const made = await api.post<{ repoId: string; fullName: string; setUp: boolean; error?: string }>(`/api/orgs/${orgId}/repos`, {
+          estateId: chosenAccount,
+          name: repoName.trim(),
+          description: title.trim(),
+          private: privateRepo,
+          projectName: title.trim(),
+        });
+        if (!made.setUp) throw new Error(made.error ?? `${made.fullName} was created, but not set up. Finish it on Onboarding.`);
+        target = made.repoId;
+      }
+      return api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, {
+        title: title.trim(),
+        fast,
+        ...(creating || homes.length ? { repoId: target } : {}),
+      });
+    },
     onSuccess: (r) => onDone({ title: title.trim(), htmlUrl: r.htmlUrl, epicId: r.epicId }),
   });
   // Shown in a Sheet, which carries the title and the dialog role.
@@ -825,7 +871,50 @@ function OpenAsWork({
       <p className="muted">The requirement becomes an item in Work. The factory reads it and comes back with a plan for you to approve.</p>
       <label htmlFor="shape-title">Name it</label>
       <input id="shape-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      {homes.length > 0 && (
+      {newProduct && orgId && (
+        <fieldset className="shape-where">
+          <legend>Where it goes</legend>
+          <label>
+            <input type="radio" name="shape-where" checked={where === "create"} onChange={() => setWhere("create")} /> A new repository for this product
+          </label>
+          <label>
+            <input type="radio" name="shape-where" checked={where === "existing"} onChange={() => setWhere("existing")} /> A repository that already exists
+          </label>
+        </fieldset>
+      )}
+      {creating && (
+        <>
+          {accounts.isLoading ? (
+            <p className="muted">Reading your GitHub accounts…</p>
+          ) : usable.length === 0 ? (
+            <p className="decision-failure">
+              Compass can create repositories only in your own GitHub account or an organisation it is installed on, and none is available here.
+            </p>
+          ) : (
+            <>
+              <label htmlFor="shape-account">Account</label>
+              <select id="shape-account" value={chosenAccount} onChange={(e) => setEstateId(e.target.value)}>
+                {usable.map((a) => (
+                  <option key={a.estateId} value={a.estateId}>
+                    {a.login}
+                    {a.type === "Organization" ? " (organisation)" : ""}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="shape-repo-name">Repository name</label>
+              <input id="shape-repo-name" value={repoName} onChange={(e) => setRepoName(e.target.value)} />
+              <label className="shape-fast">
+                <input type="checkbox" checked={privateRepo} onChange={(e) => setPrivateRepo(e.target.checked)} /> Private
+              </label>
+              <p className="muted shape-hint">
+                Compass creates it with main and staging branches, the factory&apos;s files and labels, in a project of its own. It has no code yet: the factory&apos;s
+                design picks the stack, and you approve that at the design gate.
+              </p>
+            </>
+          )}
+        </>
+      )}
+      {!creating && homes.length > 0 && (
         <>
           <label htmlFor="shape-home">Where it opens</label>
           <select id="shape-home" value={repoId} onChange={(e) => setRepoId(e.target.value)}>
@@ -846,7 +935,7 @@ function OpenAsWork({
           </p>
         </>
       )}
-      {newProduct && homes.length === 0 && (
+      {newProduct && !creating && homes.length === 0 && (
         <p className="muted shape-hint">
           No repository is set up for the factory yet. Create one on GitHub and connect it on <Link to="/onboarding">Onboarding</Link> first.
         </p>
@@ -855,8 +944,13 @@ function OpenAsWork({
         <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} /> Fast lane: the factory approves the plan and the design itself. You still release it.
       </label>
       <div className="decision-actions">
-        <button type="button" className="primary" disabled={!title.trim() || open.isPending || (newProduct && !repoId)} onClick={() => open.mutate()}>
-          {open.isPending ? "Opening…" : "Open it"}
+        <button
+          type="button"
+          className="primary"
+          disabled={!title.trim() || open.isPending || (creating ? !chosenAccount || !repoName.trim() : newProduct && !repoId)}
+          onClick={() => open.mutate()}
+        >
+          {open.isPending ? (creating ? "Creating the repository…" : "Opening…") : creating ? "Create the repository and open it" : "Open it"}
         </button>
         <button type="button" className="secondary" onClick={onCancel} disabled={open.isPending}>
           Cancel

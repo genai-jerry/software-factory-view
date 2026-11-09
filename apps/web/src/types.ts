@@ -720,6 +720,7 @@ export interface ShapeConversation {
     project?: { id: string; name: string; repos: Array<{ id: string; fullName: string }> } | null;
     /** A new product: every factory repository it may open in. */
     homes?: Array<{ id: string; fullName: string }>;
+    orgId?: string;
     spec: string | null;
     specUpdatedAt: string | null;
     /** The requirement is written in the background. */
