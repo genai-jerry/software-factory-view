@@ -552,6 +552,8 @@ describe("Shape about a new product", () => {
     expect(String(ask.body!.context)).toContain("A new product: there is no repository and no code yet.");
     expect(String(ask.body!.instructions)).toContain("organisation's tools");
     expect(String(ask.body!.instructions)).not.toContain("never reach the network");
+    expect(String(ask.body!.instructions)).toContain("Write\n  the requirement");
+    expect(String(ask.body!.instructions)).toContain("Never\n  tell them to paste files into another session");
     expect(ask.body!.mcp_servers).toEqual([]); // the org's Compass → Tools servers ride along, none here
 
     calls = stubNetwork("## What should be built?\nA camera translator.");
