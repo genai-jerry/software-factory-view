@@ -2,7 +2,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api.js";
+import { useFocus } from "../lib/filter.js";
 import { IMAGE_MIMES, MAX_IMAGES, dataB64Of, pickImages, type PendingImage } from "../lib/images.js";
+import { defaultWorkRepo, groupedTargets, rememberWorkRepo, type WorkTarget } from "../lib/work-home.js";
 
 /**
  * Add work (redesign board 3): what you want done, why and for whom, where
@@ -12,16 +14,11 @@ import { IMAGE_MIMES, MAX_IMAGES, dataB64Of, pickImages, type PendingImage } fro
  * a plan to approve.
  */
 
-interface Target {
-  id: string;
-  fullName: string;
-  projectId: string | null;
-  projectName: string | null;
-  factoryEnabled: boolean;
-}
+type Target = WorkTarget;
 
 export function NewWorkPage() {
   const navigate = useNavigate();
+  const focus = useFocus();
   const targets = useQuery({ queryKey: ["work-targets"], queryFn: () => api.get<{ targets: Target[] }>("/api/work/targets") });
   const [title, setTitle] = useState("");
   const [why, setWhy] = useState("");
@@ -32,9 +29,9 @@ export function NewWorkPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const enabled = (targets.data?.targets ?? []).filter((t) => t.factoryEnabled);
-  const chosen = repoId || enabled[0]?.id || "";
-  const projects = new Map<string, Target[]>();
-  for (const t of enabled) projects.set(t.projectName ?? "Other", [...(projects.get(t.projectName ?? "Other") ?? []), t]);
+  // The top bar's project or repo decides where work goes unless the person picks.
+  const chosen = repoId || defaultWorkRepo(enabled, focus);
+  const projects = groupedTargets(enabled, focus.project);
 
   const start = useMutation({
     mutationFn: async () => {
@@ -52,7 +49,10 @@ export function NewWorkPage() {
         ...(attachmentIds.length ? { attachmentIds } : {}),
       });
     },
-    onSuccess: (r) => navigate("/", { state: { added: { number: r.number, title: title.trim(), htmlUrl: r.htmlUrl } } }),
+    onSuccess: (r) => {
+      rememberWorkRepo(enabled.find((t) => t.id === chosen));
+      navigate("/", { state: { added: { number: r.number, title: title.trim(), htmlUrl: r.htmlUrl } } });
+    },
     onError: (e) => setFailure(e instanceof ApiError ? e.message : "That did not go through. Try again."),
   });
 
@@ -142,7 +142,7 @@ export function NewWorkPage() {
           </p>
         ) : (
           <select id="nw-repo" value={chosen} onChange={(e) => setRepoId(e.target.value)}>
-            {[...projects.entries()].map(([name, list]) => (
+            {projects.map(([name, list]) => (
               <optgroup key={name} label={name}>
                 {list.map((t) => (
                   <option key={t.id} value={t.id}>

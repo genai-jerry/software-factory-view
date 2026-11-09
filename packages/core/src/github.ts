@@ -746,6 +746,24 @@ export class UserClient extends RepoReader {
     return (await this.req("GET", "/user")) as never;
   }
 
+  /**
+   * Create a repository as this user: in their own account when `org` is
+   * null, else in that organisation. `auto_init` gives it a first commit (a
+   * README) on the default branch, so there is a branch to cut `staging` from.
+   * Needs the Compass App's Administration (write) permission.
+   */
+  async createRepo(
+    org: string | null,
+    opts: { name: string; description?: string; private: boolean },
+  ): Promise<{ id: number; node_id: string; full_name: string; default_branch: string; html_url: string; private: boolean }> {
+    return (await this.req("POST", org ? `/orgs/${encodeURIComponent(org)}/repos` : "/user/repos", {
+      name: opts.name,
+      ...(opts.description ? { description: opts.description } : {}),
+      private: opts.private,
+      auto_init: true,
+    })) as never;
+  }
+
   /** This user's membership in a GitHub organisation, if they have one. */
   async orgMembership(org: string): Promise<{ role: string; state: string } | null> {
     try {

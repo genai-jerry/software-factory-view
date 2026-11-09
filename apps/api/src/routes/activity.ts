@@ -1,5 +1,5 @@
 import { GitHubHttpError, type GhIssue } from "@console/core";
-import { auditLog, issueStateHistory, issues, projects, repos, workAttachments } from "@console/db";
+import { auditLog, estates, issueStateHistory, issues, projects, repos, workAttachments } from "@console/db";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { UPLOAD_BODY_LIMIT, attachmentsSection, checkImageUpload } from "../attachments.js";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -161,12 +161,21 @@ export function registerActivityRoutes(app: FastifyInstance, deps: AppDeps): voi
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const rows = await db
-      .select({ id: repos.id, fullName: repos.fullName, projectId: repos.projectId, projectName: projects.name, factoryEnabled: repos.factoryEnabled })
+      .select({
+        id: repos.id,
+        fullName: repos.fullName,
+        projectId: repos.projectId,
+        projectName: projects.name,
+        factoryEnabled: repos.factoryEnabled,
+        coordinationRepoId: estates.coordinationRepoId,
+      })
       .from(repos)
       .leftJoin(projects, eq(projects.id, repos.projectId))
+      .leftJoin(estates, eq(estates.id, repos.estateId))
       .where(inArray(repos.orgId, ctx.orgIds))
       .orderBy(repos.fullName);
-    return { targets: rows };
+    // `coordination`: where cross-repo epics live — the default home for work in a project.
+    return { targets: rows.map(({ coordinationRepoId, ...r }) => ({ ...r, coordination: coordinationRepoId === r.id })) };
   });
 }
 

@@ -224,6 +224,8 @@ describe("App manifest", () => {
       statuses: "write",
       workflows: "read",
       secrets: "write",
+      // Shape creates the repository for a new product.
+      administration: "write",
       members: "read",
       metadata: "read",
     });

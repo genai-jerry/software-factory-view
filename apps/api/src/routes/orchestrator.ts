@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { randomUUID } from "node:crypto";
 import {
   factoryStartLabel,
@@ -134,6 +135,20 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     return {
       attachments: all.map((a) => ({ id: a.id, source: a.source, name: a.name, mime: a.mime, size: a.size, url: `/api/orchestrator/attachments/${a.source}/${a.id}` })),
     };
+  });
+
+  /**
+   * Compass → Tools for a role run: the MCP servers of the org that owns
+   * `repo`, with header values, for the orchestrator that runs its roles
+   * (mcp_tools.ConsoleMcpPull). Same credential as the attachments.
+   */
+  app.get<{ Querystring: { repo?: string } }>("/api/orchestrator/mcp-servers", async (req, reply) => {
+    if (!orchestratorAuthorised(req.headers.authorization)) return reply.code(401).send({ error: "dispatch token required" });
+    const fullName = (req.query.repo ?? "").trim();
+    if (!fullName) return reply.code(400).send({ error: "repo is required" });
+    const repo = (await deps.dbh.db.select({ orgId: repos.orgId }).from(repos).where(eq(repos.fullName, fullName)).limit(1))[0];
+    if (!repo) return reply.code(404).send({ error: "unknown repository" });
+    return { servers: await mcpPayloadFor(deps, repo.orgId) };
   });
 
   app.get<{ Params: { source: string; id: string } }>("/api/orchestrator/attachments/:source/:id", async (req, reply) => {

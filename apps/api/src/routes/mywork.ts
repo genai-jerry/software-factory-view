@@ -56,6 +56,33 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
       )
       .orderBy(desc(issues.ghUpdatedAt));
 
+    // The label is the factory's own word, but not every role sets it (a
+    // Reviewer round runs on a task that keeps its state label), so the
+    // badge said "Factory idle" while Environments showed a session. A live
+    // session the orchestrator reports counts too, matched by repo#number
+    // as Environments matches it. Ask/Shape sessions (issue 0) are not work.
+    const activeRuns = await fetchActiveRuns(deps.cfg);
+    const labelled = new Set(allRows.map((r) => `${r.repoFullName}#${r.issue.number}`));
+    const unlabelled = [...activeRuns.keys()]
+      .map((k) => /^(.+)#(\d+)$/.exec(k))
+      .filter((m): m is RegExpExecArray => Boolean(m) && m![2] !== "0" && !labelled.has(m![0]))
+      .map((m) => ({ repo: m[1]!, number: Number(m[2]) }));
+    if (unlabelled.length) {
+      const extra = await db
+        .select({ issue: issues, repoFullName: repos.fullName })
+        .from(issues)
+        .innerJoin(repos, eq(repos.id, issues.repoId))
+        .where(
+          and(
+            inArray(issues.orgId, ctx.orgIds),
+            eq(issues.state, "open"),
+            inArray(issues.kind, ["task", "epic"]),
+            or(...unlabelled.map((u) => and(eq(repos.fullName, u.repo), eq(issues.number, u.number)))),
+          ),
+        );
+      allRows.unshift(...extra);
+    }
+
     const parentIds = [...new Set(allRows.map((r) => r.issue.parentIssueId).filter((id): id is string => Boolean(id)))];
     const parents = parentIds.length
       ? await db
@@ -77,7 +104,6 @@ export function registerMyWorkRoutes(app: FastifyInstance, deps: AppDeps): void 
           repoFilter.includes(parentOf.get(issue.parentIssueId ?? "")?.repoId ?? ""),
       )
       .slice(0, RUNNING_CAP);
-    const activeRuns = rows.length ? await fetchActiveRuns(deps.cfg) : new Map();
 
     return {
       running: rows.map(({ issue, repoFullName }) => {

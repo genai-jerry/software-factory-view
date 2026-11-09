@@ -9,8 +9,9 @@ vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() },
 }));
+const focusState = vi.hoisted(() => ({ project: "", setProject: (_id: string) => undefined as void }));
 vi.mock("../lib/filter.js", () => ({
-  useFocus: () => ({ project: "", repo: "", setProject: () => undefined, setRepo: () => undefined, qs: "", key: "" }),
+  useFocus: () => ({ project: focusState.project, repo: "", setProject: (id: string) => focusState.setProject(id), setRepo: () => undefined, qs: "", key: "" }),
 }));
 const { api } = await import("../api.js");
 const { ShapePage } = await import("./Shape.js");
@@ -326,3 +327,143 @@ describe("ShapePage answers in the background", () => {
     expect(screen.queryByText(/Writing the requirement…/)).toBeNull();
   }, 10_000);
 });
+
+describe("ShapePage for a new product", () => {
+  it("offers something new, and starts it with no repository", async () => {
+    vi.mocked(api.post).mockResolvedValue({ id: "c9" });
+    renderAt("/shape");
+    await userEvent.selectOptions(await screen.findByLabelText("Which product"), "Something new (no repository yet)");
+    expect(screen.getByText(/Claude reads no code/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "New idea" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { newProduct: true }));
+  });
+
+  it("turns an idea about Beacon into a new product", async () => {
+    vi.mocked(api.post).mockResolvedValue({ scope: "new" });
+    renderAt("/shape/c1");
+    await userEvent.click(await screen.findByRole("button", { name: /Not about beacon-web\? Treat it as a new product/ }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/new-product", {}));
+  });
+
+  it("shows a new product as such, and makes the person pick where the work opens", async () => {
+    const fresh: ShapeConversation = {
+      conversation: { ...conversation.conversation, scope: "new", repo: null, repoId: null, spec: "## What should be built?\nA translator.", homes: [{ id: "r1", fullName: "genai-jerry/beacon-web" }] },
+      messages: conversation.messages,
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [{ ...summaries[0]!, scope: "new", repo: null, repoId: null }] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return fresh;
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockResolvedValue({ number: 1, htmlUrl: "https://github.com/genai-jerry/beacon-web/issues/1" });
+    renderAt("/shape/c1");
+    expect(await screen.findByText(/shaped from scratch/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Treat it as a new product/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open as work" }));
+    expect(screen.getByText(/A new product usually gets its own repository/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Day-wise calling panel", fast: false, repoId: "r1" }));
+  });
+
+  it("creates a repository for the new product, then opens the work in it", async () => {
+    const fresh: ShapeConversation = {
+      conversation: { ...conversation.conversation, title: "Lens — camera translator", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What should be built?\nA translator.", homes: [] },
+      messages: conversation.messages,
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return fresh;
+      if (path === "/api/orgs/o1/repo-homes")
+        return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }, { estateId: "e2", login: "other", type: "User", canCreate: false }] };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path === "/api/orgs/o1/repos") return { repoId: "r9", fullName: "genai-jerry/lens-camera-translator", setUp: true };
+      return { number: 1, htmlUrl: "https://github.com/genai-jerry/lens-camera-translator/issues/1" };
+    });
+    renderAt("/shape/c1");
+    await userEvent.click(await screen.findByRole("button", { name: "Open as work" }));
+    expect(await screen.findByLabelText("Repository name")).toHaveValue("lens-camera-translator");
+    expect(screen.queryByRole("option", { name: "other" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", {
+        estateId: "e1",
+        name: "lens-camera-translator",
+        description: "Lens — camera translator",
+        private: true,
+        projectName: "Lens — camera translator",
+      }),
+    );
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Lens — camera translator", fast: false, repoId: "r9" }));
+  });
+
+  it("puts a repository made while in a project into that project, and can make a new one", async () => {
+    focusState.project = "p";
+    try {
+      const fresh: ShapeConversation = {
+        conversation: { ...conversation.conversation, title: "Beacon mobile", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What\nAn app.", homes: [] },
+        messages: conversation.messages,
+      };
+      vi.mocked(api.get).mockImplementation(async (path: string) => {
+        if (path === "/api/shape") return { conversations: [] };
+        if (path === "/api/work/targets") return targets;
+        if (path === "/api/shape/c1") return fresh;
+        if (path === "/api/orgs/o1/repo-homes") return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }] };
+        if (path.startsWith("/api/board")) return { columns: [], cards };
+        return {};
+      });
+      vi.mocked(api.post).mockImplementation(async (path: string) =>
+        path === "/api/orgs/o1/repos" ? { repoId: "r9", fullName: "genai-jerry/beacon-mobile", setUp: true, projectId: "p" } : { number: 1, htmlUrl: "https://github.com/x/1" },
+      );
+      renderAt("/shape/c1");
+      await userEvent.click(await screen.findByRole("button", { name: "Open as work" }));
+      expect(await screen.findByLabelText("Project")).toHaveValue("p");
+      expect(screen.getByRole("option", { name: "Beacon (the project you are in)" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ projectName: "Beacon" })));
+    } finally {
+      focusState.project = "";
+    }
+  });
+
+  it("shows Claude's proposed repository as a card, and creates it only when the person confirms", async () => {
+    const proposing: ShapeConversation = {
+      conversation: { ...conversation.conversation, title: "Lens", orgId: "o1", scope: "new", repo: null, repoId: null, homes: [] },
+      messages: [
+        conversation.messages[0]!,
+        {
+          ...conversation.messages[1]!,
+          mocks: [],
+          bodyHtml: "<p>Proposed a repository.</p>",
+          repoProposal: { name: "lens", description: "Camera translator", private: true, project: "new" },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return proposing;
+      if (path === "/api/orgs/o1/repo-homes") return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }] };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) =>
+      path === "/api/orgs/o1/repos" ? { repoId: "r9", fullName: "genai-jerry/lens", htmlUrl: "https://github.com/genai-jerry/lens", setUp: true } : { repoId: "r9", repo: "genai-jerry/lens" },
+    );
+    renderAt("/shape/c1");
+    const card = await screen.findByRole("region", { name: "Proposed repository" });
+    expect(await within(card).findByLabelText("Repository name")).toHaveValue("lens");
+    expect(within(card).getByLabelText("Project")).toHaveValue(""); // "new": a project of its own
+    expect(api.post).not.toHaveBeenCalled();
+    await userEvent.click(within(card).getByRole("button", { name: "Create it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ name: "lens", description: "Camera translator", private: true })));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/repo", { repoId: "r9" }));
+    expect(await screen.findByText(/The idea now lives there/)).toBeInTheDocument();
+  });
+});
+
