@@ -39,7 +39,7 @@ function useGate(data: EpicWorkspace, at: string) {
   });
 }
 
-export function ClarifyBoard({ data }: { data: EpicWorkspace }) {
+export function ClarifyBoard({ data, past = false }: { data: EpicWorkspace; past?: boolean }) {
   const proposalPath = data.artifacts.find((a) => a.kind === "proposal")?.path ?? null;
   const proposal = useArtifact(data.epic.id, proposalPath);
   const specPaths = data.artifacts.filter((a) => a.kind === "spec").map((a) => a.path);
@@ -121,6 +121,7 @@ export function ClarifyBoard({ data }: { data: EpicWorkspace }) {
         data={data}
         gate={gate.data ?? null}
         deciding={deciding}
+        past={past}
         title="Approve the plan"
         need="approve the plan, or ask for a change."
         after="Approving starts the design."
@@ -130,7 +131,7 @@ export function ClarifyBoard({ data }: { data: EpicWorkspace }) {
   );
 }
 
-export function DesignBoard({ data }: { data: EpicWorkspace }) {
+export function DesignBoard({ data, past = false }: { data: EpicWorkspace; past?: boolean }) {
   const designPath = data.artifacts.find((a) => a.kind === "design")?.path ?? null;
   const design = useArtifact(data.epic.id, designPath);
   const gate = useGate(data, "factory:design-ready");
@@ -195,6 +196,7 @@ export function DesignBoard({ data }: { data: EpicWorkspace }) {
         data={data}
         gate={gate.data ?? null}
         deciding={deciding}
+        past={past}
         title="Approve the design"
         need="approve the design, or ask for a change."
         after={`Approving releases the build${parts && parts.tasks.length > 0 ? `: ${parts.tasks.length} tasks` : ""}. You are asked again only if a builder gets stuck.`}
@@ -263,6 +265,7 @@ function GateDecision({
   data,
   gate,
   deciding,
+  past = false,
   title,
   need,
   after,
@@ -271,6 +274,8 @@ function GateDecision({
   data: EpicWorkspace;
   gate: GatePanelData | null;
   deciding: boolean;
+  /** A finished stage, opened to read it: the decision was made. */
+  past?: boolean;
   title: string;
   need: string;
   after: string;
@@ -295,6 +300,17 @@ function GateDecision({
     },
     onError,
   });
+  if (past) {
+    return (
+      <section className="card">
+        <h2>Decided</h2>
+        <p>
+          <span className="stage-chip done">Done</span> {title.replace(/^Approve the /, "The ")} was approved, and the factory moved on. Who approved it, and when, is
+          under How it got here on the current stage.
+        </p>
+      </section>
+    );
+  }
   if (!deciding) {
     return (
       <section className="card">

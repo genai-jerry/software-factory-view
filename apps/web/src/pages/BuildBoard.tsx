@@ -87,7 +87,7 @@ export function taskWord(t: Task): { word: TaskWord; text: string } {
   return { word: "queued", text: "Waiting" };
 }
 
-export function BuildBoard({ data }: { data: EpicWorkspace }) {
+export function BuildBoard({ data, past = false }: { data: EpicWorkspace; past?: boolean }) {
   const tasks = data.tasks.filter((t) => t.kind !== "test").sort((a, b) => a.number - b.number);
   const words = tasks.map((t) => ({ t, ...taskWord(t) }));
   const built = words.filter((w) => w.word === "done").length;
@@ -146,6 +146,14 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
         <p className="muted">Each task is written, reviewed and tested by the factory before it counts as done. You see only the result.</p>
       </section>
 
+      {past ? (
+        <section className="card">
+          <h2>Built</h2>
+          <p>
+            <span className="stage-chip done">Done</span> Every task was written, reviewed and tested, and joined the item. Each one is above, with its pull request.
+          </p>
+        </section>
+      ) : (
       <section className="card">
         <h2>Your decision</h2>
         {stopped.length > 0 ? (
@@ -164,6 +172,7 @@ export function BuildBoard({ data }: { data: EpicWorkspace }) {
             : "When the build finishes, the tests are run. You are asked again at the release."}
         </p>
       </section>
+      )}
 
       {running.length > 0 && (
         <section className="card">
