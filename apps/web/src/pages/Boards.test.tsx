@@ -195,6 +195,14 @@ describe("BuildBoard", () => {
     expect(tasks.map((t) => taskWord(t).text)).toEqual(["Done", "Stopped · asks you", "Being reviewed", "Waiting on another task"]);
   });
 
+  it("links a task's chip to its live run, and leaves the others as plain words", () => {
+    const writing = task({ id: "w", number: 8, title: "task(34): bring the two test data loaders into one", state: "factory:in-progress", running: true, runningRole: "implementer", runId: "run-42" });
+    const quiet = task({ id: "q", number: 9, title: "task(34): no run yet", state: "factory:in-progress" });
+    renderIn(<BuildBoard data={epic({ state: "factory:design-approved" }, [writing, quiet, tasks[0]!])} />);
+    expect(screen.getByRole("link", { name: /Being written/ })).toHaveAttribute("href", "/runs/run-42");
+    expect(screen.getAllByRole("link", { name: /Being written|Done/ })).toHaveLength(1);
+  });
+
   it("keeps the chip short and names what a task waits on under its title", () => {
     const open = (id: string, title: string) => ({ id, number: 0, title, state: "factory:ready", open: true, htmlUrl: "" });
     const many = task({ id: "e", number: 7, title: "task(34): test data — load DS-1..DS-5", state: "factory:ready", blockedBy: [open("x", "task(34): A sender name"), open("y", "task(34): A lead keeps the number")] });
