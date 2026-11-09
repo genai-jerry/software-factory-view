@@ -250,6 +250,24 @@ describe("GET /api/environments", () => {
     ]);
   });
 
+  it("names the model each run used, live and finished", async () => {
+    deps.cfg.ORCHESTRATOR_URL = "http://127.0.0.1:8080";
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "op";
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      const body = u.includes("/runs?active=true")
+        ? [{ id: "r40", repo: "acme/api", issue: 40, role: "reviewer", started_at: "2026-11-06T05:00:00+00:00", model: "claude-sonnet-5-5" }]
+        : u.endsWith("/runs")
+          ? [{ id: "old", repo: "acme/api", issue: 34, role: "release", outcome: "success", model: "claude-opus-5-5", started_at: "2026-11-06T03:30:00+00:00", finished_at: "2026-11-06T04:00:00+00:00" }]
+          : envs;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    const body = (await environments()).json();
+    expect(body.staging[0].notes[0].model).toBe("claude-opus-5-5"); // finished: from the past list
+    expect(body.sessions.inUse.find((s: { runId: string }) => s.runId === "r40").model).toBe("claude-sonnet-5-5"); // live: from the active list
+    expect(body.staging[0].notes[0].runId).toBe("old");
+  });
+
   it("gives a remembered run no merges when the orchestrator no longer lists it", async () => {
     stub(); // the stub answers /runs with the environments body, which is no list of runs
     const body = (await environments()).json();
