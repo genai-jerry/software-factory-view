@@ -465,5 +465,39 @@ describe("ShapePage for a new product", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/repo", { repoId: "r9" }));
     expect(await screen.findByText(/The idea now lives there/)).toBeInTheDocument();
   });
+
+  it("opens the idea as work from Claude's proposal: writes the requirement first, then opens it", async () => {
+    let specStatus: "idle" | "pending" | "done" = "idle";
+    const proposing = (): ShapeConversation => ({
+      conversation: { ...conversation.conversation, spec: specStatus === "done" ? "## What\nA translator." : null, specStatus },
+      messages: [
+        conversation.messages[0]!,
+        { ...conversation.messages[1]!, mocks: [], bodyHtml: "<p>Ready.</p>", workProposal: { title: "Mirror: camera translator", fast: false } },
+      ],
+    });
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: summaries };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return proposing();
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path === "/api/shape/c1/spec") {
+        specStatus = "done";
+        return { specStatus: "pending" };
+      }
+      return { number: 5, htmlUrl: "https://github.com/genai-jerry/beacon-web/issues/5" };
+    });
+    renderAt("/shape/c1");
+    const card = await screen.findByRole("region", { name: "Open as work" });
+    expect(within(card).getByLabelText("Name it")).toHaveValue("Mirror: camera translator");
+    expect(api.post).not.toHaveBeenCalled();
+    await userEvent.click(within(card).getByRole("button", { name: "Write the requirement and open it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/spec"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Mirror: camera translator", fast: false }), { timeout: 8_000 });
+    const order = vi.mocked(api.post).mock.calls.map((c) => c[0]);
+    expect(order.indexOf("/api/shape/c1/spec")).toBeLessThan(order.indexOf("/api/shape/c1/work"));
+  }, 12_000);
 });
 

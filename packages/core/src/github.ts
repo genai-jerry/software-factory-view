@@ -664,6 +664,18 @@ export class InstallationClient extends RepoReader {
     await this.req("POST", `/repos/${owner}/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: fromSha });
   }
 
+  /** Merge a PR as the App: only for one Compass opened on a repository it just created (the OpenSpec scaffold). */
+  async mergePull(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    opts?: { method?: "merge" | "squash" | "rebase" },
+  ): Promise<{ sha: string; merged: boolean }> {
+    return (await this.req("PUT", `/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
+      merge_method: opts?.method ?? "squash",
+    })) as never;
+  }
+
   /** Delete a branch ref; a branch that is already gone is success, not failure. */
   async deleteBranch(owner: string, repo: string, branch: string): Promise<void> {
     try {

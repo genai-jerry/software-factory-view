@@ -704,6 +704,8 @@ export interface ShapeMessage {
   diagrams?: Array<{ code: string }>;
   /** A repository Claude proposed for a new product; Compass asks the person to confirm it. */
   repoProposal?: { name: string; description: string; private: boolean; project: string } | null;
+  /** Claude proposed opening the idea as work; Compass asks the person to confirm it. */
+  workProposal?: { title: string; fast: boolean } | null;
   attachments: ShapeAttachment[];
   /** An answer is written in the background: pending until it lands, failed with `error` when it did not. */
   status?: "pending" | "done" | "failed";

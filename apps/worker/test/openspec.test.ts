@@ -67,6 +67,12 @@ class FakeGitHub implements OpenspecRepoClient {
   async listPulls() {
     return this.pulls;
   }
+
+  merged: number[] = [];
+  async mergePull(_o: string, _r: string, n: number) {
+    this.merged.push(n);
+    return { sha: "m", merged: true };
+  }
 }
 
 const scaffold = async (dir: string) => {
@@ -108,6 +114,17 @@ describe("runOpenspecInit", () => {
     expect(row?.step).toBe("openspec");
     expect(row?.status).toBe("ok");
     expect(row?.detail).toMatchObject({ pushed: 2, prNumber: 1 });
+  });
+
+  it("merges the PR itself for a repository Compass just created, and only then", async () => {
+    const gh = new FakeGitHub();
+    await runOpenspecInit(db, cfg, auth, { repoId, autoMerge: true }, { scaffold, client: gh });
+    expect(gh.merged).toEqual([1]);
+    expect((await stepRow())?.detail).toMatchObject({ prNumber: 1, merged: true });
+
+    const other = new FakeGitHub();
+    await runOpenspecInit(db, cfg, auth, { repoId }, { scaffold, client: other });
+    expect(other.merged).toEqual([]); // an existing repository: a person reviews it
   });
 
   it("is a no-op when openspec/ already exists on the default branch", async () => {

@@ -140,7 +140,8 @@ describe("creating a repository for a new product", () => {
     expect(project.name).toBe("Lens");
     const steps = (await deps.dbh.db.select().from(onboardingRuns).where(eq(onboardingRuns.repoId, repo.id))).map((s) => `${s.step}:${s.status}`);
     expect(steps.sort()).toEqual(["labels:ok", "profile:ok", "stubs:ok"]);
-    expect(queued).toHaveLength(1); // OpenSpec's scaffold
+    expect(queued).toHaveLength(1); // OpenSpec's scaffold, merged as soon as it opens
+    expect((queued[0] as unknown[])[1]).toMatchObject({ repoId: repo.id, autoMerge: true });
   });
 
   it("refuses someone else's personal account, and a bad name", async () => {

@@ -154,11 +154,38 @@ export function readRepoProposal(raw: string): RepoProposal | null {
   }
 }
 
-export function splitMocks(body: string): { text: string; mocks: Array<{ html: string }>; diagrams: Array<{ code: string }>; repoProposal: RepoProposal | null } {
+export interface WorkProposal {
+  title: string;
+  fast: boolean;
+}
+
+/** A ```open-as-work block: the title the work is opened under, and the fast lane only when asked. */
+export function readWorkProposal(raw: string): WorkProposal | null {
+  try {
+    const j = JSON.parse(raw) as Record<string, unknown>;
+    const title = typeof j.title === "string" ? j.title.trim().slice(0, 120) : "";
+    return title ? { title, fast: j.fast === true } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function splitMocks(body: string): {
+  text: string;
+  mocks: Array<{ html: string }>;
+  diagrams: Array<{ code: string }>;
+  repoProposal: RepoProposal | null;
+  workProposal: WorkProposal | null;
+} {
   const mocks: Array<{ html: string }> = [];
   const diagrams: Array<{ code: string }> = [];
   let repoProposal: RepoProposal | null = null;
+  let workProposal: WorkProposal | null = null;
   const text = body
+    .replace(/```open-as-work[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
+      workProposal = readWorkProposal(inner) ?? workProposal;
+      return "*(Ready to open as work — confirm it below.)*";
+    })
     .replace(/```create-repository[ \t]*\n([\s\S]*?)```/g, (_m, inner: string) => {
       repoProposal = readRepoProposal(inner) ?? repoProposal;
       return "*(The proposed repository is below — check it, then Create it.)*";
@@ -171,7 +198,7 @@ export function splitMocks(body: string): { text: string; mocks: Array<{ html: s
       diagrams.push({ code: inner.trim().slice(0, MAX_DIAGRAM_CHARS) });
       return `*(Diagram ${diagrams.length} — shown below.)*`;
     });
-  return { text: text.trim(), mocks, diagrams, repoProposal };
+  return { text: text.trim(), mocks, diagrams, repoProposal, workProposal };
 }
 
 function firstLine(text: string): string {
@@ -180,7 +207,8 @@ function firstLine(text: string): string {
 }
 
 function messageDto(m: Message) {
-  const { text, mocks, diagrams, repoProposal } = m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [], diagrams: [], repoProposal: null };
+  const { text, mocks, diagrams, repoProposal, workProposal } =
+    m.role === "assistant" ? splitMocks(m.body) : { text: m.body, mocks: [], diagrams: [], repoProposal: null, workProposal: null };
   return {
     id: m.id,
     role: m.role,
@@ -189,6 +217,7 @@ function messageDto(m: Message) {
     mocks,
     diagrams,
     repoProposal,
+    workProposal,
     attachments: (m.attachments ?? []).map((a) => ({ ...a, url: `/api/shape/attachments/${a.id}` })),
     status: m.status,
     error: m.error,
