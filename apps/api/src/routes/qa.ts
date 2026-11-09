@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { decryptSecret } from "@console/core";
 import { CLI_INSTRUCTIONS, askInsight, citationsFor, sourcesBlock, type InsightProvider, type InsightSource } from "@console/insight";
 import {
@@ -269,6 +270,7 @@ async function runAsk(
         instructions: CLI_INSTRUCTIONS,
         branch: `factory/epic-${epic.number}`,
         claudeCodeOauthToken: claudeToken,
+        mcpServers: await mcpPayloadFor(deps, repo.orgId),
       });
       if ("ok" in got) {
         result = {

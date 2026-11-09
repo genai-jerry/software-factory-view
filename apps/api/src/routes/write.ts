@@ -1,3 +1,4 @@
+import { mcpPayloadFor } from "../mcp-servers.js";
 import { decisionMarker, threadMarker } from "@console/core";
 import { auditLog, comments, decisions, issues, repos, threadEntries, threads } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
@@ -168,6 +169,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       branch: `factory/epic-${epic.number}`,
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+      mcpServers: await mcpPayloadFor(deps, thread.orgId),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
 
@@ -290,6 +292,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       ...(epic ? { branch: `factory/epic-${epic.number}` } : {}),
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
+      mcpServers: await mcpPayloadFor(deps, issue.orgId),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
     await db.insert(auditLog).values({
