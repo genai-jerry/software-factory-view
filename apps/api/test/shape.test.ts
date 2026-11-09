@@ -622,7 +622,31 @@ describe("Claude proposes a repository for a new product", () => {
     const next = calls.find((c) => c.url === `${ORCH}/ask`)!;
     expect(next.body).toMatchObject({ owner: "acme", repo: "app" });
     expect(next.body).not.toHaveProperty("session");
+    // Once it is work, it stays where it was filed.
+    await d.update(shapeConversations).set({ issueUrl: "https://github.com/acme/app/issues/5" }).where(eq(shapeConversations.id, convId));
     expect((await app.inject({ method: "POST", url: `/api/shape/${convId}/repo`, headers: headers(jerryCookie), payload: { repoId: id.repo } })).statusCode).toBe(409);
+  });
+
+  it("lets an idea started under a product move into a new repository too", async () => {
+    const convId = ((await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } })).json() as { id: string }).id;
+    const moved = await app.inject({ method: "POST", url: `/api/shape/${convId}/repo`, headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    expect(moved.statusCode).toBe(200);
+  });
+
+  it("does not resume a session that started on other instructions", async () => {
+    const { resumableSession, storedSession } = await import("../src/routes/shape.js");
+    expect(resumableSession(storedSession("abc"))).toBe("abc");
+    expect(resumableSession("abc")).toBeNull(); // stored before versions were kept
+    expect(resumableSession("0000000000:abc")).toBeNull(); // other instructions
+
+    const d = deps.dbh.db;
+    const convId = ((await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { newProduct: true } })).json() as { id: string }).id;
+    await d.update(shapeConversations).set({ askSession: "old-session", askSessionAt: new Date() }).where(eq(shapeConversations.id, convId));
+    const calls = stubNetwork("Fresh.", { session: "s2" });
+    await say(convId, { text: "Hello again" });
+    expect(calls.find((c) => c.url === `${ORCH}/ask`)!.body).not.toHaveProperty("session");
+    const row = (await d.select().from(shapeConversations).where(eq(shapeConversations.id, convId)))[0]!;
+    expect(row.askSession).toBe(storedSession("s2"));
   });
 });
 

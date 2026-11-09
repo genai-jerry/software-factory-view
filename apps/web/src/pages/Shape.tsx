@@ -468,7 +468,10 @@ function Conversation({ id }: { id: string }) {
                 onRetry={(mid) => retry.mutate(mid)}
                 retrying={retry.isPending}
                 repoCard={
-                  newProduct && conversation.orgId && m.id === lastProposalId ? { convId: conversation.id, orgId: conversation.orgId, onCreated: refresh } : undefined
+                  // Any idea not yet work: one started under a product can still get a repository of its own.
+                  !conversation.epic && !conversation.issueUrl && opened === null && conversation.orgId && m.id === lastProposalId
+                    ? { convId: conversation.id, orgId: conversation.orgId, onCreated: refresh }
+                    : undefined
                 }
               />
             ))}

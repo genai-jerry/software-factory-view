@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mcpPayloadFor } from "../mcp-servers.js";
 import { sourcesBlock } from "@console/insight";
 import { issues, projects, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
@@ -113,6 +114,27 @@ export interface RepoProposal {
   private: boolean;
   /** "new", or the name of an existing project. */
   project: string;
+}
+
+/**
+ * A resumed Claude session is sent the question alone: the instructions it
+ * started with stay in force. So a session is resumed only when it started
+ * on today's SHAPE_INSTRUCTIONS; after a change, the next message starts
+ * cold with the full conversation and the new instructions. The version
+ * rides in the stored session id ("<version>:<id>").
+ */
+export const SHAPE_INSTRUCTIONS_VERSION = createHash("sha256").update(SHAPE_INSTRUCTIONS).digest("hex").slice(0, 10);
+
+export function storedSession(session: string): string {
+  return `${SHAPE_INSTRUCTIONS_VERSION}:${session}`;
+}
+
+/** The session id to resume, or null when it started on other instructions (or before versions were kept). */
+export function resumableSession(stored: string | null): string | null {
+  if (!stored) return null;
+  const at = stored.indexOf(":");
+  if (at < 0 || stored.slice(0, at) !== SHAPE_INSTRUCTIONS_VERSION) return null;
+  return stored.slice(at + 1) || null;
 }
 
 /** A ```create-repository block (SHAPE_INSTRUCTIONS): JSON, checked; anything else is no proposal. */
@@ -513,7 +535,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       // A session less than a day old is resumed: the model keeps what it
       // already read and the transcript is not sent again. Older than that,
       // or never opened, the message starts cold with the full grounding.
-      const session = conv.askSession && conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? conv.askSession : null;
+      const session = conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? resumableSession(conv.askSession) : null;
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
@@ -539,7 +561,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const nextSession = got.session ?? (got.resumed === true ? session : null);
       await db
         .update(shapeConversations)
-        .set({ ...(nextSession ? { askSession: nextSession, askSessionAt: new Date() } : { askSession: null, askSessionAt: null }), updatedAt: new Date() })
+        .set({ ...(nextSession ? { askSession: storedSession(nextSession), askSessionAt: new Date() } : { askSession: null, askSessionAt: null }), updatedAt: new Date() })
         .where(eq(shapeConversations.id, conv.id));
       await db
         .update(shapeMessages)
@@ -731,7 +753,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!ctx) return;
     const conv = await own(ctx, req.params.id, reply);
     if (!conv) return;
-    if (conv.scope !== "new") return reply.code(409).send({ error: "this idea already has a repository" });
+    // Any idea that is not work yet: one started under Beacon can become a product of its own here.
+    if (conv.epicIssueId || conv.issueUrl) return reply.code(409).send({ error: "this idea is already work in a repository" });
     const pick = (await orgRepos(conv.orgId)).find((r) => r.id === req.body?.repoId);
     if (!pick) return reply.code(400).send({ error: "that repository is not set up for the factory" });
     await db
