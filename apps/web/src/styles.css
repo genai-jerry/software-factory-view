@@ -164,6 +164,8 @@ input, textarea, select {
   min-height: var(--target);
 }
 textarea { min-height: 5rem; resize: vertical; }
+/* Checkboxes and radios keep their own size: the rule above is for text fields (Tools showed them as wide boxes). */
+input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; padding: 0; margin: 0 0.35rem 0 0; vertical-align: middle; accent-color: var(--accent); }
 
 .skip-link {
   position: absolute;
