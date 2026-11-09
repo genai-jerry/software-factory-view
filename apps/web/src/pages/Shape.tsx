@@ -60,6 +60,12 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** A project's name from its repository's: "mirror" → "Mirror", "lens-camera-app" → "Lens camera app". */
+export function projectNameFrom(repoName: string): string {
+  const words = repoName.trim().replace(/[-_.]+/g, " ").trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : "";
+}
+
 /** A repository name from an idea's title: "Lens — camera translator" → "lens-camera-translator". */
 function slugName(title: string): string {
   return (
@@ -388,6 +394,24 @@ function Conversation({ id }: { id: string }) {
   const lastProposalId = [...messages].reverse().find((m) => m.repoProposal)?.id;
   const lastWorkProposal = [...messages].reverse().find((m) => m.workProposal);
   const notWorkYet = !conversation.epic && !conversation.issueUrl && opened === null;
+  // Where the idea stands and what the person does next, in one line — the
+  // page has several buttons and cards, and the chat alone does not say.
+  const newest = messages.at(-1);
+  const cardWaiting = notWorkYet && newest?.role === "assistant" && Boolean((newest.repoProposal && newest.id === lastProposalId) || (newest.workProposal && newest.id === lastWorkProposal?.id));
+  const nextStep: string | null =
+    conversation.epic || !notWorkYet
+      ? null // about an epic, or just opened: the banner below says where it went
+      : specPending
+        ? "Compass is writing the requirement from this conversation. It takes a minute or two and opens beside the chat."
+        : cardWaiting
+          ? "check Claude's proposal in the card under its last answer, and press its button. Replying “yes” in the chat does not do it."
+          : messages.length === 0
+            ? null
+            : newProduct
+              ? "this product has no repository yet. Ask Claude to propose one, or press Open as work and create it there."
+              : conversation.spec
+                ? "read the requirement, then press Open as work — or ask Claude to open it as work."
+                : "when the idea is clear, press Write the requirement — or ask Claude to open it as work.";
   const where = acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo ?? "");
 
   return (
@@ -437,9 +461,14 @@ function Conversation({ id }: { id: string }) {
         </div>
       </header>
       {writeSpec.isError && <p className="decision-failure">{failureText(writeSpec.error)}</p>}
+      {nextStep && (
+        <p className="shape-next" role="status">
+          <strong>Next:</strong> {nextStep}
+        </p>
+      )}
       {(opened || conversation.issueUrl) && !conversation.epic && (
         <div className="banner success" role="status">
-          Opened as work: {opened?.epicId ? <Link to={`/work/${opened.epicId}`}>{opened.title}</Link> : <a href={opened?.htmlUrl ?? conversation.issueUrl ?? "#"} target="_blank" rel="noreferrer">{opened?.title ?? conversation.title}</a>}. The factory reads it and comes back with a plan.
+          Opened as work: {opened?.epicId ? <Link to={`/work/${opened.epicId}`}>{opened.title}</Link> : <a href={opened?.htmlUrl ?? conversation.issueUrl ?? "#"} target="_blank" rel="noreferrer">{opened?.title ?? conversation.title}</a>}. The factory reads it and comes back with a plan, which waits in Decisions for you to approve.
         </div>
       )}
 
@@ -917,7 +946,9 @@ function useNewRepoForm({
   });
   const usable = (accounts.data?.accounts ?? []).filter((a) => a.canCreate);
   const chosenAccount = estateId || usable[0]?.estateId || "";
-  const product = productName.trim() || "this product";
+  // A new project is named by the person; it starts as the repository's name ("mirror" → "Mirror"), never a sentence.
+  const [newProjectName, setNewProjectName] = useState<string | null>(null);
+  const product = (newProjectName ?? projectNameFrom(repoName)).trim() || productName.trim() || "New product";
 
   const create = async (): Promise<{ repoId: string; fullName: string; htmlUrl?: string }> => {
     const made = await api.post<{ repoId: string; fullName: string; htmlUrl?: string; setUp: boolean; error?: string; projectId?: string }>(`/api/orgs/${orgId}/repos`, {
@@ -950,7 +981,7 @@ function useNewRepoForm({
       </select>
       <label htmlFor={`${idPrefix}-project`}>Project</label>
       <select id={`${idPrefix}-project`} value={chosenProject} onChange={(e) => setProjectId(e.target.value)}>
-        <option value={NEW_PROJECT}>A new project: {product}</option>
+        <option value={NEW_PROJECT}>A new project</option>
         {knownProjects.map(([pid, pname]) => (
           <option key={pid} value={pid}>
             {pname}
@@ -958,6 +989,12 @@ function useNewRepoForm({
           </option>
         ))}
       </select>
+      {chosenProject === NEW_PROJECT && (
+        <>
+          <label htmlFor={`${idPrefix}-project-name`}>Project name</label>
+          <input id={`${idPrefix}-project-name`} value={newProjectName ?? projectNameFrom(repoName)} onChange={(e) => setNewProjectName(e.target.value)} maxLength={80} />
+        </>
+      )}
       <label htmlFor={`${idPrefix}-repo-name`}>Repository name</label>
       <input id={`${idPrefix}-repo-name`} value={repoName} onChange={(e) => setRepoName(e.target.value)} />
       <label className="shape-fast">
@@ -969,7 +1006,7 @@ function useNewRepoForm({
       </p>
     </>
   );
-  return { fields, create, ready: Boolean(chosenAccount && repoName.trim()) };
+  return { fields, create, ready: Boolean(chosenAccount && repoName.trim() && (chosenProject !== NEW_PROJECT || product.trim())) };
 }
 
 /**

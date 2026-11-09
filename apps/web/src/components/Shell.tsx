@@ -1,3 +1,4 @@
+import { UpdateBar } from "./UpdateBar.js";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -82,6 +83,7 @@ export function Shell({
           </span>
         </header>
 
+        <UpdateBar />
         {halt && location.pathname === "/" && (
           <HaltBar title={halt.title} detail={halt.detail} actionLabel={halt.actionLabel} onAction={halt.onAction} />
         )}

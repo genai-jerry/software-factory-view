@@ -396,7 +396,7 @@ describe("ShapePage for a new product", () => {
         name: "lens-camera-translator",
         description: "Lens — camera translator",
         private: true,
-        projectName: "Lens — camera translator",
+        projectName: "Lens camera translator", // from the repository's name, editable
       }),
     );
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Lens — camera translator", fast: false, repoId: "r9" }));
@@ -499,5 +499,47 @@ describe("ShapePage for a new product", () => {
     const order = vi.mocked(api.post).mock.calls.map((c) => c[0]);
     expect(order.indexOf("/api/shape/c1/spec")).toBeLessThan(order.indexOf("/api/shape/c1/work"));
   }, 12_000);
+
+  it("says what to do next, and that a typed yes does not act on a proposal", async () => {
+    const waiting: ShapeConversation = {
+      conversation: { ...conversation.conversation, orgId: "o1" },
+      messages: [conversation.messages[0]!, { ...conversation.messages[1]!, mocks: [], workProposal: { title: "Panel", fast: false } }],
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: summaries };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return waiting;
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    renderAt("/shape/c1");
+    expect(await screen.findByText(/press its button\. Replying “yes” in the chat does not do it/)).toBeInTheDocument();
+  });
+
+  it("lets the person name a new project, starting from the repository's name", async () => {
+    const fresh: ShapeConversation = {
+      conversation: { ...conversation.conversation, title: "Mirror", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What\nAn app.", homes: [] },
+      messages: conversation.messages,
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: [] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return fresh;
+      if (path === "/api/orgs/o1/repo-homes") return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }] };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    vi.mocked(api.post).mockImplementation(async (path: string) =>
+      path === "/api/orgs/o1/repos" ? { repoId: "r9", fullName: "genai-jerry/mirror", setUp: true } : { number: 1, htmlUrl: "https://github.com/x/1" },
+    );
+    renderAt("/shape/c1");
+    await userEvent.click(await screen.findByRole("button", { name: "Open as work" }));
+    const name = await screen.findByLabelText("Project name");
+    expect(name).toHaveValue("Mirror");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Mirror translator");
+    await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ name: "mirror", projectName: "Mirror translator" })));
+  });
 });
 
