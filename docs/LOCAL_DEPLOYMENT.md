@@ -77,10 +77,10 @@ Re-enable later with `gh workflow enable`.
 
 ## Troubleshooting
 
-- **`sf.genaipeople.com` shows orchestrator JSON instead of the Console** — Traefik
+- **`compass.genaipeople.com` shows orchestrator JSON instead of the Console** — Traefik
   is routing the Console hostname to `factory-orchestrator`. The orchestrator's
   GitHub Environment variable `PUBLIC_BASE_URL` must **not** be the same as the
-  Console's `PUBLIC_ORIGIN` (`https://sf.genaipeople.com`). Set orchestrator
+  Console's `PUBLIC_ORIGIN` (`https://compass.genaipeople.com`). Set orchestrator
   `PUBLIC_BASE_URL` to a different host (e.g. `https://factory.genaipeople.com`)
   or keep it internal-only. On the VPS, run
   [`scripts/fix-vps-host-routing.sh`](../scripts/fix-vps-host-routing.sh) (or
