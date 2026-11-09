@@ -169,6 +169,18 @@ describe("ReleaseBoard at production", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Release to staging" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/epics/e1/gate/approve", { acknowledgeOpenQuestions: false }));
   });
+
+  it("says Approved on the Staging row once the release is approved, not Your decision", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.endsWith("/gate"))
+        return { ...gate, gate: "staging", state: "factory:epic-ready", releasePrs: [], releaseApproved: { by: "genai-jerry", at: null, ask: null, askLink: null } };
+      if (path.endsWith("/timeline")) return { events: [] };
+      return {};
+    });
+    renderIn(<ReleaseBoard data={epic({ state: "factory:epic-ready" })} />);
+    expect(await screen.findByText(/Approved by @genai-jerry\. The factory is finishing it/)).toBeInTheDocument();
+    expect(screen.queryByText("Your decision", { selector: ".stage-chip" })).toBeNull();
+  });
 });
 
 describe("BuildBoard", () => {

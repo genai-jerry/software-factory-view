@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE, namesOf, peopleLabel, plainTitle } from "../lib/labels.js";
@@ -24,6 +24,7 @@ import { ClarifyBoard, DesignBoard } from "./PlanBoards.js";
  */
 export function WorkItemPage({ me: _me }: { me: Me }) {
   const { id = "" } = useParams();
+  const [search] = useSearchParams();
   const ws = useQuery({
     queryKey: ["epic", id],
     queryFn: () => api.get<EpicWorkspace>(`/api/epics/${id}`),
@@ -35,6 +36,12 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
   if (/^test\(\d+\)/i.test(data.epic.title)) return <CaseItemPage data={data} />;
   const cases = data.tasks.filter((t) => t.kind === "test");
   const stage = stageFor(data, cases);
+  // A finished stage can be opened to read what was done there (?stage=clarify);
+  // the current one is the default, and a stage not reached yet cannot be opened.
+  const asked = search.get("stage") as Stage | null;
+  const at = stage ? STAGES.indexOf(stage) : -1;
+  const viewing: Stage | null = asked && STAGES.includes(asked) && STAGES.indexOf(asked) < at ? asked : stage;
+  const past = viewing !== stage;
 
   return (
     <div className="work-item">
@@ -63,21 +70,27 @@ export function WorkItemPage({ me: _me }: { me: Me }) {
           <Link to={`/epics/${data.epic.id}`}>Engineers' view</Link>
         </p>
       </header>
-      <StageRail current={stage} state={data.epic.state} />
+      <StageRail current={stage} viewing={viewing} state={data.epic.state} />
+      {past && viewing && (
+        <p className="wi-past" role="status">
+          <span className="stage-chip done">Done</span> You are reading what was done at <strong>{STAGE_LABEL[viewing]}</strong>.{" "}
+          <Link to="?">Back to {stage ? STAGE_LABEL[stage] : "where it is now"}</Link>
+        </p>
+      )}
       <FactoryQuiet data={data} />
 
       <div className="wi-body">
         <div className="wi-main">
-          {stage === "test" ? (
+          {viewing === "test" ? (
             <TestBoard data={data} cases={cases} />
-          ) : stage === "release" ? (
+          ) : viewing === "release" ? (
             <ReleaseBoard data={data} />
-          ) : stage === "build" ? (
-            <BuildBoard data={data} />
-          ) : stage === "clarify" ? (
-            <ClarifyBoard data={data} />
-          ) : stage === "design" ? (
-            <DesignBoard data={data} />
+          ) : viewing === "build" ? (
+            <BuildBoard data={data} past={past} />
+          ) : viewing === "clarify" ? (
+            <ClarifyBoard data={data} past={past} />
+          ) : viewing === "design" ? (
+            <DesignBoard data={data} past={past} />
           ) : (
             <section className="card">
               <h2>{peopleLabel(data.epic.state)}</h2>
@@ -171,16 +184,35 @@ function stageFor(data: EpicWorkspace, cases: EpicWorkspace["tasks"]): Stage | n
   return !stillBuilding && (testing || retest) ? "test" : base;
 }
 
-function StageRail({ current, state }: { current: Stage | null; state: string | null }) {
+function StageRail({ current, viewing, state }: { current: Stage | null; viewing: Stage | null; state: string | null }) {
   const at = current ? STAGES.indexOf(current) : -1;
   return (
     <nav aria-label="Stage" className="wi-rail">
-      {STAGES.map((s, i) => (
-        <span key={s} className={`wi-stage${i < at ? " done" : i === at ? " now" : ""}`} aria-current={i === at ? "step" : undefined}>
-          <span className="dot" />
-          {STAGE_LABEL[s]}
-        </span>
-      ))}
+      {STAGES.map((s, i) => {
+        const cls = `wi-stage${i < at ? " done" : i === at ? " now" : ""}${s === viewing ? " viewing" : ""}`;
+        const inner = (
+          <>
+            <span className="dot" />
+            {STAGE_LABEL[s]}
+          </>
+        );
+        // Done and current stages open their board; later ones have nothing to show yet.
+        return i <= at ? (
+          <Link
+            key={s}
+            to={i === at ? "?" : `?stage=${s}`}
+            className={cls}
+            aria-current={i === at ? "step" : undefined}
+            title={i < at ? `See what was done at ${STAGE_LABEL[s]}` : undefined}
+          >
+            {inner}
+          </Link>
+        ) : (
+          <span key={s} className={cls}>
+            {inner}
+          </span>
+        );
+      })}
       {at < 0 && <span className="stage-chip halt">{peopleLabel(state)}</span>}
     </nav>
   );

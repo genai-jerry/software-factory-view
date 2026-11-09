@@ -20,11 +20,11 @@ const { WorkItemPage } = await import("./WorkItem.js");
 
 const me: Me = { login: "sowmya", name: "Sowmya", avatarUrl: null, orgs: [] };
 
-function renderItem() {
+function renderItem(path = "/work/e35") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/work/e35"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/work/:id" element={<WorkItemPage me={me} />} />
         </Routes>
@@ -357,3 +357,45 @@ describe("Discuss in Shape", () => {
     expect(await screen.findByText("Shape page")).toBeInTheDocument();
   });
 });
+
+describe("WorkItemPage: reading a finished stage", () => {
+  const atRelease: EpicWorkspace = { ...epic, epic: { ...epic.epic, state: "factory:epic-ready", labels: ["factory:epic-ready"] } };
+  beforeEach(() => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return atRelease;
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      if (path.startsWith("/api/epics/e35/timeline")) return { events: [] };
+      return {};
+    });
+  });
+
+  it("links the finished stages, not the ones ahead", async () => {
+    renderItem();
+    const rail = await screen.findByRole("navigation", { name: "Stage" });
+    expect(within(rail).getByRole("link", { name: /Clarify/ })).toHaveAttribute("href", "/work/e35?stage=clarify");
+    expect(within(rail).getByRole("link", { name: /Design/ })).toHaveAttribute("href", "/work/e35?stage=design");
+    expect(within(rail).getByRole("link", { name: /Release/ })).toHaveAttribute("aria-current", "step");
+  });
+
+  it("shows what was done at Clarify, marked done, with no approve button", async () => {
+    renderItem("/work/e35?stage=clarify");
+    expect(await screen.findByText(/You are reading what was done at/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Decided" })).toBeInTheDocument();
+    expect(screen.getByText(/The plan was approved, and the factory moved on/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to Release" })).toBeInTheDocument();
+  });
+
+  it("ignores a stage the item has not reached", async () => {
+    const atDesign: EpicWorkspace = { ...epic, epic: { ...epic.epic, state: "factory:spec-approved", labels: [] }, tasks: [] };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/epics/e35") return atDesign;
+      if (path.startsWith("/api/epics/e35/qa")) return { enabled: false, provider: null, model: null, budget: null, conversations: [] };
+      return {};
+    });
+    renderItem("/work/e35?stage=release");
+    await screen.findByRole("navigation", { name: "Stage" });
+    expect(screen.queryByText(/You are reading what was done at/)).toBeNull();
+  });
+});
+

@@ -1616,3 +1616,9 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 
 /* Shape: where the idea stands and what to do next. */
 .shape-next { margin: 0.25rem 0 0.75rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--accent); background: var(--bg-raised); }
+
+/* Work item: the stage rail opens finished stages; a note says when one is being read. */
+a.wi-stage { text-decoration: none; color: inherit; cursor: pointer; }
+a.wi-stage:hover { text-decoration: underline; }
+.wi-stage.viewing { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+.wi-past { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--green); background: var(--bg-raised); }

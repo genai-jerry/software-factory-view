@@ -60,7 +60,9 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
           </div>
           <div className={`rel-step ${atStaging ? "now" : atProduction || live ? "done" : ""}`}>
             <span className="rel-name">Staging</span>
-            {atStaging ? (
+            {atStaging && gate.data?.releaseApproved ? (
+              <span className="stage-chip wait">Approved</span>
+            ) : atStaging ? (
               <span className="stage-chip decide">Your decision</span>
             ) : atProduction ? (
               <span className="stage-chip wait">Running</span>
@@ -70,7 +72,10 @@ export function ReleaseBoard({ data }: { data: EpicWorkspace }) {
               <span className="stage-chip">Not yet</span>
             )}
             <span className="muted">
-              {atStaging && "Goes to the staging branch when you release it."}
+              {atStaging &&
+                (gate.data?.releaseApproved
+                  ? `Approved by @${gate.data.releaseApproved.by}. The factory is finishing it, then moves it onto staging.`
+                  : "Goes to the staging branch when you release it.")}
               {atProduction && "On staging. The checks the Release Manager ran are in its report below."}
               {live && "Was on staging before it shipped."}
             </span>
