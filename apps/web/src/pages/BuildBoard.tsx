@@ -65,12 +65,16 @@ function roleStep(t: Task): NextStep {
 
 export function taskWord(t: Task): { word: TaskWord; text: string } {
   const s = t.state ?? "";
-  if (!t.open || s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed") return { word: "done", text: "Done" };
+  // A live run speaks first: the label can already say done while the run that
+  // moved it is still going (the Release Manager merges a task onto the epic,
+  // then carries on with the epic's release).
+  const merged = s === "factory:on-epic" || s === "factory:in-staging" || s === "factory:deployed";
+  if (t.open && t.running && t.runningRole === "release") return { word: "merging", text: merged ? "Merged · release running" : "Being merged" };
+  if (t.open && t.running && t.runningRole === "reviewer") return { word: "reviewing", text: "Being reviewed" };
+  if (t.open && t.running && t.runningRole === "qa") return { word: "testing", text: "Being tested" };
+  if (t.open && t.running && !merged) return { word: "writing", text: "Being written" };
+  if (!t.open || merged) return { word: "done", text: "Done" };
   if (s === "factory:blocked") return { word: "stopped", text: "Stopped · asks you" };
-  if (t.running && t.runningRole === "reviewer") return { word: "reviewing", text: "Being reviewed" };
-  if (t.running && t.runningRole === "qa") return { word: "testing", text: "Being tested" };
-  if (t.running && t.runningRole === "release") return { word: "merging", text: "Being merged" };
-  if (t.running) return { word: "writing", text: "Being written" };
   const role = roleStartOf(t);
   if (role && (s === "factory:in-review" || s === "factory:in-test" || s === "factory:ready-to-ship")) {
     return { word: role.word, text: `Waiting for you to start the ${role.noun}` };
