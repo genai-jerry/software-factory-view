@@ -836,6 +836,17 @@ function OpenAsWork({
   const [repoName, setRepoName] = useState(() => slugName(defaultTitle));
   const [estateId, setEstateId] = useState("");
   const [privateRepo, setPrivateRepo] = useState(true);
+  // Most people work inside one project: a repository made while focused on
+  // one joins it (a mobile app for Beacon), unless they say it is a product of its own.
+  const focus = useFocus();
+  const projectList = useQuery({ queryKey: ["work-targets"], queryFn: () => api.get<{ targets: Target[] }>("/api/work/targets"), enabled: creating });
+  const knownProjects = [
+    ...new Map((projectList.data?.targets ?? []).filter((t) => t.projectId).map((t) => [t.projectId!, t.projectName ?? "the project"])).entries(),
+  ];
+  const NEW_PROJECT = "";
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const chosenProject = projectId ?? (knownProjects.some(([pid]) => pid === focus.project) ? focus.project : NEW_PROJECT);
+  const chosenProjectName = knownProjects.find(([pid]) => pid === chosenProject)?.[1];
   const accounts = useQuery({
     queryKey: ["repo-homes", orgId],
     queryFn: () => api.get<{ canEdit: boolean; accounts: Array<{ estateId: string; login: string; type: string; canCreate: boolean }> }>(`/api/orgs/${orgId}/repo-homes`),
@@ -847,15 +858,17 @@ function OpenAsWork({
     mutationFn: async () => {
       let target = repoId;
       if (creating) {
-        const made = await api.post<{ repoId: string; fullName: string; setUp: boolean; error?: string }>(`/api/orgs/${orgId}/repos`, {
+        const made = await api.post<{ repoId: string; fullName: string; setUp: boolean; error?: string; projectId?: string }>(`/api/orgs/${orgId}/repos`, {
           estateId: chosenAccount,
           name: repoName.trim(),
           description: title.trim(),
           private: privateRepo,
-          projectName: title.trim(),
+          projectName: chosenProjectName ?? title.trim(),
         });
         if (!made.setUp) throw new Error(made.error ?? `${made.fullName} was created, but not set up. Finish it on Onboarding.`);
         target = made.repoId;
+        // A product of its own: look at its project next, or the new work is filtered out of view.
+        if (made.projectId && made.projectId !== focus.project && focus.project) focus.setProject(made.projectId);
       }
       return api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, {
         title: title.trim(),
@@ -901,14 +914,25 @@ function OpenAsWork({
                   </option>
                 ))}
               </select>
+              <label htmlFor="shape-project">Project</label>
+              <select id="shape-project" value={chosenProject} onChange={(e) => setProjectId(e.target.value)}>
+                <option value={NEW_PROJECT}>A new project: {title.trim() || "this product"}</option>
+                {knownProjects.map(([pid, pname]) => (
+                  <option key={pid} value={pid}>
+                    {pname}
+                    {pid === focus.project ? " (the project you are in)" : ""}
+                  </option>
+                ))}
+              </select>
               <label htmlFor="shape-repo-name">Repository name</label>
               <input id="shape-repo-name" value={repoName} onChange={(e) => setRepoName(e.target.value)} />
               <label className="shape-fast">
                 <input type="checkbox" checked={privateRepo} onChange={(e) => setPrivateRepo(e.target.checked)} /> Private
               </label>
               <p className="muted shape-hint">
-                Compass creates it with main and staging branches, the factory&apos;s files and labels, in a project of its own. It has no code yet: the factory&apos;s
-                design picks the stack, and you approve that at the design gate.
+                Compass creates it with main and staging branches, the factory&apos;s files and labels, in{" "}
+                {chosenProjectName ? chosenProjectName : "a project of its own"}. It has no code yet: the factory&apos;s design picks the stack, and you approve
+                that at the design gate.
               </p>
             </>
           )}

@@ -9,8 +9,9 @@ vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() },
 }));
+const focusState = vi.hoisted(() => ({ project: "", setProject: (_id: string) => undefined as void }));
 vi.mock("../lib/filter.js", () => ({
-  useFocus: () => ({ project: "", repo: "", setProject: () => undefined, setRepo: () => undefined, qs: "", key: "" }),
+  useFocus: () => ({ project: focusState.project, repo: "", setProject: (id: string) => focusState.setProject(id), setRepo: () => undefined, qs: "", key: "" }),
 }));
 const { api } = await import("../api.js");
 const { ShapePage } = await import("./Shape.js");
@@ -399,5 +400,34 @@ describe("ShapePage for a new product", () => {
       }),
     );
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/work", { title: "Lens — camera translator", fast: false, repoId: "r9" }));
+  });
+
+  it("puts a repository made while in a project into that project, and can make a new one", async () => {
+    focusState.project = "p";
+    try {
+      const fresh: ShapeConversation = {
+        conversation: { ...conversation.conversation, title: "Beacon mobile", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What\nAn app.", homes: [] },
+        messages: conversation.messages,
+      };
+      vi.mocked(api.get).mockImplementation(async (path: string) => {
+        if (path === "/api/shape") return { conversations: [] };
+        if (path === "/api/work/targets") return targets;
+        if (path === "/api/shape/c1") return fresh;
+        if (path === "/api/orgs/o1/repo-homes") return { canEdit: true, accounts: [{ estateId: "e1", login: "genai-jerry", type: "User", canCreate: true }] };
+        if (path.startsWith("/api/board")) return { columns: [], cards };
+        return {};
+      });
+      vi.mocked(api.post).mockImplementation(async (path: string) =>
+        path === "/api/orgs/o1/repos" ? { repoId: "r9", fullName: "genai-jerry/beacon-mobile", setUp: true, projectId: "p" } : { number: 1, htmlUrl: "https://github.com/x/1" },
+      );
+      renderAt("/shape/c1");
+      await userEvent.click(await screen.findByRole("button", { name: "Open as work" }));
+      expect(await screen.findByLabelText("Project")).toHaveValue("p");
+      expect(screen.getByRole("option", { name: "Beacon (the project you are in)" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ projectName: "Beacon" })));
+    } finally {
+      focusState.project = "";
+    }
   });
 });
