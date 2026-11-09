@@ -553,7 +553,9 @@ describe("Shape about a new product", () => {
     expect(String(ask.body!.instructions)).toContain("organisation's tools");
     expect(String(ask.body!.instructions)).not.toContain("never reach the network");
     expect(String(ask.body!.instructions)).toContain("Write\n  the requirement");
-    expect(String(ask.body!.instructions)).toContain("Never\n  tell them to paste files into another session");
+    const flat = String(ask.body!.instructions).replace(/\s+/g, " ");
+    expect(flat).toContain("Never tell them to paste files into another session");
+    expect(flat).toContain("open-as-work");
     expect(ask.body!.mcp_servers).toEqual([]); // the org's Compass → Tools servers ride along, none here
 
     calls = stubNetwork("## What should be built?\nA camera translator.");
@@ -602,6 +604,10 @@ describe("Claude proposes a repository for a new product", () => {
     expect(got.text).toContain("The proposed repository is below");
     expect(splitMocks("```create-repository\n{\"name\": \"has spaces\"}\n```").repoProposal).toBeNull();
     expect(splitMocks("```create-repository\nnot json\n```").repoProposal).toBeNull();
+    const work = splitMocks('Ready.\n\n```open-as-work\n{"title": "Mirror: camera translator", "fast": false}\n```');
+    expect(work.workProposal).toEqual({ title: "Mirror: camera translator", fast: false });
+    expect(work.text).toContain("Ready to open as work");
+    expect(splitMocks('```open-as-work\n{"title": ""}\n```').workProposal).toBeNull();
   });
 
   it("shows it on the answer, and moves the idea into the repository once made", async () => {

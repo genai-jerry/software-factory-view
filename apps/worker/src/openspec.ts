@@ -26,6 +26,12 @@ export interface OpenspecJob {
    * repo is MISSING (see the write loop) — never over one it already has.
    */
   force?: boolean;
+  /**
+   * A repository Compass created a moment ago (Shape → new repository): the
+   * scaffold PR is merged as soon as it opens. Nothing is there for a person
+   * to review, and the factory needs openspec/ on the default branch.
+   */
+  autoMerge?: boolean;
 }
 
 /** Same branch as the stub-files step, so both land in one enablement PR. */
@@ -42,6 +48,7 @@ export interface OpenspecRepoClient {
   putFile(owner: string, repo: string, path: string, opts: { message: string; content: string; branch: string; sha?: string }): Promise<void>;
   createPull(owner: string, repo: string, opts: { title: string; head: string; base: string; body: string }): Promise<{ number: number; html_url: string }>;
   listPulls(owner: string, repo: string, page?: number): Promise<Array<{ number: number; state: string; head: { ref: string }; html_url: string }>>;
+  mergePull?(owner: string, repo: string, prNumber: number, opts?: { method?: "merge" | "squash" | "rebase" }): Promise<{ sha: string; merged: boolean }>;
 }
 
 export interface OpenspecOverrides {
@@ -135,7 +142,16 @@ export async function runOpenspecInit(
       !initialised || pushed > 0
         ? await ensurePull(client, owner, name, repo.defaultBranch, version, branch)
         : null;
+    let merged = false;
+    if (pr && job.autoMerge && client.mergePull) {
+      try {
+        merged = (await client.mergePull(owner, name, pr.number, { method: "squash" })).merged;
+      } catch (err) {
+        console.warn(`openspec: could not merge the scaffold PR #${pr.number} on ${repo.fullName}: ${(err as Error).message}`);
+      }
+    }
     await recordOpenspecStep(db, repo, "ok", {
+      ...(merged ? { merged: true } : {}),
       found: initialised && pushed === 0,
       pushed,
       skipped,

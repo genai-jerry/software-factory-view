@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { Diagram } from "../components/Diagram.js";
@@ -71,6 +71,9 @@ function slugName(title: string): string {
       .replace(/-+$/g, "") || "new-product"
   );
 }
+
+/** How often the chat card checks whether the requirement it asked for is written. */
+export const SPEC_POLL_MS = 3000;
 
 function shortRepo(fullName: string): string {
   return fullName.split("/").pop() ?? fullName;
@@ -383,6 +386,8 @@ function Conversation({ id }: { id: string }) {
   const canGoNew = !newProduct && !conversation.epic && !conversation.issueUrl && opened === null;
   // Only the newest proposal is live: an earlier one was superseded in the talk.
   const lastProposalId = [...messages].reverse().find((m) => m.repoProposal)?.id;
+  const lastWorkProposal = [...messages].reverse().find((m) => m.workProposal);
+  const notWorkYet = !conversation.epic && !conversation.issueUrl && opened === null;
   const where = acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo ?? "");
 
   return (
@@ -467,6 +472,24 @@ function Conversation({ id }: { id: string }) {
                 first={!messages.some((x) => x.role === "assistant" && x.status !== "pending" && x.id !== m.id)}
                 onRetry={(mid) => retry.mutate(mid)}
                 retrying={retry.isPending}
+                workCard={
+                  notWorkYet && lastWorkProposal && m.id === lastWorkProposal.id ? (
+                    <OpenAsWork
+                      id={id}
+                      defaultTitle={m.workProposal?.title ?? conversation.title}
+                      defaultFast={m.workProposal?.fast ?? false}
+                      hasSpec={Boolean(conversation.spec)}
+                      homes={newProduct ? (conversation.homes ?? []) : acrossProject ? (conversation.project?.repos ?? []) : []}
+                      newProduct={newProduct}
+                      orgId={conversation.orgId}
+                      defaultRepoId={conversation.repoId ?? conversation.homes?.[0]?.id ?? ""}
+                      onDone={(r) => {
+                        setOpened(r);
+                        refresh();
+                      }}
+                    />
+                  ) : undefined
+                }
                 repoCard={
                   // Any idea not yet work: one started under a product can still get a repository of its own.
                   !conversation.epic && !conversation.issueUrl && opened === null && conversation.orgId && m.id === lastProposalId
@@ -601,6 +624,7 @@ function Message({
   onRetry,
   retrying,
   repoCard,
+  workCard,
 }: {
   m: ShapeMessage;
   index: number;
@@ -609,6 +633,8 @@ function Message({
   retrying: boolean;
   /** Set on the newest answer that proposes a repository, while the idea has none. */
   repoCard?: { convId: string; orgId: string; onCreated: () => void };
+  /** The Open as work form, on the newest answer that proposes opening the idea as work. */
+  workCard?: ReactNode;
 }) {
   if (m.role === "assistant" && m.status === "pending") {
     return (
@@ -654,6 +680,12 @@ function Message({
             <Diagram key={`${m.id}-d${i}`} code={d.code} n={index * 10 + i + 1} />
           ))}
           {repoCard && m.repoProposal && <RepoProposalCard convId={repoCard.convId} orgId={repoCard.orgId} proposal={m.repoProposal} onCreated={repoCard.onCreated} />}
+          {workCard && m.workProposal && (
+            <section className="shape-proposal" aria-label="Open as work">
+              <h4>Open it as work?</h4>
+              {workCard}
+            </section>
+          )}
         </div>
       )}
     </div>
@@ -990,6 +1022,8 @@ function OpenAsWork({
   newProduct = false,
   orgId,
   defaultRepoId,
+  hasSpec = true,
+  defaultFast = false,
   onCancel,
   onDone,
 }: {
@@ -1002,12 +1036,17 @@ function OpenAsWork({
   /** The idea's org: where a new repository is created. */
   orgId?: string;
   defaultRepoId: string;
-  onCancel: () => void;
+  /** False when no requirement is written yet: it is written first, then opened (Claude's proposal card). */
+  hasSpec?: boolean;
+  defaultFast?: boolean;
+  /** Absent in the chat card, which has nothing to cancel back to. */
+  onCancel?: () => void;
   onDone: (r: { title: string; htmlUrl: string; epicId?: string }) => void;
 }) {
   const [title, setTitle] = useState(defaultTitle);
-  const [fast, setFast] = useState(false);
+  const [fast, setFast] = useState(defaultFast);
   const [repoId, setRepoId] = useState(defaultRepoId);
+  const [phase, setPhase] = useState<"idle" | "writing" | "opening">("idle");
   // A new product goes in a repository of its own unless the person picks an existing one.
   const [where, setWhere] = useState<"create" | "existing">(newProduct ? "create" : "existing");
   const creating = newProduct && where === "create" && Boolean(orgId);
@@ -1016,6 +1055,20 @@ function OpenAsWork({
     mutationFn: async () => {
       let target = repoId;
       if (creating) target = (await repoForm.create()).repoId;
+      if (!hasSpec) {
+        // The requirement is written in the background; wait for it (a few minutes at most).
+        setPhase("writing");
+        await api.post(`/api/shape/${id}/spec`);
+        const deadline = Date.now() + 10 * 60_000;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, SPEC_POLL_MS));
+          const c = (await api.get<ShapeConversation>(`/api/shape/${id}`)).conversation;
+          if (c.specStatus === "failed") throw new Error(c.specError ?? "Writing the requirement failed. Try again.");
+          if (c.specStatus === "done" && c.spec) break;
+          if (Date.now() > deadline) throw new Error("Writing the requirement is taking too long. Open the requirement on this idea to check it, then Open as work.");
+        }
+      }
+      setPhase("opening");
       return api.post<{ number: number; htmlUrl: string; epicId?: string }>(`/api/shape/${id}/work`, {
         title: title.trim(),
         fast,
@@ -1023,7 +1076,10 @@ function OpenAsWork({
       });
     },
     onSuccess: (r) => onDone({ title: title.trim(), htmlUrl: r.htmlUrl, epicId: r.epicId }),
+    onSettled: () => setPhase("idle"),
   });
+  const action = creating ? "Create the repository and open it" : hasSpec ? "Open it" : "Write the requirement and open it";
+  const busy = phase === "writing" ? "Writing the requirement…" : creating && phase === "idle" ? "Creating the repository…" : "Opening…";
   // Shown in a Sheet, which carries the title and the dialog role.
   return (
     <div className="shape-open">
@@ -1078,11 +1134,13 @@ function OpenAsWork({
           disabled={!title.trim() || open.isPending || (creating ? !repoForm.ready : newProduct && !repoId)}
           onClick={() => open.mutate()}
         >
-          {open.isPending ? (creating ? "Creating the repository…" : "Opening…") : creating ? "Create the repository and open it" : "Open it"}
+          {open.isPending ? busy : action}
         </button>
-        <button type="button" className="secondary" onClick={onCancel} disabled={open.isPending}>
-          Cancel
-        </button>
+        {onCancel && (
+          <button type="button" className="secondary" onClick={onCancel} disabled={open.isPending}>
+            Cancel
+          </button>
+        )}
       </div>
       {open.isError && <p className="decision-failure">{failureText(open.error)}</p>}
     </div>
