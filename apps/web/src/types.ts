@@ -702,6 +702,8 @@ export interface ShapeMessage {
   mocks: Array<{ html: string }>;
   /** Mermaid diagrams the answer carried, drawn below its prose. */
   diagrams?: Array<{ code: string }>;
+  /** A repository Claude proposed for a new product; Compass asks the person to confirm it. */
+  repoProposal?: { name: string; description: string; private: boolean; project: string } | null;
   attachments: ShapeAttachment[];
   /** An answer is written in the background: pending until it lands, failed with `error` when it did not. */
   status?: "pending" | "done" | "failed";
@@ -720,6 +722,7 @@ export interface ShapeConversation {
     project?: { id: string; name: string; repos: Array<{ id: string; fullName: string }> } | null;
     /** A new product: every factory repository it may open in. */
     homes?: Array<{ id: string; fullName: string }>;
+    orgId?: string;
     spec: string | null;
     specUpdatedAt: string | null;
     /** The requirement is written in the background. */

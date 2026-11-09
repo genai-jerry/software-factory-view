@@ -212,6 +212,9 @@ export function buildAppManifest(publicOrigin: string, name: string): Record<str
       statuses: "write",
       workflows: "read",
       secrets: "write",
+      // Shape can create the repository for a new product (POST /user/repos,
+      // /orgs/{org}/repos as the signed-in person).
+      administration: "write",
       members: "read",
       metadata: "read",
     },
