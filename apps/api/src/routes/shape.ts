@@ -32,6 +32,11 @@ import { artifactSources, claudeTokenFor } from "./qa.js";
  * an epic runs on the epic's branch, with its documents (proposal, specs,
  * design, tasks, test plan) in front of the session — the Ask panel's
  * grounding, in a conversation that can also draw and write the requirement.
+ *
+ * An idea for a new product (scope `new`) has no repository: the session
+ * runs in an empty folder and is told so, so it shapes the idea from scratch
+ * instead of pulling it toward the org's existing code. When it is opened as
+ * work the person picks the repository it goes in.
  */
 
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -149,7 +154,7 @@ function transcript(messages: Message[], budget = MAX_CONTEXT_CHARS): string {
 }
 
 type EpicRef = { id: string; number: number; title: string; state: string | null; repoId: string };
-type Owned = Conversation & { repoFullName: string; projectId: string | null; projectName: string | null };
+type Owned = Conversation & { repoFullName: string | null; projectId: string | null; projectName: string | null };
 
 export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
   const db = deps.dbh.db;
@@ -182,8 +187,17 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       .orderBy(repos.fullName);
   }
 
+  /** Every factory-enabled repository of the org: where a new product's work may open. */
+  async function orgRepos(orgId: string): Promise<Array<{ id: string; fullName: string }>> {
+    return db
+      .select({ id: repos.id, fullName: repos.fullName })
+      .from(repos)
+      .where(and(eq(repos.orgId, orgId), eq(repos.factoryEnabled, true)))
+      .orderBy(repos.fullName);
+  }
+
   /** The project's other factory-enabled repositories, checked out beside the primary one. */
-  async function siblings(repoId: string, projectId: string | null, branch: string | null) {
+  async function siblings(repoId: string | null, projectId: string | null, branch: string | null) {
     const rows = (await projectRepos(projectId)).filter((r) => r.id !== repoId).slice(0, MAX_SIBLINGS);
     return rows.map((r) => {
       const [owner, repo] = r.fullName.split("/") as [string, string];
@@ -197,6 +211,9 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
    * and the idea may land in any of them.
    */
   async function whereItRuns(conv: Owned): Promise<string> {
+    if (conv.scope === "new" || !conv.repoFullName) {
+      return "A new product: there is no repository and no code yet. Shape the idea from scratch; do not relate it to the organisation's other products unless the person asks.";
+    }
     if (conv.scope !== "project" || !conv.projectId) return `Repository: ${conv.repoFullName}.`;
     const names = (await projectRepos(conv.projectId)).map((r) => r.fullName);
     const others = names.filter((n) => n !== conv.repoFullName);
@@ -233,7 +250,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       await db
         .select({ conv: shapeConversations, repoFullName: repos.fullName, projectId: repos.projectId, projectName: projects.name })
         .from(shapeConversations)
-        .innerJoin(repos, eq(repos.id, shapeConversations.repoId))
+        .leftJoin(repos, eq(repos.id, shapeConversations.repoId))
         .leftJoin(projects, eq(projects.id, repos.projectId))
         .where(and(eq(shapeConversations.id, id), eq(shapeConversations.userId, ctx.userId), inArray(shapeConversations.orgId, ctx.orgIds)))
         .limit(1)
@@ -268,7 +285,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         epicState: issues.factoryState,
       })
       .from(shapeConversations)
-      .innerJoin(repos, eq(repos.id, shapeConversations.repoId))
+      .leftJoin(repos, eq(repos.id, shapeConversations.repoId))
       .leftJoin(projects, eq(projects.id, repos.projectId))
       .leftJoin(issues, eq(issues.id, shapeConversations.epicIssueId))
       .where(
@@ -296,9 +313,21 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     };
   });
 
-  app.post<{ Body: { repoId?: string; projectId?: string; epicId?: string; title?: string } }>("/api/shape", async (req, reply) => {
+  app.post<{ Body: { repoId?: string; projectId?: string; epicId?: string; title?: string; newProduct?: boolean; orgId?: string } }>("/api/shape", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    if (req.body?.newProduct) {
+      // A new product: no repository, no code to read.
+      const orgId = req.body.orgId && ctx.orgIds.includes(req.body.orgId) ? req.body.orgId : ctx.orgIds[0];
+      if (!orgId) return reply.code(404).send({ error: "no organisation" });
+      const row = (
+        await db
+          .insert(shapeConversations)
+          .values({ orgId, userId: ctx.userId, repoId: null, scope: "new", title: req.body.title?.trim() || "New idea" })
+          .returning()
+      )[0]!;
+      return { id: row.id };
+    }
     // About an epic: the repository is the epic's own, and the title starts as the epic's.
     let epic: EpicRef | null = null;
     let repoId = req.body?.repoId ?? "";
@@ -345,7 +374,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     await settleStale(db, conv.id);
     // An idea opened as work becomes about that epic once the webhook has
     // projected the issue — a little after the issue was created.
-    if (conv.issueUrl && !conv.epicIssueId) {
+    if (conv.issueUrl && !conv.epicIssueId && conv.repoId) {
       const number = Number(/\/issues\/(\d+)\s*$/.exec(conv.issueUrl)?.[1]);
       const found = number
         ? (await db.select({ id: issues.id }).from(issues).where(and(eq(issues.repoId, conv.repoId), eq(issues.number, number))).limit(1))[0]
@@ -366,6 +395,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         repo: conv.repoFullName,
         scope: conv.scope,
         project: await projectDto(conv),
+        // A new product opens as work in a repository the person picks: every factory repository of the org.
+        ...(conv.scope === "new" ? { homes: await orgRepos(conv.orgId) } : {}),
         spec: conv.spec,
         specUpdatedAt: conv.specUpdatedAt,
         specStatus: conv.specStatus,
@@ -437,10 +468,12 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
    */
   async function answer(conv: Owned, assistantId: string, text: string, attachments: Attachment[], earlier: Message[], claudeToken: string): Promise<void> {
     try {
-      const [owner, name] = conv.repoFullName.split("/") as [string, string];
+      const [owner, name] = conv.repoFullName ? (conv.repoFullName.split("/") as [string, string]) : [undefined, undefined];
       const epic = await epicRef(conv.epicIssueId);
       const where = await whereItRuns(conv);
-      const header = epic
+      const header = !owner
+        ? `${where} This is a Shape conversation: the person is shaping an idea for a new product.`
+        : epic
         ? `${where} This is a Shape conversation about epic #${epic.number}, "${epic.title}" (${epic.state ?? "no state"}): the person is discussing work the factory has in progress. Your checkout is the epic's branch where it exists.`
         : `${where} This is a Shape conversation: the person is shaping an idea for this product. Your checkout is the latest default branch.`;
       const branch = branchOf(epic);
@@ -449,8 +482,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       // or never opened, the message starts cold with the full grounding.
       const session = conv.askSession && conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? conv.askSession : null;
       const got = await askOrchestrator(deps.cfg, {
-        owner,
-        repo: name,
+        ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
         context: session ? header : await grounding(conv, epic, earlier, header),
         instructions: SHAPE_INSTRUCTIONS,
@@ -580,18 +612,19 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         .flatMap((m) => splitMocks(m.body).diagrams)
         .map((d, i) => `Diagram ${i + 1} (Mermaid):\n${d.code.slice(0, 4_000)}`)
         .join("\n\n");
-      const [owner, name] = conv.repoFullName.split("/") as [string, string];
+      const [owner, name] = conv.repoFullName ? (conv.repoFullName.split("/") as [string, string]) : [undefined, undefined];
       const epic = await epicRef(conv.epicIssueId);
       const branch = branchOf(epic);
       const where = await whereItRuns(conv);
-      const header = epic
+      const header = !owner
+        ? `${where} Write the requirement for building it from scratch. In Affected repositories, say that a new repository is needed and what it holds.`
+        : epic
         ? `${where} The conversation is about epic #${epic.number}, "${epic.title}"; the requirement is for a change to it.`
         : conv.scope === "project"
           ? `${where} In Affected repositories, say which repositories change and what each one takes on.`
           : where;
       const got = await askOrchestrator(deps.cfg, {
-        owner,
-        repo: name,
+        ...(owner && name ? { owner, repo: name } : {}),
         question: "Write the requirement from this conversation.",
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: SPEC_INSTRUCTIONS,
@@ -648,6 +681,24 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return { spec };
   });
 
+  /**
+   * "This is not about <product>": an idea started under a product becomes a
+   * new product. The Claude session is dropped so the next message starts
+   * cold, without the code it read; the conversation so far is kept.
+   */
+  app.post<{ Params: { id: string } }>("/api/shape/:id/new-product", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const conv = await own(ctx, req.params.id, reply);
+    if (!conv) return;
+    if (conv.epicIssueId || conv.issueUrl) return reply.code(409).send({ error: "this idea is already work in a repository" });
+    await db
+      .update(shapeConversations)
+      .set({ scope: "new", repoId: null, askSession: null, askSessionAt: null, updatedAt: new Date() })
+      .where(eq(shapeConversations.id, conv.id));
+    return { scope: "new" };
+  });
+
   app.post<{ Params: { id: string }; Body: { title?: string; fast?: boolean; repoId?: string } }>("/api/shape/:id/work", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
@@ -659,7 +710,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     // An idea that spans the project opens in the repository the person
     // picks, which becomes its home: the epic lives there and the next
     // message runs on that repo's branch of it.
-    if (req.body?.repoId && req.body.repoId !== conv.repoId) {
+    if (conv.scope === "new" && !req.body?.repoId) return reply.code(400).send({ error: "pick the repository the work opens in" });
+    if (conv.scope === "new" && req.body?.repoId) {
+      const pick = (await orgRepos(conv.orgId)).find((r) => r.id === req.body?.repoId);
+      if (!pick) return reply.code(400).send({ error: "that repository is not set up for the factory" });
+      conv.repoId = pick.id;
+      conv.repoFullName = pick.fullName;
+    } else if (req.body?.repoId && req.body.repoId !== conv.repoId) {
       if (conv.scope !== "project") return reply.code(400).send({ error: "this idea is about one repository" });
       const pick = (await projectRepos(conv.projectId)).find((r) => r.id === req.body?.repoId);
       if (!pick) return reply.code(400).send({ error: "that repository is not in this project, or is not set up for the factory" });
@@ -692,17 +749,21 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       );
     }
     parts.push(`<!-- shaped in Compass: ${origin}/shape/${conv.id} -->`);
-    const repo = { id: conv.repoId, orgId: conv.orgId, fullName: conv.repoFullName };
+    if (!conv.repoId || !conv.repoFullName) return reply.code(400).send({ error: "pick the repository the work opens in" });
+    const homeId = conv.repoId;
+    const repo = { id: homeId, orgId: conv.orgId, fullName: conv.repoFullName };
     const issue = await openWorkIssue(deps, ctx, reply, repo, { title, body: parts.join("\n\n"), fast: Boolean(req.body?.fast) });
     if (!issue) return;
     const existing = (
-      await db.select({ id: issues.id }).from(issues).where(and(eq(issues.repoId, conv.repoId), eq(issues.number, issue.number))).limit(1)
+      await db.select({ id: issues.id }).from(issues).where(and(eq(issues.repoId, homeId), eq(issues.number, issue.number))).limit(1)
     )[0];
     await db
       .update(shapeConversations)
       .set({
         title,
-        repoId: conv.repoId,
+        repoId: homeId,
+        // A new product now has a home; from here it is about that repository.
+        ...(conv.scope === "new" ? { scope: "repo" } : {}),
         issueUrl: issue.html_url,
         issueId: existing?.id ?? null,
         // From here the idea is about the epic it became; the next message runs on its branch.

@@ -164,6 +164,8 @@ input, textarea, select {
   min-height: var(--target);
 }
 textarea { min-height: 5rem; resize: vertical; }
+/* Checkboxes and radios keep their own size: the rule above is for text fields (Tools showed them as wide boxes). */
+input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; padding: 0; margin: 0 0.35rem 0 0; vertical-align: middle; accent-color: var(--accent); }
 
 .skip-link {
   position: absolute;
@@ -1597,3 +1599,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .env-onstaging-head { font-size: 0.68rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
 .env-onstaging-item { display: flex; align-items: center; gap: 0.45rem; }
 .env-swatch { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+
+/* A button that reads as an inline link (Shape: "Treat it as a new product"). */
+.link-button { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+.link-button:disabled { color: var(--text-dim); cursor: default; }
