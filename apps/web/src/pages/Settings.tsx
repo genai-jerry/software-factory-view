@@ -263,6 +263,15 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
     mutationFn: (projectId: string) => api.del(`/api/projects/${projectId}`),
     onSuccess: refresh,
   });
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const rename = useMutation({
+    mutationFn: (v: { id: string; name: string }) => api.post(`/api/projects/${v.id}`, { name: v.name.trim() }),
+    onSuccess: () => {
+      setRenaming(null);
+      refresh();
+      void qc.invalidateQueries({ queryKey: ["work-targets"] });
+    },
+  });
 
   if (!data.data) return null;
   const projects = data.data.projects.filter((p) => p.orgId === orgId);
@@ -318,6 +327,34 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
             </button>
           </div>
           {create.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(create.error as ApiError).message}</div>}
+          {projects.length > 0 && (
+            <div className="row" style={{ marginTop: "0.5rem" }}>
+              <span className="muted">Rename:</span>
+              {projects.map((p) =>
+                renaming?.id === p.id ? (
+                  <span key={p.id} className="row" style={{ gap: "0.35rem" }}>
+                    <input
+                      aria-label={`New name for ${p.name}`}
+                      value={renaming.name}
+                      onChange={(e) => setRenaming({ id: p.id, name: e.target.value })}
+                      style={{ width: "14rem" }}
+                    />
+                    <button disabled={!renaming.name.trim() || rename.isPending} onClick={() => rename.mutate(renaming)}>
+                      Save
+                    </button>
+                    <button className="secondary" onClick={() => setRenaming(null)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button key={p.id} onClick={() => setRenaming({ id: p.id, name: p.name })} title={`Rename ${p.name}`}>
+                    {p.name.length > 40 ? `${p.name.slice(0, 40)}…` : p.name} ✎
+                  </button>
+                ),
+              )}
+            </div>
+          )}
+          {rename.isError && <div className="banner error" style={{ marginTop: "0.5rem" }}>{(rename.error as ApiError).message}</div>}
           {projects.length > 0 && (
             <div className="row" style={{ marginTop: "0.5rem" }}>
               <span className="muted">Delete:</span>

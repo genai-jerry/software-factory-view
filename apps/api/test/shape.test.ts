@@ -556,6 +556,7 @@ describe("Shape about a new product", () => {
     const flat = String(ask.body!.instructions).replace(/\s+/g, " ");
     expect(flat).toContain("Never tell them to paste files into another session");
     expect(flat).toContain("open-as-work");
+    expect(flat).toContain("a reply in the chat (\"yes\", \"go ahead\") does nothing");
     expect(ask.body!.mcp_servers).toEqual([]); // the org's Compass → Tools servers ride along, none here
 
     calls = stubNetwork("## What should be built?\nA camera translator.");
