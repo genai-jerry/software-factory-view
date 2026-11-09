@@ -14,6 +14,7 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDeps, RequestCtx } from "./context.js";
 import { loadExpeditedEpics } from "./expedite.js";
 import { extractQuestions, isRoleComment } from "./questions.js";
+import { loadReleaseMeta } from "./release-meta.js";
 import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
 
 /**
@@ -41,7 +42,8 @@ import { loadTaskStartFacts, startStatusOf } from "./start-gate.js";
  */
 
 export interface AttentionEntryDto {
-  kind: "gate" | "blocked" | "task-start" | "merge";
+  /** `request`: the factory's own "You need to" after an approval it is acting on (an approved release). */
+  kind: "gate" | "blocked" | "task-start" | "merge" | "request";
   rank: 1 | 2 | 3 | 4;
   whyYou: string;
   epicId: string;
@@ -55,6 +57,10 @@ export interface AttentionEntryDto {
   /** The epic carries `factory:expedite` — rows say so, since it changes what runs itself. */
   expedited: boolean;
   link: string;
+  /** For a request: the link in the factory's line (the PR to merge). */
+  requestLink?: string | null;
+  /** For a request on an approved release: who approved it. */
+  approvedBy?: string | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -102,6 +108,12 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
   // it halted in, and the agent's stuck question.
   const blockedIds = openFactoryIssues.filter((r) => r.issue.factoryState === "factory:blocked").map((r) => r.issue.id);
   const blockedMeta = await loadBlockedMeta(deps, blockedIds);
+  // Gate GS already approved? Then the release is the factory's, and what it
+  // still needs from a person is whatever its newest comment asks (release-meta.ts).
+  const releaseMeta = await loadReleaseMeta(
+    deps,
+    openFactoryIssues.filter((r) => r.issue.kind === "epic" && r.issue.factoryState === EPIC_READY_STATE).map((r) => r.issue.id),
+  );
 
   // A task at factory:ready has not necessarily kept its start gate open: the
   // state label stays put while the approval is routed and while the
@@ -256,6 +268,24 @@ export async function buildAttention(deps: AppDeps, ctx: RequestCtx, repoFilter?
       // Gate GS, universal: every epic passes through it, expedited or not.
       // This is the item that replaces the old "all tasks are on the epic
       // branch — start the Release Manager" reading of the assembly stage.
+      const release = releaseMeta.get(issue.id);
+      if (release?.approvedBy) {
+        // Approved already: never ask for it again. Ask instead what the
+        // factory asked for after the approval, if anything.
+        if (release.ask) {
+          entries.push({
+            kind: "request",
+            rank: 1,
+            whyYou: `the factory needs you before it can release — ${whyBase}`,
+            ...base,
+            question: release.ask,
+            requestLink: release.askLink,
+            approvedBy: release.approvedBy,
+            link: `/epics/${issue.id}?tab=gate`,
+          });
+        }
+        continue;
+      }
       entries.push({
         kind: "gate",
         rank: 2,

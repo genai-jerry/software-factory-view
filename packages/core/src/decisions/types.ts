@@ -5,7 +5,8 @@
  */
 
 export interface AttentionEntry {
-  kind: "gate" | "blocked" | "task-start" | "merge";
+  /** `request`: what the factory asks of a person while it acts on an approval it already has. */
+  kind: "gate" | "blocked" | "task-start" | "merge" | "request";
   /** 1 = agent halted on you · 2 = gate awaits you · 3 = task start awaits you · 4 = unowned broadcast */
   rank: 1 | 2 | 3 | 4;
   whyYou: string;
@@ -20,6 +21,10 @@ export interface AttentionEntry {
   /** The row's epic carries `factory:expedite` — what it still surfaces for is narrower. */
   expedited: boolean;
   link: string;
+  /** For a request: the link in the factory's line (the PR to merge). */
+  requestLink?: string | null;
+  /** For a request on an approved release: who approved it. */
+  approvedBy?: string | null;
 }
 
 export interface BoardCard {
@@ -35,6 +40,8 @@ export interface BoardCard {
   /** The epic carries `factory:expedite`. */
   expedited: boolean;
   tasks: TaskRollup;
+  /** Gate GS already approved, while the epic still sits at it (the factory is finishing the release). */
+  releaseApprovedBy?: string | null;
 }
 
 /** An epic's system test cases (FACTORY.md §4b), counted apart from its code

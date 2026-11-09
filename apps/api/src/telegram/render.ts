@@ -84,6 +84,14 @@ export function renderDecision(w: WorkItem, nid: string, origin: string): { html
       kb.push([{ text: "Discuss", callback_data: `ds:${nid}` }]);
       break;
     }
+    case "act": {
+      const e = w.entries.find((x) => x.kind === "request");
+      lines.push("<b>The factory needs you before it can release</b>", `You need to: ${esc(e?.question ?? "do what the factory asked on the item.")}`);
+      if (e?.approvedBy) lines.push(`• Your release approval (@${esc(e.approvedBy)}) stands; nothing to approve again.`);
+      if (e?.requestLink && /^https:\/\//.test(e.requestLink)) kb.push([{ text: "Open it on GitHub", url: e.requestLink }]);
+      kb.push([{ text: "Discuss", callback_data: `ds:${nid}` }]);
+      break;
+    }
     case "ship":
       lines.push("<b>Ship to production</b>", "You need to: decide whether this goes live for customers now.", "• It is on staging and every check passed.", "• Shipping merges the promotion pull requests. That stays in Compass.");
       kb.push([{ text: "Discuss", callback_data: `ds:${nid}` }]);
