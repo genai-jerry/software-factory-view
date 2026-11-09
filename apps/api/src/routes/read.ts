@@ -1,3 +1,4 @@
+import { loadReleaseMeta } from "../release-meta.js";
 import {
   BUG_RETEST_STATE,
   BUG_VERIFIED_STATE,
@@ -240,6 +241,10 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         ),
       );
 
+    const releaseMeta = await loadReleaseMeta(
+      deps,
+      epicRows.filter((r) => r.issue.state === "open" && r.issue.factoryState === "factory:epic-ready").map((r) => r.issue.id),
+    );
     const cards = [];
     for (const row of epicRows) {
       const rollup = await taskRollup(deps, row.issue.id);
@@ -267,6 +272,7 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         // says so rather than leaving the reader to open the workspace.
         expedited: deriveExpedited(row.issue.labels),
         tasks: rollup,
+        releaseApprovedBy: releaseMeta.get(row.issue.id)?.approvedBy ?? null,
       });
     }
     return { columns: PIPELINE_ORDER, cards };

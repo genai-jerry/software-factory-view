@@ -426,6 +426,8 @@ export interface GatePanelData {
     report: { author: string | null; at: string; html: string; htmlUrl: string | null } | null;
     prs: PrSummary[];
   } | null;
+  /** Gate GS already approved: the factory is finishing the release; `ask` is what it still needs from a person. */
+  releaseApproved?: { by: string; at: string | null; ask: string | null; askLink: string | null } | null;
   documentPrs: PrSummary[];
   releasePrs: PrSummary[];
   artifacts: Array<{ path: string; kind: string; sha: string | null; mergedSha: string | null; html: string | null }>;

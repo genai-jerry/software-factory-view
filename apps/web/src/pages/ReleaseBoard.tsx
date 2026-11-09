@@ -233,6 +233,34 @@ function ReleaseToStaging({ data, gate }: { data: EpicWorkspace; gate: GatePanel
   });
   const a = gate?.assembly;
   const canDecide = gate ? gate.amApprover : true;
+  const done = gate?.releaseApproved;
+  if (done) {
+    // Approved already: pressing again only started another run that stopped
+    // for the same reason. Say who approved, and what the factory still needs.
+    return (
+      <section className="card" aria-labelledby="decision">
+        <h2 id="decision">{done.ask ? "Your decision" : "Release approved"}</h2>
+        <p>
+          Released to staging by @{done.by}
+          {done.at ? ` on ${new Date(done.at).toLocaleString()}` : ""}. That approval stands — there is nothing to press again.
+        </p>
+        {done.ask ? (
+          <>
+            <p className="need">The factory needs you before it can finish: {done.ask}</p>
+            {done.askLink && (
+              <div className="decision-actions">
+                <a className="button primary" href={done.askLink} target="_blank" rel="noreferrer">
+                  Open it on GitHub
+                </a>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="muted">The factory is finishing the last pieces, then moves it onto staging. You are asked again before production.</p>
+        )}
+      </section>
+    );
+  }
   return (
     <section className="card" aria-labelledby="decision">
       <h2 id="decision">Your decision</h2>

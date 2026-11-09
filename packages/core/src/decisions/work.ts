@@ -64,7 +64,8 @@ export function stageOf(state: string | null | undefined, tasks?: TaskRollup): S
   return null;
 }
 
-export type Ask = "decide" | "answer" | "run" | "review" | "start" | "release" | "ship";
+/** `act`: do what the factory asked, on a release you already approved (a PR to merge, say). */
+export type Ask = "decide" | "answer" | "act" | "run" | "review" | "start" | "release" | "ship";
 
 /**
  * A task at in-review, in-test or ready-to-ship: written, and waiting for a
@@ -160,6 +161,8 @@ function testLine(tasks: TaskRollup): string {
 function askOf(entries: AttentionEntry[]): { ask: Ask; entry: AttentionEntry } | null {
   const blocked = entries.find((e) => e.kind === "blocked");
   if (blocked) return { ask: "answer", entry: blocked };
+  const request = entries.find((e) => e.kind === "request");
+  if (request) return { ask: "act", entry: request };
   const merge = entries.find((e) => e.kind === "merge" || (e.kind === "gate" && e.state === "factory:in-staging"));
   if (merge) return { ask: "ship", entry: merge };
   const release = entries.find((e) => e.kind === "gate" && e.state === "factory:epic-ready");
@@ -182,6 +185,8 @@ function pointerFor(ask: Ask, entry: AttentionEntry, card: BoardCard, entries: A
       return entry.question
         ? `Answer: the builder stopped and asked: “${entry.question}”`
         : "Answer: the builder stopped and asked a question.";
+    case "act":
+      return `Do: ${entry.question ?? "what the factory asked on the item"}${entry.approvedBy ? ` Your release approval stands.` : ""}`;
     case "ship":
       return "Ship: on staging and green. Ship to production?";
     case "release":
@@ -226,6 +231,8 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
     case "release":
       if (card.state === "factory:deployed") return "In production, in its watch period.";
       if (live && live.kind === "epic") return live.role === "release" ? "Being released to staging now." : now;
+      // Approved: the factory is finishing it (the label stays at the gate meanwhile).
+      if (card.releaseApprovedBy) return `Release approved by @${card.releaseApprovedBy}. The factory is finishing the last pieces.`;
       return "Waiting on someone else to release it.";
     default:
       if (now) return now;
@@ -276,12 +283,13 @@ function isHousekeeping(card: BoardCard): boolean {
 
 function whoFor(ask: Ask | null, card: BoardCard, running: RunningItem[], entries: AttentionEntry[] = []): string {
   if (ask) {
-    const verb = { decide: "decide", answer: "answer", run: "run the tests", review: `start ${roleStartNouns(entries) || "the review"}`, start: "start it", release: "release", ship: "ship" }[ask];
+    const verb = { decide: "decide", answer: "answer", act: "act", run: "run the tests", review: `start ${roleStartNouns(entries) || "the review"}`, start: "start it", release: "release", ship: "ship" }[ask];
     return `You ${verb}`;
   }
   // A run on the epic itself is the factory acting on the gate; nobody
   // decides anything while it runs.
   if (running.some((r) => r.kind === "epic")) return "running now";
+  if (card.state === "factory:epic-ready" && card.releaseApprovedBy) return "the factory is finishing it";
   if (DECISION_STATES.has(card.state ?? "")) return "Someone else decides";
   if (stageOf(card.state, card.tasks) === "test") return "Someone else runs the tests";
   if (running.length > 0) return "running now";
@@ -298,7 +306,7 @@ export function workLink(epicId: string, entryLink?: string): string {
   return `/work/${m ? m[1] : epicId}`;
 }
 
-const ASK_RANK: Record<Ask, number> = { answer: 0, ship: 1, release: 2, decide: 3, run: 4, review: 5, start: 6 };
+const ASK_RANK: Record<Ask, number> = { answer: 0, act: 1, ship: 2, release: 3, decide: 4, run: 5, review: 6, start: 7 };
 
 export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], running: RunningItem[]): WorkLists {
   // Housekeeping stays off the lists unless it waits on someone: then it is

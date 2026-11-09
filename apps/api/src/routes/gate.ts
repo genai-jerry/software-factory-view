@@ -1,3 +1,4 @@
+import { loadReleaseMeta } from "../release-meta.js";
 import {
   APPROVED_BODY,
   BUG_VERIFIED_STATE,
@@ -145,6 +146,9 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     // epic (assembly/dispatch report, suite results) and the PRs still open
     // against it.
     const assembly = gateInfo.gate === "staging" ? await loadAssemblyEvidence(deps, epic, repo) : null;
+    // GS approved already? The release is the factory's then; the panel says so
+    // and shows what it still asks, instead of offering the release again.
+    const release = gateInfo.gate === "staging" ? (await loadReleaseMeta(deps, [epic.id])).get(epic.id) : undefined;
 
     return {
       gate: gateInfo.gate,
@@ -156,6 +160,9 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       approversFrom: owning.fellBackFrom ? owning.gate : null,
       commentApprovable: COMMENT_APPROVABLE.has(gateInfo.gate),
       assembly,
+      releaseApproved: release?.approvedBy
+        ? { by: release.approvedBy, at: release.approvedAt?.toISOString() ?? null, ask: release.ask, askLink: release.askLink }
+        : null,
       documentPrs: docPrs.map(prDto),
       releasePrs: releasePrs.map(prDto),
       artifacts: rendered,
@@ -179,6 +186,16 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
       if (!gateInfo) return reply.code(409).send({ error: "no gate is open on this epic" });
       if (!COMMENT_APPROVABLE.has(gateInfo.gate)) {
         return reply.code(409).send({ error: "G3 is not comment-approvable — merge the PRs instead (the merge button is the gate)" });
+      }
+      // GS approved already: a second Approved only starts another Release
+      // Manager run that stops for the same reason (beacon-api#324).
+      if (gateInfo.gate === "staging") {
+        const release = (await loadReleaseMeta(deps, [epic.id])).get(epic.id);
+        if (release?.approvedBy) {
+          return reply.code(409).send({
+            error: `The release was already approved by @${release.approvedBy}; that approval stands.${release.ask ? ` The factory needs: ${release.ask}` : " The factory is finishing it."}`,
+          });
+        }
       }
 
       // Server-side approver check (UX layer; the router re-checks with

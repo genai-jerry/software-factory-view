@@ -109,6 +109,26 @@ function DecisionBody({ item: w }: { item: WorkItem }) {
       return <GateDecision item={w} />;
     case "answer":
       return <AnswerDecision item={w} />;
+    case "act": {
+      const e = w.entries.find((x) => x.kind === "request");
+      return (
+        <>
+          <h3>The factory needs you before it can release</h3>
+          <p className="need">You need to: {e?.question ?? "do what the factory asked on the item."}</p>
+          {e?.approvedBy && <p className="muted">The release was approved by @{e.approvedBy}; that stands, so there is nothing to approve again.</p>}
+          <div className="decision-actions">
+            {e?.requestLink && (
+              <a className="button primary" href={e.requestLink} target="_blank" rel="noreferrer">
+                Open it on GitHub
+              </a>
+            )}
+            <Link to={w.link} className="button">
+              Open the item
+            </Link>
+          </div>
+        </>
+      );
+    }
     case "run":
       return <RunDecision item={w} />;
     case "review":
