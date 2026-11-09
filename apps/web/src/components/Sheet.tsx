@@ -17,6 +17,11 @@ export function Sheet({
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const titleId = useId();
+  // The latest onClose, without re-running the open/close effect: pages that
+  // poll (Environments, every 5 s) pass a new function each render, and
+  // re-running put focus back on Close — scrolling a long panel to the top.
+  const closeLatest = useRef(onClose);
+  closeLatest.current = onClose;
 
   useEffect(() => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -24,7 +29,7 @@ export function Sheet({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        closeLatest.current();
         return;
       }
       if (e.key !== "Tab" || !panelRef.current) return;
@@ -45,7 +50,7 @@ export function Sheet({
       document.removeEventListener("keydown", onKey);
       returnFocus.current?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="sheet-overlay" onClick={onClose}>

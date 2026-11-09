@@ -34,3 +34,22 @@ describe("Banner", () => {
     expect((details as HTMLDetailsElement).open).toBe(false);
   });
 });
+
+describe("Sheet on a page that refreshes", () => {
+  it("keeps the reader's place when the page re-renders with a new onClose", () => {
+    const closes: string[] = [];
+    const ui = (n: number) => (
+      <Sheet title="Epic" onClose={() => closes.push(`close-${n}`)}>
+        <p>Long text</p>
+        <a href="#x">a link further down</a>
+      </Sheet>
+    );
+    const { rerender } = render(ui(1));
+    const link = screen.getByRole("link", { name: "a link further down" });
+    link.focus();
+    rerender(ui(2)); // the 5-second refresh: a new onClose function
+    expect(document.activeElement).toBe(link); // focus (and so the scroll) stays where the reader is
+    screen.getByRole("dialog").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(closes).toEqual(["close-2"]); // Escape still closes, with the latest handler
+  });
+});
