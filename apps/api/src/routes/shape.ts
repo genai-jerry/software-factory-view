@@ -211,6 +211,9 @@ export function readRepoProposal(raw: string): RepoProposal | null {
   }
 }
 
+/** Held in issueUrl while the issue is being filed. */
+const OPENING = "opening";
+
 export interface WorkProposal {
   title: string;
   fast: boolean;
@@ -980,8 +983,25 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!conv.repoId || !conv.repoFullName) return reply.code(400).send({ error: "pick the repository the work opens in" });
     const homeId = conv.repoId;
     const repo = { id: homeId, orgId: conv.orgId, fullName: conv.repoFullName };
+    // One idea opens one piece of work. Claim the conversation before filing, so two
+    // clicks (the chat card and the sheet, or a double click) cannot each file an issue
+    // (beacon-api#388 and #389 were the same investigation, opened twice).
+    const claimed = await db
+      .update(shapeConversations)
+      .set({ issueUrl: OPENING })
+      .where(and(eq(shapeConversations.id, conv.id), isNull(shapeConversations.issueUrl)))
+      .returning({ id: shapeConversations.id });
+    if (claimed.length === 0) {
+      const now = (await db.select({ url: shapeConversations.issueUrl }).from(shapeConversations).where(eq(shapeConversations.id, conv.id)).limit(1))[0];
+      return reply.code(409).send({
+        error: now?.url && now.url !== OPENING ? `This idea is already open as work: ${now.url}` : "This idea is being opened as work. Give it a moment.",
+      });
+    }
     const issue = await openWorkIssue(deps, ctx, reply, repo, { title, body: parts.join("\n\n"), fast: Boolean(req.body?.fast) });
-    if (!issue) return;
+    if (!issue) {
+      await db.update(shapeConversations).set({ issueUrl: null }).where(and(eq(shapeConversations.id, conv.id), eq(shapeConversations.issueUrl, OPENING)));
+      return;
+    }
     const existing = (
       await db.select({ id: issues.id }).from(issues).where(and(eq(issues.repoId, homeId), eq(issues.number, issue.number))).limit(1)
     )[0];
