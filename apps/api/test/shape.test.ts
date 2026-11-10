@@ -829,6 +829,13 @@ describe("Investigate: the same conversation, a different job", () => {
     const issue = calls.find((c) => c.url.endsWith("/repos/acme/app/issues"))!;
     expect(String(issue.body!.body)).toContain("investigated in Compass:");
     expect(String(issue.body!.body)).toContain(`/investigate/${convId}`);
+
+    // Opening it again (the chat card and the sheet, or a double click) files nothing more.
+    calls = stubNetwork("");
+    const again = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Fix: a lead's reply is lost", fast: true } });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error).toMatch(/already open as work/);
+    expect(calls.some((c) => c.url.endsWith("/repos/acme/app/issues"))).toBe(false);
   });
 
   it("is about a running product, not a new one or an epic", async () => {
