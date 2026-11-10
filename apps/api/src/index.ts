@@ -4,6 +4,7 @@ import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { buildApp } from "./app.js";
+import { startAnswerCollector } from "./routes/shape.js";
 import { startTelegram } from "./telegram/index.js";
 
 const cfg = loadConfig();
@@ -43,6 +44,8 @@ async function main(): Promise<void> {
   const app = await buildApp(deps);
   await app.listen({ port: cfg.API_PORT, host: "0.0.0.0" });
   await startTelegram(app, deps);
+  // Shape and Investigate answers are written on the orchestrator; fetch them as they finish.
+  startAnswerCollector(app);
 
   const resolved = await credentials.resolve();
   console.log(`api up on :${cfg.API_PORT}`);
