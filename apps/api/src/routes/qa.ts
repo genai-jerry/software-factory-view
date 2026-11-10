@@ -20,6 +20,7 @@ import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadDependencies, loadEpic, loadIssue } from "./read.js";
+import { askModels } from "../model-settings.js";
 
 /**
  * Ask the Factory (spec 06 §5): grounded, cited, budgeted, private by
@@ -271,6 +272,7 @@ async function runAsk(
         branch: `factory/epic-${epic.number}`,
         claudeCodeOauthToken: claudeToken,
         mcpServers: await mcpPayloadFor(deps, repo.orgId, repo.projectId),
+        models: await askModels(deps, repo.orgId, repo.projectId, "ask"),
       });
       if ("ok" in got) {
         result = {

@@ -6,6 +6,7 @@ import type { AppDeps } from "../context.js";
 import { loadBlockedMeta } from "../attention.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
+import { askModelsForRepo } from "../model-settings.js";
 
 /**
  * Discussing a decision with Compass's read-only Claude session, and the
@@ -123,6 +124,7 @@ export async function ask(deps: AppDeps, conv: Conversation, question: string, i
     anthropicApiKey: secrets.anthropicApiKey,
     claudeCodeOauthToken: secrets.claudeCodeOauthToken,
     mcpServers: await mcpPayloadForRepo(deps, home.issue.orgId, home.issue.repoId),
+    models: await askModelsForRepo(deps, home.issue.orgId, home.issue.repoId, "ask"),
   });
   if ("error" in got) return { ok: false, error: got.error };
   return { ok: true, answer: got.answer, ...(got.session ? { session: got.session } : {}) };
