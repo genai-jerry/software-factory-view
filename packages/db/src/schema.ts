@@ -667,6 +667,8 @@ export const shapeMessages = pgTable(
     /** An assistant message is answered in the background: pending | done | failed. */
     status: text("status").notNull().default("done"),
     error: text("error"),
+    /** The orchestrator's background ask writing a pending answer; the collector fetches it. */
+    askId: text("ask_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("shape_messages_conv").on(t.conversationId, t.createdAt)],

@@ -174,6 +174,19 @@ describe("GET /api/orchestrator/usage", () => {
   });
 });
 
+/**
+ * The orchestrator's background ask: POST /asks is recorded and accepted,
+ * and GET /asks/{id} returns `answer` as done.
+ */
+function answering(answer: Record<string, unknown>, calls: Array<{ url: string; body: Record<string, unknown> }>) {
+  return async (url: string, init?: RequestInit) => {
+    const polled = /\/asks\/([^/]+)$/.exec(url);
+    if (polled) return new Response(JSON.stringify({ id: polled[1], status: "done", ...answer }), { status: 200 });
+    calls.push({ url, body: JSON.parse(init!.body as string) });
+    return new Response(JSON.stringify({ status: "running" }), { status: 202 });
+  };
+}
+
 describe("POST /api/threads/:id/ask", () => {
   async function seedThread() {
     const { issues, repos, threads } = await import("@console/db");
@@ -211,15 +224,12 @@ describe("POST /api/threads/:id/ask", () => {
   it("asks the orchestrator and saves the question and answer in the thread", async () => {
     const t = await seedThread();
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url, body: JSON.parse(init.body as string) });
-      return new Response(JSON.stringify({ answer: "It stopped at the rework cap.", model: "claude-sonnet-5-5" }), { status: 200 });
-    });
+    vi.stubGlobal("fetch", answering({ answer: "It stopped at the rework cap.", model: "claude-sonnet-5-5" }, calls));
     const res = await app.inject({
       method: "POST", url: `/api/threads/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "Why is it blocked?" },
     });
     expect(res.statusCode).toBe(200);
-    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/asks");
     expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "api", question: "Why is it blocked?", branch: "factory/epic-34" });
     expect(String(calls[0]!.body.instructions)).toContain("Writing standard");
     const { threadEntries } = await import("@console/db");
@@ -286,16 +296,13 @@ describe("POST /api/issues/:id/ask", () => {
   it("asks the orchestrator about the question, with the issue and its conversation, and answers the person only", async () => {
     const t = await seedBlockedTask();
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url, body: JSON.parse(init.body as string) });
-      return new Response(JSON.stringify({ answer: "Option 1 splits the sentence into its own task; the rest ships now.", model: "claude-sonnet-5-5" }), { status: 200 });
-    });
+    vi.stubGlobal("fetch", answering({ answer: "Option 1 splits the sentence into its own task; the rest ships now.", model: "claude-sonnet-5-5" }, calls));
     const res = await app.inject({
       method: "POST", url: `/api/issues/${t.id}/ask`, headers: { cookie, "x-console-csrf": "1" }, payload: { question: "What does option 1 change?" },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, answer: "Option 1 splits the sentence into its own task; the rest ships now.", model: "claude-sonnet-5-5" });
-    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/asks");
     expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "api", question: "What does option 1 change?", branch: "factory/epic-34" });
     const context = String(calls[0]!.body.context);
     expect(context).toContain("Issue #40: task(34): Calling not happening on all the lines");
@@ -345,13 +352,7 @@ describe("POST /api/epics/:id/qa with a Claude token", () => {
   it("asks the orchestrator's Claude CLI first and cites the numbered sources", async () => {
     const epic = await seedEpicWithToken();
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url, body: JSON.parse(init.body as string) });
-      return new Response(
-        JSON.stringify({ answer: "The epic body says it is a bug fix [1].", model: "claude-sonnet-5-5", usage: { input_tokens: 900, output_tokens: 60 } }),
-        { status: 200 },
-      );
-    });
+    vi.stubGlobal("fetch", answering({ answer: "The epic body says it is a bug fix [1].", model: "claude-sonnet-5-5", usage: { input_tokens: 900, output_tokens: 60 } }, calls));
     const listed = await app.inject({ method: "GET", url: `/api/epics/${epic.id}/qa`, headers: { cookie } });
     expect(listed.json()).toMatchObject({ enabled: true, via: "claude" });
     const res = await app.inject({
@@ -359,7 +360,7 @@ describe("POST /api/epics/:id/qa with a Claude token", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/ask");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8080/asks");
     expect(calls[0]!.body).toMatchObject({ owner: "acme", repo: "web", branch: "factory/epic-36", claude_code_oauth_token: "sk-ant-oat01-x" });
     expect(String(calls[0]!.body.context)).toContain("[1] (comment) Epic #36: Bug epic");
     expect(String(calls[0]!.body.instructions)).toContain("Writing standard");

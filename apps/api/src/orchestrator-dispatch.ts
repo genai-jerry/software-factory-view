@@ -1,5 +1,6 @@
 import type { McpServerPayload } from "./mcp-servers.js";
 import type { ConsoleConfig } from "@console/core";
+import { randomUUID } from "node:crypto";
 import { Agent } from "undici";
 
 /**
@@ -8,12 +9,7 @@ import { Agent } from "undici";
  * orchestrator, so labelling `factory:profile` never starts a LangGraph run by
  * itself. `/dispatch` is the Console's equivalent of "Run workflow".
  */
-/**
- * The orchestrator answers /ask only when the whole answer is written, so no
- * header arrives until then. Node's fetch gives up on a reply whose headers
- * have not started in 300 s (undici's default), well inside the 480 s a Shape
- * answer may take; this agent leaves the call's own AbortSignal in charge.
- */
+/** Header and body timeouts long enough for the waiting /ask (askAndHold). */
 const longAnswer = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
 
 export type OrchestratorDispatch = {
@@ -322,85 +318,87 @@ export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, A
   return out;
 }
 
-/**
- * A person's question about a thread, answered by the orchestrator's Claude
- * CLI (POST /ask) — the subscription token works there, not on the API. The
- * session reads the repo and runs for up to five minutes, so the timeout is
- * long and the error text is the reason to show the asker.
- */
-export async function askOrchestrator(
-  cfg: ConsoleConfig,
-  body: {
-    /** Both, or neither for Shape about a new product (no repository yet). */
-    owner?: string;
-    repo?: string;
-    question: string;
-    context: string;
-    branch?: string;
-    /** How to answer, when the caller has its own rules (the epic panel's citations). */
-    instructions?: string;
-    anthropicApiKey?: string;
-    claudeCodeOauthToken?: string;
-    /** Images the session reads with its Read tool (Shape). */
-    images?: Array<{ name: string; mime: string; dataB64: string }>;
-    /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
-    mode?: "ask" | "shape";
-    /** Other repositories checked out beside the primary one, each on `branch` when it exists there, else its default. */
-    repos?: Array<{ owner: string; repo: string; branch: string | null }>;
-    /** A persistent workspace key (a Shape conversation id): the checkout is kept between messages and reset to the branch each time. */
-    conversation?: string;
-    /** A Claude session id from an earlier answer on the same conversation, to resume instead of starting cold. */
-    session?: string;
-    /** The org's Compass → Tools servers (mcpPayloadFor); the orchestrator picks the ones for this mode. */
-    mcpServers?: McpServerPayload[];
-  },
-): Promise<
-  { ok: true; answer: string; model: string; inputTokens: number; outputTokens: number; session?: string; resumed?: boolean } | OrchestratorProxyError
-> {
-  const dest = orchestratorBase(cfg);
-  if ("error" in dest) return dest;
-  let res: Response;
-  try {
-    res = await fetch(`${dest.base}/ask`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        ...(body.owner && body.repo ? { owner: body.owner, repo: body.repo } : {}),
-        question: body.question,
-        context: body.context,
-        ...(body.branch ? { branch: body.branch } : {}),
-        ...(body.instructions ? { instructions: body.instructions } : {}),
-        ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
-        ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
-        ...(body.images && body.images.length > 0
-          ? { images: body.images.map((i) => ({ name: i.name, mime: i.mime, data_b64: i.dataB64 })) }
-          : {}),
-        ...(body.mode && body.mode !== "ask" ? { mode: body.mode } : {}),
-        ...(body.repos && body.repos.length > 0 ? { repos: body.repos } : {}),
-        ...(body.conversation ? { conversation: body.conversation } : {}),
-        ...(body.session ? { session: body.session } : {}),
-        ...(body.mcpServers ? { mcp_servers: body.mcpServers } : {}),
-      }),
-      signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
-      dispatcher: longAnswer,
-    } as RequestInit);
-  } catch (err) {
-    return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
-  }
-  const json = (await res.json().catch(() => ({}))) as {
-    answer?: string;
-    model?: string;
-    detail?: string;
-    usage?: { input_tokens?: number; output_tokens?: number };
-    session?: string;
-    resumed?: boolean;
+/** A question for the orchestrator's read-only Claude session (POST /asks, or /ask). */
+export type AskBody = {
+  /** Both, or neither for Shape about a new product (no repository yet). */
+  owner?: string;
+  repo?: string;
+  question: string;
+  context: string;
+  branch?: string;
+  /** How to answer, when the caller has its own rules (the epic panel's citations). */
+  instructions?: string;
+  anthropicApiKey?: string;
+  claudeCodeOauthToken?: string;
+  /** Images the session reads with its Read tool (Shape). */
+  images?: Array<{ name: string; mime: string; dataB64: string }>;
+  /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
+  mode?: "ask" | "shape";
+  /** Other repositories checked out beside the primary one, each on `branch` when it exists there, else its default. */
+  repos?: Array<{ owner: string; repo: string; branch: string | null }>;
+  /** A persistent workspace key (a Shape conversation id): the checkout is kept between messages and reset to the branch each time. */
+  conversation?: string;
+  /** A Claude session id from an earlier answer on the same conversation, to resume instead of starting cold. */
+  session?: string;
+  /** The org's Compass → Tools servers (mcpPayloadFor); the orchestrator picks the ones for this mode. */
+  mcpServers?: McpServerPayload[];
+};
+
+/** A finished answer. */
+export type AskAnswer = {
+  ok: true;
+  answer: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  session?: string;
+  resumed?: boolean;
+};
+
+/** Where a background ask stands (GET /asks/{id}). `gone`: the orchestrator has no such ask. */
+export type AskState =
+  | { status: "running" }
+  | { status: "done"; answer: AskAnswer }
+  | { status: "failed"; error: OrchestratorProxyError }
+  | { status: "gone" };
+
+/** A verdict from the orchestrator, as opposed to not reaching it (whose error also has a numeric `status`). */
+export function isAskState(got: AskState | OrchestratorProxyError): got is AskState {
+  return typeof got.status === "string";
+}
+
+/** What the orchestrator says when an ask was cut off, or is not there at all. */
+export const ASK_GONE = "The orchestrator lost the question, probably in a restart. Ask again.";
+
+function askPayload(body: AskBody): Record<string, unknown> {
+  return {
+    ...(body.owner && body.repo ? { owner: body.owner, repo: body.repo } : {}),
+    question: body.question,
+    context: body.context,
+    ...(body.branch ? { branch: body.branch } : {}),
+    ...(body.instructions ? { instructions: body.instructions } : {}),
+    ...(body.anthropicApiKey ? { anthropic_api_key: body.anthropicApiKey } : {}),
+    ...(body.claudeCodeOauthToken ? { claude_code_oauth_token: body.claudeCodeOauthToken } : {}),
+    ...(body.images && body.images.length > 0
+      ? { images: body.images.map((i) => ({ name: i.name, mime: i.mime, data_b64: i.dataB64 })) }
+      : {}),
+    ...(body.mode && body.mode !== "ask" ? { mode: body.mode } : {}),
+    ...(body.repos && body.repos.length > 0 ? { repos: body.repos } : {}),
+    ...(body.conversation ? { conversation: body.conversation } : {}),
+    ...(body.session ? { session: body.session } : {}),
+    ...(body.mcpServers ? { mcp_servers: body.mcpServers } : {}),
   };
-  if (res.status === 404 || res.status === 405 || res.status === 501) {
-    return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
-  }
-  if (!res.ok || !json.answer) {
-    return { error: json.detail || `orchestrator returned ${res.status}`, status: res.status === 429 ? 429 : 502 };
-  }
+}
+
+type AnswerJson = {
+  answer?: string;
+  model?: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
+  session?: string;
+  resumed?: boolean;
+};
+
+function answerOf(json: AnswerJson & { answer: string }): AskAnswer {
   return {
     ok: true,
     answer: json.answer,
@@ -410,6 +408,107 @@ export async function askOrchestrator(
     ...(typeof json.session === "string" && json.session ? { session: json.session } : {}),
     ...(typeof json.resumed === "boolean" ? { resumed: json.resumed } : {}),
   };
+}
+
+/**
+ * Hand the orchestrator a question to answer in the background, under an id
+ * the caller picks (POST /asks). Returns at once; the answer is collected
+ * with fetchAsk. Sending an id again starts nothing. `legacy`: this
+ * orchestrator predates /asks, so only the waiting /ask is there.
+ */
+export async function submitAsk(cfg: ConsoleConfig, id: string, body: AskBody): Promise<{ ok: true } | { legacy: true } | OrchestratorProxyError> {
+  const dest = orchestratorBase(cfg);
+  if ("error" in dest) return dest;
+  let res: Response;
+  try {
+    res = await fetch(`${dest.base}/asks`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ id, ...askPayload(body) }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
+  }
+  if (res.status === 404 || res.status === 405) return { legacy: true };
+  if (res.ok) return { ok: true };
+  const json = (await res.json().catch(() => ({}))) as { detail?: string };
+  if (res.status === 501) return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
+  return { error: json.detail || `orchestrator returned ${res.status}`, status: res.status === 429 ? 429 : 502 };
+}
+
+/** Where a background ask stands. An orchestrator that cannot be reached is an error, not a verdict: ask again later. */
+export async function fetchAsk(cfg: ConsoleConfig, id: string): Promise<AskState | OrchestratorProxyError> {
+  const got = await orchestratorGet(cfg, `/asks/${encodeURIComponent(id)}`);
+  if ("error" in got) return got.status === 404 ? { status: "gone" } : got;
+  const json = (got.body ?? {}) as AnswerJson & { status?: string; error?: string; error_status?: number };
+  if (json.status === "running") return { status: "running" };
+  if (json.status === "done" && json.answer) return { status: "done", answer: answerOf({ ...json, answer: json.answer }) };
+  return {
+    status: "failed",
+    error: { error: json.error || (json.status === "done" ? "The orchestrator returned no answer." : "The answer failed."), status: json.error_status === 429 ? 429 : 502 },
+  };
+}
+
+/**
+ * The waiting /ask, for an orchestrator that predates /asks. It sends nothing
+ * until the answer is written, and Node's fetch gives up on a reply whose
+ * headers have not started in 300 s (undici's default), well inside the 480 s
+ * a Shape answer may take; the agent leaves the call's own AbortSignal in charge.
+ */
+async function askAndHold(cfg: ConsoleConfig, body: AskBody): Promise<AskAnswer | OrchestratorProxyError> {
+  const dest = orchestratorBase(cfg);
+  if ("error" in dest) return dest;
+  let res: Response;
+  try {
+    res = await fetch(`${dest.base}/ask`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
+      body: JSON.stringify(askPayload(body)),
+      signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
+      dispatcher: longAnswer,
+    } as RequestInit);
+  } catch (err) {
+    return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
+  }
+  const json = (await res.json().catch(() => ({}))) as AnswerJson & { detail?: string };
+  if (res.status === 404 || res.status === 405 || res.status === 501) {
+    return { error: "this orchestrator is too old to answer questions — redeploy it", status: 502 };
+  }
+  if (!res.ok || !json.answer) {
+    return { error: json.detail || `orchestrator returned ${res.status}`, status: res.status === 429 ? 429 : 502 };
+  }
+  return answerOf({ ...json, answer: json.answer });
+}
+
+/** Pauses between checks on a background ask: soon at first, then every 3 s. */
+const ASK_POLL_MS = [0, 500, 1_000, 2_000, 3_000];
+
+/**
+ * A person's question about a thread, answered by the orchestrator's Claude
+ * CLI — the subscription token works there, not on the API. The question is
+ * handed over as a background ask and checked on until it is done, so no
+ * request is held open while Claude reads; the error text is the reason to
+ * show the asker. Callers that must outlive this process (Shape) use
+ * submitAsk and fetchAsk themselves.
+ */
+export async function askOrchestrator(cfg: ConsoleConfig, body: AskBody): Promise<AskAnswer | OrchestratorProxyError> {
+  const id = randomUUID();
+  const sent = await submitAsk(cfg, id, body);
+  if ("legacy" in sent) return askAndHold(cfg, body);
+  if ("error" in sent) return sent;
+  // The orchestrator stops a session at 480 s (shape) or 300 s; a minute more
+  // covers the queue for a slot and the checkout.
+  const deadline = Date.now() + (body.mode === "shape" ? 540_000 : 360_000);
+  for (let i = 0; Date.now() < deadline; i++) {
+    await new Promise((r) => setTimeout(r, ASK_POLL_MS[Math.min(i, ASK_POLL_MS.length - 1)]));
+    const got = await fetchAsk(cfg, id);
+    if (!isAskState(got) || got.status === "running") continue; // unreachable for a moment: check again
+    if (got.status === "done") return got.answer;
+    if (got.status === "failed") return got.error;
+    return { error: ASK_GONE, status: 502 };
+  }
+  return { error: "The orchestrator took too long to answer. Ask again.", status: 504 };
 }
 
 /**

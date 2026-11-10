@@ -1,12 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mcpPayloadFor } from "../mcp-servers.js";
 import { sourcesBlock } from "@console/insight";
 import { issues, projects, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
-import { and, asc, desc, eq, inArray, isNotNull, lt, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, notInArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "@console/db";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
-import { askOrchestrator } from "../orchestrator-dispatch.js";
+import { ASK_GONE, askOrchestrator, fetchAsk, isAskState, submitAsk, type AskAnswer, type AskBody, type OrchestratorProxyError } from "../orchestrator-dispatch.js";
 import { renderMarkdown } from "../render.js";
 import { requirementBody } from "../openspec-draft.js";
 import { INVESTIGATE_INSTRUCTIONS, INVESTIGATE_SPEC_INSTRUCTIONS, SHAPE_INSTRUCTIONS, SPEC_INSTRUCTIONS } from "../shape-prompts.js";
@@ -86,15 +86,46 @@ function track(work: Promise<void>, messageId?: string): void {
   pendingAnswers.add(p);
 }
 
-/** Wait for every answer in flight — for tests, and for a graceful stop. */
+/**
+ * Collect finished background asks into their messages; how many are still
+ * running. Set when the routes are registered (it needs their database and
+ * config), run every few seconds by startAnswerCollector.
+ */
+let collect: (() => Promise<number>) | null = null;
+
+/** Wait for every answer in flight, submitted and collected — for tests. */
 export async function settlePendingAnswers(): Promise<void> {
-  while (pendingAnswers.size > 0) await Promise.all([...pendingAnswers]);
+  for (let round = 0; round < 100; round++) {
+    while (pendingAnswers.size > 0) await Promise.all([...pendingAnswers]);
+    if (!collect || (await collect()) === 0) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/**
+ * Check the orchestrator for finished answers every few seconds. The answer
+ * is written there in the background, so a pending message survives this
+ * process restarting: the next process picks its ask up by id.
+ */
+export function startAnswerCollector(app: FastifyInstance, everyMs = 3_000): () => void {
+  let running = false;
+  const timer = setInterval(() => {
+    if (running || !collect) return;
+    running = true;
+    collect()
+      .catch((err: unknown) => app.log.warn({ err }, "could not collect Shape answers"))
+      .finally(() => {
+        running = false;
+      });
+  }, everyMs);
+  return () => clearInterval(timer);
 }
 
 /**
  * Mark work the process lost as failed: a pending answer or requirement
- * older than 15 minutes, that this process is not answering, was started by
- * a process that is gone. Run at start
+ * older than 15 minutes, that this process is not answering and that has no
+ * background ask on the orchestrator, was started by a process that is gone.
+ * An answer with an ask is settled by what the orchestrator says (collect). Run at start
  * and before a conversation is read, so a reader is never shown a spinner
  * that nothing will ever stop.
  */
@@ -106,6 +137,7 @@ export async function settleStale(db: Db, conversationId?: string): Promise<void
     .where(
       and(
         eq(shapeMessages.status, "pending"),
+        isNull(shapeMessages.askId),
         lt(shapeMessages.createdAt, cutoff),
         ...(answering.size > 0 ? [notInArray(shapeMessages.id, [...answering])] : []),
         ...(conversationId ? [eq(shapeMessages.conversationId, conversationId)] : []),
@@ -601,7 +633,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       // already read and the transcript is not sent again. Older than that,
       // or never opened, the message starts cold with the full grounding.
       const session = conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? resumableSession(conv.askSession, conv.kind) : null;
-      const got = await askOrchestrator(deps.cfg, {
+      const request: AskBody = {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
         mcpServers: await mcpPayloadFor(deps, conv.orgId, conv.projectId),
@@ -614,24 +646,21 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         repos: await siblings(conv.repoId, conv.projectId, branch),
         conversation: conv.id,
         ...(session ? { session } : {}),
-      });
-      if (!("ok" in got)) {
-        await db.update(shapeMessages).set({ status: "failed", error: got.error }).where(eq(shapeMessages.id, assistantId));
+      };
+      // The answer is written on the orchestrator in the background, under
+      // an id kept on the message; collect() fetches it when it is done, in
+      // this process or the next.
+      const askId = randomUUID();
+      await db.update(shapeMessages).set({ askId }).where(eq(shapeMessages.id, assistantId));
+      const sent = await submitAsk(deps.cfg, askId, request);
+      if ("ok" in sent) return;
+      if ("error" in sent) {
+        await db.update(shapeMessages).set({ status: "failed", error: sent.error, askId: null }).where(eq(shapeMessages.id, assistantId));
         return;
       }
-      // The session to resume next time: the one the orchestrator reports
-      // (new on a cold start, the same when it resumed). An orchestrator that
-      // reports none — or one that could not resume and opened no new session
-      // — leaves the next message to start cold with the full grounding.
-      const nextSession = got.session ?? (got.resumed === true ? session : null);
-      await db
-        .update(shapeConversations)
-        .set({ ...(nextSession ? { askSession: storedSession(nextSession, conv.kind), askSessionAt: new Date() } : { askSession: null, askSessionAt: null }), updatedAt: new Date() })
-        .where(eq(shapeConversations.id, conv.id));
-      await db
-        .update(shapeMessages)
-        .set({ body: got.answer, inputTokens: got.inputTokens, outputTokens: got.outputTokens, model: got.model || null, status: "done", error: null })
-        .where(eq(shapeMessages.id, assistantId));
+      // An orchestrator that predates /asks: answer while this process waits.
+      await db.update(shapeMessages).set({ askId: null }).where(eq(shapeMessages.id, assistantId));
+      await finish(conv.id, assistantId, null, await askOrchestrator(deps.cfg, request));
     } catch (err) {
       await db
         .update(shapeMessages)
@@ -640,6 +669,61 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         .catch(() => undefined);
     }
   }
+
+  /**
+   * Write a finished answer into its pending message, and keep the session to
+   * resume. `askId` guards against a retry that has since handed the message
+   * a new ask: only the ask the message still names may finish it.
+   */
+  async function finish(conversationId: string, assistantId: string, askId: string | null, got: AskAnswer | OrchestratorProxyError): Promise<void> {
+    const mine = and(eq(shapeMessages.id, assistantId), eq(shapeMessages.status, "pending"), askId ? eq(shapeMessages.askId, askId) : isNull(shapeMessages.askId));
+    if (!("ok" in got)) {
+      await db.update(shapeMessages).set({ status: "failed", error: got.error }).where(mine);
+      return;
+    }
+    const done = await db
+      .update(shapeMessages)
+      .set({ body: got.answer, inputTokens: got.inputTokens, outputTokens: got.outputTokens, model: got.model || null, status: "done", error: null })
+      .where(mine)
+      .returning({ id: shapeMessages.id });
+    if (done.length === 0) return;
+    // The session to resume next time: the one the orchestrator reports (new
+    // on a cold start, the same when it resumed). One that resumed without
+    // naming it keeps the stored one. An orchestrator that reports none — or
+    // could not resume and opened no new session — leaves the next message to
+    // start cold with the full grounding.
+    const [conv] = await db.select().from(shapeConversations).where(eq(shapeConversations.id, conversationId)).limit(1);
+    if (!conv) return;
+    const next = got.session
+      ? { askSession: storedSession(got.session, conv.kind), askSessionAt: new Date() }
+      : got.resumed === true && conv.askSession
+      ? { askSessionAt: new Date() }
+      : { askSession: null, askSessionAt: null };
+    await db.update(shapeConversations).set({ ...next, updatedAt: new Date() }).where(eq(shapeConversations.id, conversationId));
+  }
+
+  collect = async () => {
+    const waiting = await db
+      .select({ id: shapeMessages.id, conversationId: shapeMessages.conversationId, askId: shapeMessages.askId })
+      .from(shapeMessages)
+      .where(and(eq(shapeMessages.status, "pending"), isNotNull(shapeMessages.askId)));
+    let running = 0;
+    for (const m of waiting) {
+      const got = await fetchAsk(deps.cfg, m.askId!);
+      // Unreachable for now, or still writing: look again next round.
+      if (!isAskState(got) || got.status === "running") {
+        running++;
+        continue;
+      }
+      await finish(
+        m.conversationId,
+        m.id,
+        m.askId,
+        got.status === "done" ? got.answer : got.status === "failed" ? got.error : { error: ASK_GONE, status: 502 },
+      );
+    }
+    return running;
+  };
 
   /** The 202 body: the pending assistant message, and the conversation's title. */
   async function accepted(reply: FastifyReply, assistantId: string, title: string) {
@@ -712,7 +796,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const ids = (question.attachments ?? []).map((a) => a.id);
     const attachments = ids.length ? await db.select().from(shapeAttachments).where(and(inArray(shapeAttachments.id, ids), eq(shapeAttachments.conversationId, conv.id))) : [];
     const earlier = all.slice(0, at).filter((m) => m.id !== question.id);
-    await db.update(shapeMessages).set({ status: "pending", error: null, body: "" }).where(eq(shapeMessages.id, failed.id));
+    await db.update(shapeMessages).set({ status: "pending", error: null, body: "", askId: null }).where(eq(shapeMessages.id, failed.id));
     const text = question.body === "(an image)" ? "" : question.body;
     track(answer(conv, failed.id, text, attachments, earlier, claudeToken), failed.id);
     return accepted(reply, failed.id, conv.title);

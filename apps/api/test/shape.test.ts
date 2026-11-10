@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
 import { artifactCache, changeArtifacts, changes, estates, issues, memberships, orgs, projects, repos, sessions, users } from "@console/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
@@ -11,7 +11,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 import { retainOrchestratorSecret } from "../src/orchestrator-secrets.js";
-import { settlePendingAnswers, settleStale, splitMocks } from "../src/routes/shape.js";
+import { pendingAnswers, settlePendingAnswers, settleStale, splitMocks } from "../src/routes/shape.js";
+import { ASK_GONE } from "../src/orchestrator-dispatch.js";
 import { shapeConversations, shapeMessages } from "@console/db";
 
 /**
@@ -87,19 +88,28 @@ beforeAll(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 /** Answer the orchestrator's /ask and GitHub's issue creation; record every call. */
-function stubNetwork(answer: string, ask: { session?: string; resumed?: boolean } = {}, delayMs = 0) {
+/** The orchestrator and GitHub. `legacy`: an orchestrator without /asks, answering only on the waiting /ask. */
+function stubNetwork(answer: string, ask: { session?: string; resumed?: boolean } = {}, delayMs = 0, legacy = false) {
   const calls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
       calls.push({ url: String(url), body });
+      const answered = { answer, model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 20 }, ...ask };
       if (String(url) === `${ORCH}/ask`) {
         if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
-        return new Response(JSON.stringify({ answer, model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 20 }, ...ask }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(JSON.stringify(answered), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // The background ask: accepted at once, done when next looked at.
+      if (String(url) === `${ORCH}/asks`) {
+        if (legacy) return new Response(JSON.stringify({ detail: "Not Found" }), { status: 404 });
+        return new Response(JSON.stringify({ id: body!.id, status: "running" }), { status: 202, headers: { "content-type": "application/json" } });
+      }
+      const polled = new RegExp(`^${ORCH}/asks/([^/]+)$`).exec(String(url));
+      if (polled) {
+        if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+        return new Response(JSON.stringify({ id: polled[1], status: "done", ...answered }), { status: 200, headers: { "content-type": "application/json" } });
       }
       const repoIssues = /\/repos\/acme\/(app|web)\/issues$/.exec(String(url));
       if (repoIssues) {
@@ -202,7 +212,7 @@ describe("Shape", () => {
     const busy = await say(convId, { text: "And?" });
     expect(busy.statusCode).toBe(409);
     await settlePendingAnswers();
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).toMatchObject({ owner: "acme", repo: "app", mode: "shape", claude_code_oauth_token: "claude-token" });
     expect(ask.body!.images).toEqual([{ name: "leads_page.png", mime: "image/png", data_b64: PNG_B64 }]);
     expect(String(ask.body!.instructions)).toContain("self-contained HTML document");
@@ -237,7 +247,7 @@ describe("Shape", () => {
     // cold again and carries the earlier turns as context.
     calls = stubNetwork("Where it would live: the leads list component.");
     await say(convId, { text: "Where would that live in the code?" });
-    const second = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const second = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(String(second.body!.context)).toContain("Person: Show the calling status on the leads page");
     expect(String(second.body!.context)).toContain("You: I see the leads table.");
     expect(second.body!.images).toBeUndefined();
@@ -252,7 +262,7 @@ describe("Shape", () => {
     await settlePendingAnswers();
     expect((await view(convId)).conversation).toMatchObject({ specStatus: "done", specError: null });
     expect(String((await view(convId)).conversation.spec)).toContain("## OpenSpec change: calling-status-column");
-    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const specAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(String(specAsk.body!.instructions)).toContain("## Open questions");
     expect(String(specAsk.body!.instructions)).toContain("#### Scenario: <name>");
     expect(String(specAsk.body!.context)).toContain("Mock 1:");
@@ -357,7 +367,7 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
     let calls = stubNetwork("Two tasks are left.");
     const sent = await say(convId, { text: "What is left before this ships?" });
     expect(sent.statusCode).toBe(202);
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).toMatchObject({ branch: "factory/epic-35", mode: "shape", repos: [{ owner: "acme", repo: "web", branch: "factory/epic-35" }] });
     const context = String(ask.body!.context);
     expect(context).toContain("The epic's documents:");
@@ -369,7 +379,7 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
     calls = stubNetwork("## What should be built?\nA change to the epic.");
     const spec = await writeSpec(convId);
     expect(spec.statusCode).toBe(202);
-    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const specAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(specAsk.body).toMatchObject({ branch: "factory/epic-35", repos: [{ owner: "acme", repo: "web", branch: "factory/epic-35" }] });
     expect(String(specAsk.body!.context)).toContain("Setters cannot see the day's bookings.");
 
@@ -378,7 +388,7 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
     const freshId = (fresh.json() as { id: string }).id;
     calls = stubNetwork("From main.");
     await say(freshId, { text: "Where do leads live?" });
-    const freshAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const freshAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(freshAsk.body!.branch).toBeUndefined();
     expect(freshAsk.body!.repos).toEqual([{ owner: "acme", repo: "web", branch: null }]);
     expect(String(freshAsk.body!.context)).not.toContain("The epic's documents:");
@@ -400,7 +410,7 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
 
     let calls = stubNetwork("Both.");
     await say(convId, { text: "Where do leads live, and which app shows them?" });
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).toMatchObject({ owner: "acme", repo: "app", repos: [{ owner: "acme", repo: "web", branch: null }] });
     const context = String(ask.body!.context);
     expect(context).toContain("Project: Acme, repositories acme/app, acme/web.");
@@ -408,7 +418,7 @@ describe("Shape about an epic, and the project around a fresh idea", () => {
 
     calls = stubNetwork("## What should be built?\nA shared status across both apps.");
     await writeSpec(convId);
-    expect(String(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.context)).toContain("say which repositories change");
+    expect(String(calls.find((c) => c.url === `${ORCH}/asks`)!.body!.context)).toContain("say which repositories change");
 
     // Not a repository of the project → refused; a repository of it → the issue opens there and it becomes home.
     const elsewhere = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Shared status", repoId: "00000000-0000-0000-0000-000000000000" } });
@@ -437,7 +447,7 @@ describe("Shape resumes its Claude session", () => {
     // First message: no session yet, full grounding; the orchestrator opens s1.
     let calls = stubNetwork("The leads table has no status column.", { session: "s1", resumed: false });
     await say(convId, { text: "What does the leads page show?" });
-    const first = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const first = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(first.body!.session).toBeUndefined();
     expect(first.body!.conversation).toBe(convId);
     expect(String(first.body!.context)).toContain("the conversation starts here");
@@ -445,7 +455,7 @@ describe("Shape resumes its Claude session", () => {
     // Second message: s1 is resumed, so only the header travels.
     calls = stubNetwork("It would go beside the name.", { session: "s1", resumed: true });
     await say(convId, { text: "Where would a status column go?" });
-    const second = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const second = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(second.body!.session).toBe("s1");
     expect(String(second.body!.context)).toContain("Repository: acme/app");
     expect(String(second.body!.context)).not.toContain("Person:");
@@ -455,11 +465,11 @@ describe("Shape resumes its Claude session", () => {
     // and opened s2 — the next message resumes s2 and carries no transcript.
     calls = stubNetwork("Starting again: the leads table has no status column.", { session: "s2", resumed: false });
     await say(convId, { text: "And the filters?" });
-    const third = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const third = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(third.body!.session).toBe("s1");
     calls = stubNetwork("Filters stay.", { session: "s2", resumed: true });
     await say(convId, { text: "Thanks." });
-    const fourth = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const fourth = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(fourth.body!.session).toBe("s2");
 
     // An orchestrator that reports no session at all leaves the next message cold with the transcript.
@@ -467,14 +477,14 @@ describe("Shape resumes its Claude session", () => {
     await say(convId, { text: "Once more." });
     calls = stubNetwork("Cold again.");
     await say(convId, { text: "Still here?" });
-    const sixth = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const sixth = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(sixth.body!.session).toBeUndefined();
     expect(String(sixth.body!.context)).toContain("Person: What does the leads page show?");
 
     // The spec reuses the workspace but never a session.
     calls = stubNetwork("## What should be built?\nA column.\n\n## Why / who it is for\nSetters.\n\n## Context / constraints\nNone.\n\n## Out of scope\nNone.\n\n## Open questions\nNone\n\n## Mockups\nNone");
     await writeSpec(convId);
-    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const specAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(specAsk.body!.conversation).toBe(convId);
     expect(specAsk.body!.session).toBeUndefined();
     expect(String(specAsk.body!.context)).toContain("Person: What does the leads page show?");
@@ -507,7 +517,7 @@ describe("Shape answers in the background", () => {
     expect(retry.statusCode).toBe(202);
     expect((retry.json() as { message: { id: string; status: string } }).message).toMatchObject({ id: failedId, status: "pending" });
     await settlePendingAnswers();
-    expect(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.question).toBe("Why is the panel empty?");
+    expect(calls.find((c) => c.url === `${ORCH}/asks`)!.body!.question).toBe("Why is the panel empty?");
     v = await view(convId);
     expect(v.messages[1]).toMatchObject({ id: failedId, status: "done", error: null });
     expect(String(v.messages[1].bodyHtml)).toContain("Because no appointment has synced yet.");
@@ -549,6 +559,105 @@ describe("Shape answers in the background", () => {
   });
 });
 
+describe("Shape answers are background asks on the orchestrator", () => {
+  /** An orchestrator whose asks the test moves along by hand. */
+  function orchestrator() {
+    const asks = new Map<string, Record<string, unknown>>();
+    const submitted: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+        if (String(url) === `${ORCH}/asks`) {
+          const body = JSON.parse(String(init!.body)) as Record<string, unknown>;
+          submitted.push(body);
+          asks.set(String(body.id), { id: body.id, status: "running" });
+          return json(202, { id: body.id, status: "running" });
+        }
+        const polled = new RegExp(`^${ORCH}/asks/([^/]+)$`).exec(String(url));
+        if (polled) {
+          const got = asks.get(polled[1]!);
+          return got ? json(200, got) : json(404, { detail: "no such ask" });
+        }
+        return new Response("Not Found", { status: 404 });
+      }),
+    );
+    return { asks, submitted };
+  }
+
+  async function newConversation() {
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo } });
+    return (created.json() as { id: string }).id;
+  }
+
+  async function send(convId: string, text: string) {
+    const res = await app.inject({ method: "POST", url: `/api/shape/${convId}/messages`, headers: headers(jerryCookie), payload: { text } });
+    expect(res.statusCode).toBe(202);
+    while (pendingAnswers.size > 0) await Promise.all([...pendingAnswers]);
+  }
+
+  it("keeps an answer pending for as long as the orchestrator is writing it, however old, and collects it when done", async () => {
+    const orch = orchestrator();
+    const convId = await newConversation();
+    await send(convId, "Why were three reschedule messages sent?");
+    expect(orch.submitted).toHaveLength(1);
+    const askId = String(orch.submitted[0]!.id);
+    expect(orch.submitted[0]).toMatchObject({ mode: "shape", conversation: convId, question: "Why were three reschedule messages sent?" });
+
+    // Twenty minutes on, still being written: neither the read of the thread
+    // nor a collection round calls it lost.
+    await deps.dbh.db
+      .update(shapeMessages)
+      .set({ createdAt: sql`${shapeMessages.createdAt} - interval '20 minutes'` })
+      .where(eq(shapeMessages.conversationId, convId));
+    await settleStale(deps.dbh.db);
+    let v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ status: "pending" });
+    await settlePendingAnswers(); // gives up after its rounds while the ask runs
+    expect((await view(convId)).messages[1]).toMatchObject({ status: "pending" });
+
+    orch.asks.set(askId, { id: askId, status: "done", answer: "The sweep ran in two workers.", model: "m", usage: { input_tokens: 1, output_tokens: 2 }, session: "sess-9" });
+    await settlePendingAnswers();
+    v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ status: "done", error: null });
+    expect(String(v.messages[1].bodyHtml)).toContain("The sweep ran in two workers.");
+    const [conv] = await deps.dbh.db.select().from(shapeConversations).where(eq(shapeConversations.id, convId));
+    expect(conv!.askSession).toContain("sess-9");
+  });
+
+  it("says why when the orchestrator failed the ask, or has none by that id", async () => {
+    const orch = orchestrator();
+    const convId = await newConversation();
+    await send(convId, "First question");
+    const first = String(orch.submitted[0]!.id);
+    orch.asks.set(first, { id: first, status: "failed", error: "The orchestrator restarted while answering. Ask again.", error_status: 503 });
+    await settlePendingAnswers();
+    let v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ status: "failed", error: "The orchestrator restarted while answering. Ask again." });
+
+    // Try again: a new ask, so a late word on the old one cannot touch it.
+    const retry = await app.inject({ method: "POST", url: `/api/shape/${convId}/messages/${v.messages[1].id}/retry`, headers: headers(jerryCookie), payload: {} });
+    expect(retry.statusCode).toBe(202);
+    while (pendingAnswers.size > 0) await Promise.all([...pendingAnswers]);
+    const second = String(orch.submitted[1]!.id);
+    expect(second).not.toBe(first);
+    orch.asks.delete(second); // the orchestrator lost its ledger
+    await settlePendingAnswers();
+    v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ status: "failed", error: ASK_GONE });
+  });
+
+  it("answers while waiting when the orchestrator predates background asks", async () => {
+    const calls = stubNetwork("Answered the old way.", {}, 0, true);
+    const convId = await newConversation();
+    await say(convId, { text: "Old orchestrator?" });
+    const v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ status: "done" });
+    expect(String(v.messages[1].bodyHtml)).toContain("Answered the old way.");
+    expect(calls.map((c) => c.url)).toEqual(expect.arrayContaining([`${ORCH}/asks`, `${ORCH}/ask`]));
+  });
+});
+
 describe("Shape about a new product", () => {
   it("runs with no repository, writes the requirement from scratch, and opens where the person picks", async () => {
     const d = deps.dbh.db;
@@ -564,7 +673,7 @@ describe("Shape about a new product", () => {
 
     let calls = stubNetwork("A camera translator: point, read, translate.");
     await say(convId, { text: "A mobile app that translates Malayalam text from the camera" });
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).not.toHaveProperty("owner");
     expect(ask.body).not.toHaveProperty("repo");
     expect(ask.body).not.toHaveProperty("repos");
@@ -580,7 +689,7 @@ describe("Shape about a new product", () => {
 
     calls = stubNetwork("## What should be built?\nA camera translator.");
     await writeSpec(convId);
-    const specAsk = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const specAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(specAsk.body).not.toHaveProperty("repo");
     expect(String(specAsk.body!.context)).toContain("a new repository is needed");
 
@@ -599,13 +708,13 @@ describe("Shape about a new product", () => {
     const convId = (created.json() as { id: string }).id;
     let calls = stubNetwork("The leads page lives in app.", { session: "sess-code" });
     await say(convId, { text: "A translator app" });
-    expect(calls.find((c) => c.url === `${ORCH}/ask`)!.body).toMatchObject({ owner: "acme", repo: "app" });
+    expect(calls.find((c) => c.url === `${ORCH}/asks`)!.body).toMatchObject({ owner: "acme", repo: "app" });
 
     const switched = await app.inject({ method: "POST", url: `/api/shape/${convId}/new-product`, headers: headers(jerryCookie), payload: {} });
     expect(switched.statusCode).toBe(200);
     calls = stubNetwork("From scratch, then.");
     await say(convId, { text: "This is independent of acme" });
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).not.toHaveProperty("session");
     expect(ask.body).not.toHaveProperty("repo");
     // Cold start: the earlier turns come along in the context.
@@ -636,7 +745,7 @@ describe("Claude proposes a repository for a new product", () => {
     const convId = ((await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { newProduct: true } })).json() as { id: string }).id;
     let calls = stubNetwork('Proposed.\n\n```create-repository\n{"name": "lens", "description": "Camera translator", "private": true, "project": "new"}\n```', { session: "s-new" });
     await say(convId, { text: "Create the repo for this" });
-    expect(String(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.instructions)).toContain("create-repository");
+    expect(String(calls.find((c) => c.url === `${ORCH}/asks`)!.body!.instructions)).toContain("create-repository");
     const got = (await view(convId)) as { messages: Array<{ role: string; repoProposal: unknown }> };
     expect(got.messages.find((m) => m.role === "assistant")!.repoProposal).toMatchObject({ name: "lens", project: "new" });
 
@@ -647,7 +756,7 @@ describe("Claude proposes a repository for a new product", () => {
     // The next answer starts fresh in the repository's checkout.
     calls = stubNetwork("Now in the repo.");
     await say(convId, { text: "What is in it?" });
-    const next = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const next = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(next.body).toMatchObject({ owner: "acme", repo: "app" });
     expect(next.body).not.toHaveProperty("session");
     // Once it is work, it stays where it was filed.
@@ -672,7 +781,7 @@ describe("Claude proposes a repository for a new product", () => {
     await d.update(shapeConversations).set({ askSession: "old-session", askSessionAt: new Date() }).where(eq(shapeConversations.id, convId));
     const calls = stubNetwork("Fresh.", { session: "s2" });
     await say(convId, { text: "Hello again" });
-    expect(calls.find((c) => c.url === `${ORCH}/ask`)!.body).not.toHaveProperty("session");
+    expect(calls.find((c) => c.url === `${ORCH}/asks`)!.body).not.toHaveProperty("session");
     const row = (await d.select().from(shapeConversations).where(eq(shapeConversations.id, convId)))[0]!;
     expect(row.askSession).toBe(storedSession("s2"));
   });
@@ -694,7 +803,7 @@ describe("Investigate: the same conversation, a different job", () => {
 
     let calls = stubNetwork("Two errors repeat since 17:30.", { session: "inv-1" });
     await say(convId, { text: "Leads say their replies vanished this afternoon" });
-    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
     expect(ask.body).toMatchObject({ owner: "acme", repo: "app", mode: "shape" });
     const flat = String(ask.body!.instructions).replace(/\\s+/g, " ");
     expect(flat).toContain("investigating a problem someone noticed in production");
@@ -713,7 +822,7 @@ describe("Investigate: the same conversation, a different job", () => {
     // The requirement is written from the evidence, then filed under a title that says it is a fix.
     calls = stubNetwork("## Problem / need\\nReplies were dropped.");
     await writeSpec(convId);
-    expect(String(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.instructions)).toContain("INVESTIGATION of a production problem");
+    expect(String(calls.find((c) => c.url === `${ORCH}/asks`)!.body!.instructions)).toContain("INVESTIGATION of a production problem");
     calls = stubNetwork("");
     const opened = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Fix: a lead's reply is lost" } });
     expect(opened.statusCode).toBe(200);
@@ -749,7 +858,7 @@ describe("Investigate and project-scoped tools", () => {
       const convId = ((await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId, kind: "investigate" } })).json() as { id: string }).id;
       const calls = stubNetwork("Looking.");
       await say(convId, { text: "Something broke" });
-      return ((calls.find((c) => c.url === `${ORCH}/ask`)!.body!.mcp_servers as Array<{ name: string }>) ?? []).map((x) => x.name).sort();
+      return ((calls.find((c) => c.url === `${ORCH}/asks`)!.body!.mcp_servers as Array<{ name: string }>) ?? []).map((x) => x.name).sort();
     };
     expect(await namesFor(beaconRepo.id)).toEqual(["beacon_logs", "shared_docs"]);
     expect(await namesFor(lensRepo.id)).toEqual(["lens_logs", "shared_docs"]);

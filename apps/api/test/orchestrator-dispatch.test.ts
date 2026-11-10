@@ -1,6 +1,6 @@
 import { loadConfig } from "@console/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dispatchFactoryRole, fetchOrchestratorRun, orchestratorClock, syncDispatchStatus } from "../src/orchestrator-dispatch.js";
+import { ASK_GONE, askOrchestrator, dispatchFactoryRole, fetchOrchestratorRun, orchestratorClock, syncDispatchStatus } from "../src/orchestrator-dispatch.js";
 
 const cfg = (over: Record<string, string> = {}) =>
   loadConfig({ CONSOLE_MASTER_KEY: "x", NODE_ENV: "test", ...over } as never);
@@ -188,5 +188,58 @@ describe("fetchOrchestratorRun", () => {
     expect(orchestratorClock("2026-11-05T06:01:48Z")).toBe("2026-11-05T06:01:48.000Z");
     expect(orchestratorClock("not a clock")).toBe("not a clock");
     expect(orchestratorClock(null)).toBeNull();
+  });
+});
+
+describe("askOrchestrator", () => {
+  const live = () => cfg({ ORCHESTRATOR_URL: "http://127.0.0.1:8080", ORCHESTRATOR_DISPATCH_TOKEN: "op-token" });
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+  /** An orchestrator that answers each GET /asks/{id} with the next of `states`, then the last one. */
+  function orchestrator(states: Array<Record<string, unknown> | Error>, submit = json(202, { status: "running" })) {
+    const seen: Array<{ method: string; url: string; body?: Record<string, unknown> }> = [];
+    let i = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      seen.push({ method: init?.method ?? "GET", url, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      if (url.endsWith("/asks")) return submit;
+      if (url.endsWith("/ask")) return json(200, { answer: "Answered while it waited.", model: "m" });
+      const state = states[Math.min(i++, states.length - 1)]!;
+      if (state instanceof Error) throw state;
+      return json(200, state);
+    });
+    return seen;
+  }
+
+  it("hands the question over as a background ask and collects the answer, holding no request open", async () => {
+    const seen = orchestrator([
+      { status: "running" },
+      { status: "done", answer: "The cap was hit.", model: "m", usage: { input_tokens: 5, output_tokens: 7 }, session: "s1", resumed: false },
+    ]);
+    const got = await askOrchestrator(live(), { owner: "acme", repo: "api", question: "why?", context: "", mode: "shape" });
+    expect(got).toEqual({ ok: true, answer: "The cap was hit.", model: "m", inputTokens: 5, outputTokens: 7, session: "s1", resumed: false });
+    const id = String(seen[0]!.body!.id);
+    expect(seen[0]).toMatchObject({ method: "POST", url: "http://127.0.0.1:8080/asks", body: { id, owner: "acme", repo: "api", question: "why?", mode: "shape" } });
+    expect(seen.slice(1).map((c) => c.url)).toEqual([`http://127.0.0.1:8080/asks/${id}`, `http://127.0.0.1:8080/asks/${id}`]);
+  });
+
+  it("checks again when the orchestrator cannot be reached for a moment", async () => {
+    orchestrator([new TypeError("fetch failed"), { status: "done", answer: "Still here." }]);
+    expect(await askOrchestrator(live(), { owner: "a", repo: "b", question: "q", context: "" })).toMatchObject({ ok: true, answer: "Still here." });
+  });
+
+  it("passes on why the ask failed, a usage limit as 429, and a lost ask in plain words", async () => {
+    orchestrator([{ status: "failed", error: "Claude usage limit reached.", error_status: 429 }]);
+    expect(await askOrchestrator(live(), { owner: "a", repo: "b", question: "q", context: "" })).toEqual({ error: "Claude usage limit reached.", status: 429 });
+    orchestrator([{}], json(202, {}));
+    vi.stubGlobal("fetch", async (url: string) => (url.endsWith("/asks") ? json(202, {}) : json(404, { detail: "no such ask" })));
+    expect(await askOrchestrator(live(), { owner: "a", repo: "b", question: "q", context: "" })).toEqual({ error: ASK_GONE, status: 502 });
+    orchestrator([], json(429, { detail: "Claude usage limit reached." }));
+    expect(await askOrchestrator(live(), { owner: "a", repo: "b", question: "q", context: "" })).toEqual({ error: "Claude usage limit reached.", status: 429 });
+  });
+
+  it("waits on /ask when the orchestrator predates background asks", async () => {
+    const seen = orchestrator([], json(404, { detail: "Not Found" }));
+    expect(await askOrchestrator(live(), { owner: "a", repo: "b", question: "q", context: "" })).toMatchObject({ ok: true, answer: "Answered while it waited." });
+    expect(seen.map((c) => c.url)).toEqual(["http://127.0.0.1:8080/asks", "http://127.0.0.1:8080/ask"]);
   });
 });
