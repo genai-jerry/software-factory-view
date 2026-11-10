@@ -512,8 +512,27 @@ describe("Shape answers in the background", () => {
     expect(v.messages[1]).toMatchObject({ id: failedId, status: "done", error: null });
     expect(String(v.messages[1].bodyHtml)).toContain("Because no appointment has synced yet.");
 
-    // A pending row older than 15 minutes belongs to a process that is gone.
+    // A retry long after the first send keeps the row, and its createdAt; it
+    // is still being answered, so reading the thread must not call it lost.
     const d = deps.dbh.db;
+    await d
+      .update(shapeMessages)
+      .set({ status: "failed", error: "fetch failed", createdAt: new Date(Date.now() - 20 * 60_000) })
+      .where(eq(shapeMessages.id, failedId));
+    await d
+      .update(shapeMessages)
+      .set({ createdAt: new Date(Date.now() - 21 * 60_000) })
+      .where(eq(shapeMessages.id, v.messages[0].id as string));
+    stubNetwork("Found it in the logs.", {}, 200);
+    const late = await app.inject({ method: "POST", url: `/api/shape/${convId}/messages/${failedId}/retry`, headers: headers(jerryCookie), payload: {} });
+    expect(late.statusCode).toBe(202);
+    v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ id: failedId, status: "pending", error: null });
+    await settlePendingAnswers();
+    v = await view(convId);
+    expect(v.messages[1]).toMatchObject({ id: failedId, status: "done", error: null });
+
+    // A pending row older than 15 minutes belongs to a process that is gone.
     const stale = (
       await d
         .insert(shapeMessages)

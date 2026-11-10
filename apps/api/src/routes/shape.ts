@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mcpPayloadFor } from "../mcp-servers.js";
 import { sourcesBlock } from "@console/insight";
 import { issues, projects, repos, shapeAttachments, shapeConversations, shapeMessages } from "@console/db";
-import { and, asc, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, lt, notInArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "@console/db";
 import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
@@ -68,8 +68,21 @@ type Message = typeof shapeMessages.$inferSelect;
  */
 export const pendingAnswers = new Set<Promise<void>>();
 
-function track(work: Promise<void>): void {
-  const p = work.catch(() => undefined).finally(() => pendingAnswers.delete(p));
+/**
+ * The assistant rows this process is still answering. A retry keeps its row,
+ * and with it the first send's createdAt, so age alone would call a fresh
+ * retry lost; a row named here is not lost, however old it is.
+ */
+const answering = new Set<string>();
+
+function track(work: Promise<void>, messageId?: string): void {
+  if (messageId) answering.add(messageId);
+  const p = work
+    .catch(() => undefined)
+    .finally(() => {
+      pendingAnswers.delete(p);
+      if (messageId) answering.delete(messageId);
+    });
   pendingAnswers.add(p);
 }
 
@@ -80,7 +93,8 @@ export async function settlePendingAnswers(): Promise<void> {
 
 /**
  * Mark work the process lost as failed: a pending answer or requirement
- * older than 15 minutes was started by a process that is gone. Run at start
+ * older than 15 minutes, that this process is not answering, was started by
+ * a process that is gone. Run at start
  * and before a conversation is read, so a reader is never shown a spinner
  * that nothing will ever stop.
  */
@@ -89,7 +103,14 @@ export async function settleStale(db: Db, conversationId?: string): Promise<void
   await db
     .update(shapeMessages)
     .set({ status: "failed", error: LOST })
-    .where(and(eq(shapeMessages.status, "pending"), lt(shapeMessages.createdAt, cutoff), ...(conversationId ? [eq(shapeMessages.conversationId, conversationId)] : [])));
+    .where(
+      and(
+        eq(shapeMessages.status, "pending"),
+        lt(shapeMessages.createdAt, cutoff),
+        ...(answering.size > 0 ? [notInArray(shapeMessages.id, [...answering])] : []),
+        ...(conversationId ? [eq(shapeMessages.conversationId, conversationId)] : []),
+      ),
+    );
   await db
     .update(shapeConversations)
     .set({ specStatus: "failed", specError: LOST_SPEC })
@@ -668,7 +689,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const epic = await epicRef(conv.epicIssueId);
     const title = earlier.length === 0 && conv.title === "New idea" && !epic && text ? firstLine(text) : conv.title;
     await db.update(shapeConversations).set({ title, updatedAt: new Date() }).where(eq(shapeConversations.id, conv.id));
-    track(answer(conv, assistant.id, text, attachments, earlier, claudeToken));
+    track(answer(conv, assistant.id, text, attachments, earlier, claudeToken), assistant.id);
     return accepted(reply, assistant.id, title);
   });
 
@@ -693,7 +714,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     const earlier = all.slice(0, at).filter((m) => m.id !== question.id);
     await db.update(shapeMessages).set({ status: "pending", error: null, body: "" }).where(eq(shapeMessages.id, failed.id));
     const text = question.body === "(an image)" ? "" : question.body;
-    track(answer(conv, failed.id, text, attachments, earlier, claudeToken));
+    track(answer(conv, failed.id, text, attachments, earlier, claudeToken), failed.id);
     return accepted(reply, failed.id, conv.title);
   });
 

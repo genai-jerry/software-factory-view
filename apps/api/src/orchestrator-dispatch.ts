@@ -1,5 +1,6 @@
 import type { McpServerPayload } from "./mcp-servers.js";
 import type { ConsoleConfig } from "@console/core";
+import { Agent } from "undici";
 
 /**
  * Ask the Software Factory orchestrator to run a role. GitHub App webhooks for
@@ -7,6 +8,14 @@ import type { ConsoleConfig } from "@console/core";
  * orchestrator, so labelling `factory:profile` never starts a LangGraph run by
  * itself. `/dispatch` is the Console's equivalent of "Run workflow".
  */
+/**
+ * The orchestrator answers /ask only when the whole answer is written, so no
+ * header arrives until then. Node's fetch gives up on a reply whose headers
+ * have not started in 300 s (undici's default), well inside the 480 s a Shape
+ * answer may take; this agent leaves the call's own AbortSignal in charge.
+ */
+const longAnswer = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
+
 export type OrchestratorDispatch = {
   dispatched?: boolean;
   dispatchedAt?: string;
@@ -373,7 +382,8 @@ export async function askOrchestrator(
         ...(body.mcpServers ? { mcp_servers: body.mcpServers } : {}),
       }),
       signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
-    });
+      dispatcher: longAnswer,
+    } as RequestInit);
   } catch (err) {
     return { error: `could not reach the orchestrator (${(err as Error).message})`, status: 502 };
   }
