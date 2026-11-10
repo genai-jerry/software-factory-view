@@ -10,7 +10,7 @@ import { Agent } from "undici";
  * itself. `/dispatch` is the Console's equivalent of "Run workflow".
  */
 /** Header and body timeouts long enough for the waiting /ask (askAndHold). */
-const longAnswer = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
+const longAnswer = new Agent({ headersTimeout: 1_300_000, bodyTimeout: 1_300_000 });
 
 export type OrchestratorDispatch = {
   dispatched?: boolean;
@@ -318,6 +318,14 @@ export async function fetchActiveRuns(cfg: ConsoleConfig): Promise<Map<string, A
   return out;
 }
 
+export type AskMode = "ask" | "shape" | "investigate";
+
+/**
+ * How long the orchestrator lets a session in each mode run, in ms (its
+ * MODES), plus a minute for the queue for a slot and the checkout.
+ */
+const ASK_BUDGET_MS: Record<AskMode, number> = { ask: 360_000, shape: 540_000, investigate: 1_260_000 };
+
 /** A question for the orchestrator's read-only Claude session (POST /asks, or /ask). */
 export type AskBody = {
   /** Both, or neither for Shape about a new product (no repository yet). */
@@ -332,8 +340,8 @@ export type AskBody = {
   claudeCodeOauthToken?: string;
   /** Images the session reads with its Read tool (Shape). */
   images?: Array<{ name: string; mime: string; dataB64: string }>;
-  /** `"shape"` buys the longer budgets of a conversation that is shaping an idea. */
-  mode?: "ask" | "shape";
+  /** `"shape"` buys the longer budgets of a conversation that is shaping an idea; `"investigate"` the longest, for reading a product's repos and logs. */
+  mode?: AskMode;
   /** Other repositories checked out beside the primary one, each on `branch` when it exists there, else its default. */
   repos?: Array<{ owner: string; repo: string; branch: string | null }>;
   /** A persistent workspace key (a Shape conversation id): the checkout is kept between messages and reset to the branch each time. */
@@ -465,7 +473,7 @@ async function askAndHold(cfg: ConsoleConfig, body: AskBody): Promise<AskAnswer 
       method: "POST",
       headers: { authorization: `Bearer ${dest.token}`, "content-type": "application/json" },
       body: JSON.stringify(askPayload(body)),
-      signal: AbortSignal.timeout(body.mode === "shape" ? 520_000 : 330_000),
+      signal: AbortSignal.timeout(ASK_BUDGET_MS[body.mode ?? "ask"]),
       dispatcher: longAnswer,
     } as RequestInit);
   } catch (err) {
@@ -497,9 +505,7 @@ export async function askOrchestrator(cfg: ConsoleConfig, body: AskBody): Promis
   const sent = await submitAsk(cfg, id, body);
   if ("legacy" in sent) return askAndHold(cfg, body);
   if ("error" in sent) return sent;
-  // The orchestrator stops a session at 480 s (shape) or 300 s; a minute more
-  // covers the queue for a slot and the checkout.
-  const deadline = Date.now() + (body.mode === "shape" ? 540_000 : 360_000);
+  const deadline = Date.now() + ASK_BUDGET_MS[body.mode ?? "ask"];
   for (let i = 0; Date.now() < deadline; i++) {
     await new Promise((r) => setTimeout(r, ASK_POLL_MS[Math.min(i, ASK_POLL_MS.length - 1)]));
     const got = await fetchAsk(cfg, id);

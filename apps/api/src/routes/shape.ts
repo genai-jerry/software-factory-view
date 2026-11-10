@@ -640,7 +640,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         context: session ? header : await grounding(conv, epic, earlier, header),
         instructions: investigating ? INVESTIGATE_INSTRUCTIONS : SHAPE_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
-        mode: "shape",
+        // Reading a product's repos and logs takes more steps than shaping an idea.
+        mode: investigating ? "investigate" : "shape",
         images: attachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.bytesB64 })),
         ...(branch ? { branch } : {}),
         repos: await siblings(conv.repoId, conv.projectId, branch),
@@ -835,7 +836,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: conv.kind === "investigate" ? INVESTIGATE_SPEC_INSTRUCTIONS : SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
-        mode: "shape",
+        mode: conv.kind === "investigate" ? "investigate" : "shape",
         ...(branch ? { branch } : {}),
         repos: await siblings(conv.repoId, conv.projectId, branch),
         // The same workspace, so the checkout is reused; a fresh session,
