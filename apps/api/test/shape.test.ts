@@ -804,7 +804,7 @@ describe("Investigate: the same conversation, a different job", () => {
     let calls = stubNetwork("Two errors repeat since 17:30.", { session: "inv-1" });
     await say(convId, { text: "Leads say their replies vanished this afternoon" });
     const ask = calls.find((c) => c.url === `${ORCH}/asks`)!;
-    expect(ask.body).toMatchObject({ owner: "acme", repo: "app", mode: "shape" });
+    expect(ask.body).toMatchObject({ owner: "acme", repo: "app", mode: "investigate" });
     const flat = String(ask.body!.instructions).replace(/\\s+/g, " ");
     expect(flat).toContain("investigating a problem someone noticed in production");
     expect(flat).toContain("Log lines arrive MASKED");
@@ -822,7 +822,9 @@ describe("Investigate: the same conversation, a different job", () => {
     // The requirement is written from the evidence, then filed under a title that says it is a fix.
     calls = stubNetwork("## Problem / need\\nReplies were dropped.");
     await writeSpec(convId);
-    expect(String(calls.find((c) => c.url === `${ORCH}/asks`)!.body!.instructions)).toContain("INVESTIGATION of a production problem");
+    const specAsk = calls.find((c) => c.url === `${ORCH}/asks`)!;
+    expect(String(specAsk.body!.instructions)).toContain("INVESTIGATION of a production problem");
+    expect(specAsk.body!.mode).toBe("investigate");
     calls = stubNetwork("");
     const opened = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Fix: a lead's reply is lost" } });
     expect(opened.statusCode).toBe(200);
