@@ -2,7 +2,8 @@ import { auditLog, modelSettings, projects } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
-import { MAX_CHAIN, MODEL_CHOICES, PHASES, checkChains } from "../model-settings.js";
+import { listAvailableModels } from "../claude-models.js";
+import { MAX_CHAIN, PHASES, checkChains } from "../model-settings.js";
 import { loadOrg } from "./settings.js";
 
 /** Compass → Models: read and set the models each phase runs on, for the org and for each project. */
@@ -28,11 +29,19 @@ export function registerModelRoutes(app: FastifyInstance, deps: AppDeps): void {
       orgName: found.org.name,
       canEdit: found.membership.role === "owner" || found.membership.role === "admin",
       phases: PHASES,
-      choices: MODEL_CHOICES,
       maxChain: MAX_CHAIN,
       org: scopeView("org"),
       projects: projectRows.map((p) => ({ id: p.id, name: p.name, ...scopeView(p.id) })),
     };
+  });
+
+  /** The models the factory's stored Claude credential can see (the Models API), for the picker. */
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>("/api/orgs/:id/models/available", async (req, reply) => {
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: false });
+    if (!found) return;
+    return listAvailableModels(deps, found.org.id, { refresh: req.query.refresh === "1" });
   });
 
   /** Replace one scope's chains: "org", or a project id. A phase left out is not set there. */

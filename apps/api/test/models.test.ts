@@ -1,15 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, memberships, orgs, projects, repos, sessions, users } from "@console/db";
+import { estates, memberships, orchestratorSecrets, orgs, projects, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
-import { askModels, checkChains } from "../src/model-settings.js";
+import { forgetListedModels } from "../src/claude-models.js";
+import { askModels, checkChains, expandChains } from "../src/model-settings.js";
 
 /**
  * Compass → Models: the org sets a chain per phase, a project overrides any
@@ -77,7 +78,9 @@ describe("Compass → Models", () => {
   it("lists the phases and what is set, to anyone in the org; only an admin changes it", async () => {
     const got = (await app.inject({ method: "GET", url: `/api/orgs/${id.org}/models`, headers: member })).json();
     expect(got.canEdit).toBe(false);
-    expect(got.phases.map((p: { key: string }) => p.key)).toEqual(expect.arrayContaining(["shape", "investigate", "intake", "implementer", "reviewer"]));
+    expect(got.phases.map((p: { id: string }) => p.id)).toEqual(["talk", "clarify", "design", "build", "test", "release", "fastlane", "support"]);
+    const design = got.phases.find((p: { id: string }) => p.id === "design");
+    expect(design.steps.map((s: { key: string }) => s.key)).toEqual(["planner", "architect", "testplanner"]);
     expect(got.projects.map((p: { name: string }) => p.name)).toEqual(["Beacon", "Lens"]);
     expect((await put("org", { implementer: ["claude-opus-5-5"] }, member)).statusCode).toBe(403);
   });
@@ -101,8 +104,26 @@ describe("Compass → Models", () => {
     expect(view.projects.find((p: { name: string }) => p.name === "Beacon").chains).toEqual({ implementer: ["claude-fable-5-1"] });
   });
 
-  it("gives Shape, Investigate and Questions their own chain, Investigate falling back to Questions", async () => {
-    await put("org", { shape: ["claude-opus-5-5"], ask: ["claude-sonnet-5-5"] });
+  it("sets a phase once for every step in it, and a step on its own where it needs to", async () => {
+    await put("org", { "phase:design": ["claude-fable-5-1", "claude-opus-5-5"], "phase:build": ["claude-opus-5-5"], reviewer: ["claude-sonnet-5-5"] });
+    await put(id.beacon!, { "phase:build": ["claude-sonnet-5-5"], architect: ["claude-opus-5-5"] });
+    const beacon = (await pulled("genai/beacon-api")).json().models;
+    expect(beacon).toEqual({
+      planner: ["claude-fable-5-1", "claude-opus-5-5"], // org phase
+      architect: ["claude-opus-5-5"], // project step
+      testplanner: ["claude-fable-5-1", "claude-opus-5-5"],
+      implementer: ["claude-sonnet-5-5"], // project phase beats the org's
+      reviewer: ["claude-sonnet-5-5"], // project phase beats the org's step too
+    });
+    const lens = (await pulled("genai/lens")).json().models;
+    expect(lens.implementer).toEqual(["claude-opus-5-5"]);
+    expect(lens.reviewer).toEqual(["claude-sonnet-5-5"]);
+    expect(lens.intake).toBeUndefined(); // nobody set Clarify: the repo's file decides
+    expect(expandChains({ "phase:talk": ["a"] }, { investigate: ["b"] })).toEqual({ shape: ["a"], investigate: ["b"], ask: ["a"] });
+  });
+
+  it("gives Shape, Investigate and Questions the Conversations chain unless one sets its own", async () => {
+    await put("org", { "phase:talk": ["claude-sonnet-5-5"], shape: ["claude-opus-5-5"] });
     await put(id.beacon!, {});
     expect(await askModels(deps, id.org!, id.beacon!, "shape")).toEqual(["claude-opus-5-5"]);
     expect(await askModels(deps, id.org!, id.beacon!, "investigate")).toEqual(["claude-sonnet-5-5"]);
@@ -117,5 +138,61 @@ describe("Compass → Models", () => {
     expect((await put("org", { implementer: ["a", "b", "c", "d", "e"] })).json().error).toMatch(/at most 4/);
     expect((await put("00000000-0000-0000-0000-000000000000", {})).statusCode).toBe(404);
     expect(checkChains({ qa: [" claude-opus-5-5 ", "claude-opus-5-5", ""] })).toEqual({ chains: { qa: ["claude-opus-5-5"] } });
+  });
+});
+
+describe("the models Claude lists for the stored credential", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    forgetListedModels();
+  });
+  const available = (q = "") => app.inject({ method: "GET", url: `/api/orgs/${id.org}/models/available${q}`, headers: member });
+
+  it("says so when no credential is stored", async () => {
+    const got = (await available()).json();
+    expect(got.ok).toBe(false);
+    expect(got.error).toMatch(/No Claude credential/);
+  });
+
+  it("asks the Models API with the Claude sign-in, newest first, and caches it", async () => {
+    await deps.dbh.db.insert(orchestratorSecrets).values({ orgId: id.org!, name: "CLAUDE_CODE_OAUTH_TOKEN", encryptedValue: encryptSecret("sk-ant-oat-x", MASTER_KEY), updatedBy: "jerry" });
+    const seen: Array<{ url: string; headers: Headers }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        seen.push({ url: String(url), headers: new Headers(init?.headers) });
+        return new Response(
+          JSON.stringify({
+            data: [
+              { type: "model", id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5", created_at: "2026-09-01T00:00:00Z", deprecated_at: null },
+              { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-10-01T00:00:00Z", deprecated_at: null },
+              { type: "model", id: "claude-old", display_name: "Old", created_at: "2026-11-01T00:00:00Z", deprecated_at: "2026-11-02T00:00:00Z" },
+            ],
+            has_more: false,
+            first_id: "a",
+            last_id: "b",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const got = (await available()).json();
+    expect(got).toMatchObject({ ok: true, source: "claude-sign-in" });
+    expect(got.models.map((m: { id: string }) => m.id)).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "claude-old"]);
+    expect(seen[0]!.url).toContain("/v1/models");
+    expect(seen[0]!.headers.get("authorization")).toBe("Bearer sk-ant-oat-x");
+    expect(seen[0]!.headers.get("anthropic-beta")).toContain("oauth-2025-04-20");
+    expect(seen[0]!.headers.get("x-api-key")).toBeNull();
+    await available();
+    expect(seen).toHaveLength(1);
+    await available("?refresh=1");
+    expect(seen).toHaveLength(2);
+  });
+
+  it("says when Claude refuses the credential", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "bad" } }), { status: 401, headers: { "content-type": "application/json" } })));
+    const got = (await available("?refresh=1")).json();
+    expect(got).toMatchObject({ ok: false });
+    expect(got.error).toMatch(/refused the stored credential/);
   });
 });

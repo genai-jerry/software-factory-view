@@ -3,11 +3,17 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api.js";
 import type { Me } from "../types.js";
 
-interface Phase {
+interface Step {
   key: string;
   label: string;
   detail: string;
-  group: "talk" | "build" | "support";
+}
+
+interface Phase {
+  id: string;
+  label: string;
+  detail: string;
+  steps: Step[];
 }
 
 interface ScopeChains {
@@ -21,39 +27,44 @@ interface OrgModels {
   orgName: string;
   canEdit: boolean;
   phases: Phase[];
-  choices: string[];
   maxChain: number;
   org: ScopeChains;
   projects: Array<{ id: string; name: string } & ScopeChains>;
 }
 
-const GROUPS: Array<{ key: Phase["group"]; title: string }> = [
-  { key: "talk", title: "Conversations" },
-  { key: "build", title: "Building" },
-  { key: "support", title: "Behind the scenes" },
-];
+interface AvailableModel {
+  id: string;
+  name: string;
+  deprecated: boolean;
+}
 
-/** Two slots per phase: the first choice, and the one used when it cannot be reached. */
+type Available =
+  | { ok: true; source: "claude-sign-in" | "api-key"; models: AvailableModel[]; listedAt: string }
+  | { ok: false; error: string };
+
+/** Two slots per setting: the first choice, and the one used when it cannot be reached. */
 const SLOTS = 2;
+
+const phaseKey = (p: Phase) => `phase:${p.id}`;
 
 function errorText(e: unknown): string {
   return e instanceof ApiError ? e.message : "That did not go through. Try again.";
 }
 
 /**
- * Compass → Models: which Claude model each phase of the factory runs on —
- * for the whole organisation, and per project where one needs something
- * else. A phase left blank falls back (project → organisation → the repo's
- * `.github/factory-models.json` → the factory's default).
+ * Compass → Models: which Claude model each phase of the factory runs on,
+ * and each step inside a phase where one needs something else — for the
+ * whole organisation, and per project. The choices are the models Claude
+ * lists for the factory's own credential.
  */
 export function ModelsPage({ me }: { me: Me }) {
   return (
     <div>
       <h1>Models</h1>
       <p className="muted">
-        The Claude model each phase runs on. The first choice is used when the factory&apos;s Claude sign-in can reach it, otherwise the next one. Leave a
-        phase blank to keep what it uses today: the repository&apos;s <code>.github/factory-models.json</code>, or the factory&apos;s default. A change
-        applies from the next run or message.
+        The Claude model each phase runs on. Set a phase once for every step in it, or open the phase and set a step on its own. The first choice is used
+        when the factory&apos;s Claude sign-in can reach it, otherwise the next one. Anything left unset keeps what it uses today: the repository&apos;s{" "}
+        <code>.github/factory-models.json</code>, or the factory&apos;s default. A change applies from the next run or message.
       </p>
       {me.orgs.map((o) => (
         <OrgModelsCard key={o.id} orgId={o.id} />
@@ -65,12 +76,20 @@ export function ModelsPage({ me }: { me: Me }) {
 
 function OrgModelsCard({ orgId }: { orgId: string }) {
   const q = useQuery({ queryKey: ["org-models", orgId], queryFn: () => api.get<OrgModels>(`/api/orgs/${orgId}/models`) });
+  const qc = useQueryClient();
+  const available = useQuery({ queryKey: ["org-models-available", orgId], queryFn: () => api.get<Available>(`/api/orgs/${orgId}/models/available`) });
+  const refresh = useMutation({
+    mutationFn: () => api.get<Available>(`/api/orgs/${orgId}/models/available?refresh=1`),
+    onSuccess: (r) => qc.setQueryData(["org-models-available", orgId], r),
+  });
   const [scope, setScope] = useState("org");
   if (q.isLoading) return <p className="muted">Loading…</p>;
   if (q.isError || !q.data) return <div className="banner error">{errorText(q.error)}</div>;
   const d = q.data;
   const project = d.projects.find((p) => p.id === scope);
   const current = project ?? d.org;
+  const listed = available.data?.ok ? available.data.models : null;
+
   return (
     <section className="card">
       <h2>{d.orgName}</h2>
@@ -85,20 +104,31 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
       </select>
       <p className="muted">
         {project
-          ? `What you set here applies to ${project.name}'s repositories and conversations. A blank phase uses the organisation's choice.`
-          : "What you set here applies to every project, unless a project sets that phase itself."}
+          ? `What you set here applies to ${project.name}'s repositories and conversations. Anything left unset uses the organisation's choice.`
+          : "What you set here applies to every project, unless a project sets it itself."}
       </p>
-      <datalist id={`models-choices-${orgId}`}>
-        {d.choices.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
+
+      <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "baseline" }}>
+        {available.isLoading && <span className="muted">Asking Claude which models it offers…</span>}
+        {available.data?.ok && (
+          <span className="muted">
+            {available.data.models.length} models offered to the factory&apos;s {available.data.source === "claude-sign-in" ? "Claude sign-in" : "API key"}, listed{" "}
+            {new Date(available.data.listedAt).toLocaleTimeString()}.
+          </span>
+        )}
+        {available.data && !available.data.ok && <span className="decision-failure">{available.data.error} You can still type a model id.</span>}
+        {available.isError && <span className="decision-failure">{errorText(available.error)}</span>}
+        <button type="button" className="secondary" disabled={refresh.isPending || available.isLoading} onClick={() => refresh.mutate()}>
+          {refresh.isPending ? "Listing…" : "List again"}
+        </button>
+      </div>
+
       <ChainsForm
         key={`${scope}:${current.updatedAt ?? ""}`}
         orgId={orgId}
         scope={scope}
         phases={d.phases}
-        listId={`models-choices-${orgId}`}
+        listed={listed}
         value={current.chains}
         inherited={project ? d.org.chains : null}
         canEdit={d.canEdit}
@@ -109,11 +139,46 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
   );
 }
 
+/** One model slot: a list of what Claude offers when it answered, else a typed id. */
+function ModelSlot({
+  label,
+  value,
+  listed,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  listed: AvailableModel[] | null;
+  placeholder: string;
+  disabled: boolean;
+  onChange: (v: string) => void;
+}) {
+  const style = { flex: "1 1 12rem", minWidth: 0 };
+  if (!listed) {
+    return <input aria-label={label} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style} />;
+  }
+  const known = listed.some((m) => m.id === value);
+  return (
+    <select aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style}>
+      <option value="">{placeholder}</option>
+      {value && !known && <option value={value}>{value} (not offered to this credential)</option>}
+      {listed.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.name} — {m.id}
+          {m.deprecated ? " (being retired)" : ""}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function ChainsForm({
   orgId,
   scope,
   phases,
-  listId,
+  listed,
   value,
   inherited,
   canEdit,
@@ -123,7 +188,7 @@ function ChainsForm({
   orgId: string;
   scope: string;
   phases: Phase[];
-  listId: string;
+  listed: AvailableModel[] | null;
   value: Record<string, string[]>;
   /** For a project: the organisation's chains, shown where the project sets nothing. */
   inherited: Record<string, string[]> | null;
@@ -132,8 +197,12 @@ function ChainsForm({
   updatedAt: string | null;
 }) {
   const qc = useQueryClient();
-  const fill = (v: Record<string, string[]>) => Object.fromEntries(phases.map((p) => [p.key, Array.from({ length: SLOTS }, (_, i) => v[p.key]?.[i] ?? "")]));
-  const [draft, setDraft] = useState<Record<string, string[]>>(() => fill(value));
+  const keys = phases.flatMap((p) => [phaseKey(p), ...p.steps.map((s) => s.key)]);
+  const [draft, setDraft] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(keys.map((k) => [k, Array.from({ length: SLOTS }, (_, i) => value[k]?.[i] ?? "")])),
+  );
+  // A phase with a step set on its own starts open, so what is set is in view.
+  const [open, setOpen] = useState<Set<string>>(() => new Set(phases.filter((p) => p.steps.some((s) => value[s.key]?.length)).map((p) => p.id)));
   const [saved, setSaved] = useState(false);
   useEffect(() => setSaved(false), [draft]);
   const save = useMutation({
@@ -151,47 +220,87 @@ function ChainsForm({
     },
   });
   const set = (key: string, i: number, v: string) => setDraft((d) => ({ ...d, [key]: d[key]!.map((x, j) => (j === i ? v : x)) }));
-  const fallback = (key: string) => {
-    const org = inherited?.[key];
-    return org?.length ? `Organisation: ${org.join(", then ")}` : "The repository's file, or the factory's default";
+  const chainOf = (key: string) => draft[key]!.map((m) => m.trim()).filter(Boolean);
+  const show = (list: string[]) => list.join(", then ");
+  /** What a phase falls back to when it sets nothing here. */
+  const phaseFallback = (p: Phase) => {
+    const org = inherited?.[phaseKey(p)];
+    return org?.length ? `the organisation's ${p.label}: ${show(org)}` : "the repository's file, or the factory's default";
   };
+  /** What a step falls back to when it sets nothing here. */
+  const stepFallback = (p: Phase, s: Step) => {
+    const here = chainOf(phaseKey(p));
+    if (here.length) return `${p.label}: ${show(here)}`;
+    const org = inherited?.[s.key];
+    if (org?.length) return `the organisation's ${s.label}: ${show(org)}`;
+    return phaseFallback(p);
+  };
+  const busy = !canEdit || save.isPending;
 
   return (
     <div>
-      {GROUPS.map((g) => (
-        <fieldset key={g.key} style={{ border: 0, padding: 0, margin: "1rem 0 0" }}>
-          <legend>
-            <h3 style={{ margin: 0 }}>{g.title}</h3>
-          </legend>
-          {phases
-            .filter((p) => p.group === g.key)
-            .map((p) => {
-              const blank = draft[p.key]!.every((m) => !m.trim());
-              return (
-                <div key={p.key} className="model-phase" style={{ borderTop: "1px solid var(--border)", padding: "0.6rem 0" }}>
-                  <div>
-                    <strong>{p.label}</strong> <span className="muted">— {p.detail}</span>
+      {phases.map((p) => {
+        const isOpen = open.has(p.id);
+        const stepsSet = p.steps.filter((s) => chainOf(s.key).length).length;
+        return (
+          <fieldset key={p.id} style={{ border: 0, borderTop: "1px solid var(--border)", padding: "0.8rem 0", margin: 0 }}>
+            <legend className="sr-only">{p.label}</legend>
+            <div>
+              <strong>{p.label}</strong> <span className="muted">— {p.detail}</span>
+            </div>
+            <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
+              {draft[phaseKey(p)]!.map((m, i) => (
+                <ModelSlot
+                  key={i}
+                  label={`${p.label}: ${i === 0 ? "first choice" : "if that is unavailable"}`}
+                  value={m}
+                  listed={listed}
+                  placeholder={i === 0 ? "First choice" : "If unavailable"}
+                  disabled={busy}
+                  onChange={(v) => set(phaseKey(p), i, v)}
+                />
+              ))}
+            </div>
+            {chainOf(phaseKey(p)).length === 0 && <div className="muted">Uses {phaseFallback(p)}.</div>}
+            {p.steps.length > 1 || p.steps[0]!.label !== p.label ? (
+              <button
+                type="button"
+                className="link"
+                aria-expanded={isOpen}
+                onClick={() => setOpen((o) => (o.has(p.id) ? new Set([...o].filter((x) => x !== p.id)) : new Set([...o, p.id])))}
+              >
+                {isOpen ? "Hide the steps" : `Set each step (${p.steps.map((s) => s.label).join(", ")})`}
+                {!isOpen && stepsSet > 0 ? ` — ${stepsSet} set on its own` : ""}
+              </button>
+            ) : null}
+            {isOpen && (
+              <div style={{ marginLeft: "1rem", borderLeft: "2px solid var(--border)", paddingLeft: "0.8rem" }}>
+                {p.steps.map((s) => (
+                  <div key={s.key} style={{ padding: "0.5rem 0" }}>
+                    <div>
+                      {s.label} <span className="muted">— {s.detail}</span>
+                    </div>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
+                      {draft[s.key]!.map((m, i) => (
+                        <ModelSlot
+                          key={i}
+                          label={`${p.label} › ${s.label}: ${i === 0 ? "first choice" : "if that is unavailable"}`}
+                          value={m}
+                          listed={listed}
+                          placeholder={i === 0 ? "Same as the phase" : "If unavailable"}
+                          disabled={busy}
+                          onChange={(v) => set(s.key, i, v)}
+                        />
+                      ))}
+                    </div>
+                    {chainOf(s.key).length === 0 && <div className="muted">Uses {stepFallback(p, s)}.</div>}
                   </div>
-                  <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
-                    {draft[p.key]!.map((m, i) => (
-                      <input
-                        key={i}
-                        aria-label={`${p.label}: ${i === 0 ? "first choice" : "if that is unavailable"}`}
-                        list={listId}
-                        value={m}
-                        placeholder={i === 0 ? "First choice" : "If unavailable"}
-                        disabled={!canEdit || save.isPending}
-                        onChange={(e) => set(p.key, i, e.target.value)}
-                        style={{ flex: "1 1 12rem", minWidth: 0 }}
-                      />
-                    ))}
-                  </div>
-                  {blank && <div className="muted">Uses: {fallback(p.key)}</div>}
-                </div>
-              );
-            })}
-        </fieldset>
-      ))}
+                ))}
+              </div>
+            )}
+          </fieldset>
+        );
+      })}
       {canEdit ? (
         <div className="decision-actions" style={{ marginTop: "1rem" }}>
           <button type="button" className="primary" disabled={save.isPending} onClick={() => save.mutate()}>
