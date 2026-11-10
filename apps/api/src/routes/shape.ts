@@ -9,7 +9,7 @@ import { requireAuth, type AppDeps, type RequestCtx } from "../context.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { renderMarkdown } from "../render.js";
 import { requirementBody } from "../openspec-draft.js";
-import { SHAPE_INSTRUCTIONS, SPEC_INSTRUCTIONS } from "../shape-prompts.js";
+import { INVESTIGATE_INSTRUCTIONS, INVESTIGATE_SPEC_INSTRUCTIONS, SHAPE_INSTRUCTIONS, SPEC_INSTRUCTIONS } from "../shape-prompts.js";
 import { openWorkIssue } from "./activity.js";
 import { artifactSources, claudeTokenFor } from "./qa.js";
 
@@ -124,16 +124,20 @@ export interface RepoProposal {
  * rides in the stored session id ("<version>:<id>").
  */
 export const SHAPE_INSTRUCTIONS_VERSION = createHash("sha256").update(SHAPE_INSTRUCTIONS).digest("hex").slice(0, 10);
+export const INVESTIGATE_INSTRUCTIONS_VERSION = createHash("sha256").update(INVESTIGATE_INSTRUCTIONS).digest("hex").slice(0, 10);
 
-export function storedSession(session: string): string {
-  return `${SHAPE_INSTRUCTIONS_VERSION}:${session}`;
+type Kind = "shape" | "investigate";
+const versionOf = (kind: Kind) => (kind === "investigate" ? INVESTIGATE_INSTRUCTIONS_VERSION : SHAPE_INSTRUCTIONS_VERSION);
+
+export function storedSession(session: string, kind: Kind = "shape"): string {
+  return `${versionOf(kind)}:${session}`;
 }
 
 /** The session id to resume, or null when it started on other instructions (or before versions were kept). */
-export function resumableSession(stored: string | null): string | null {
+export function resumableSession(stored: string | null, kind: Kind = "shape"): string | null {
   if (!stored) return null;
   const at = stored.indexOf(":");
-  if (at < 0 || stored.slice(0, at) !== SHAPE_INSTRUCTIONS_VERSION) return null;
+  if (at < 0 || stored.slice(0, at) !== versionOf(kind)) return null;
   return stored.slice(at + 1) || null;
 }
 
@@ -355,7 +359,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     return db.select().from(shapeMessages).where(eq(shapeMessages.conversationId, conversationId)).orderBy(asc(shapeMessages.createdAt));
   }
 
-  app.get<{ Querystring: { repoId?: string; epicId?: string } }>("/api/shape", async (req, reply) => {
+  app.get<{ Querystring: { repoId?: string; epicId?: string; kind?: string } }>("/api/shape", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
     const rows = await db
@@ -375,6 +379,8 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         and(
           eq(shapeConversations.userId, ctx.userId),
           inArray(shapeConversations.orgId, ctx.orgIds),
+          // Ideas and investigations are separate lists.
+          eq(shapeConversations.kind, req.query.kind === "investigate" ? "investigate" : "shape"),
           ...(req.query.repoId ? [eq(shapeConversations.repoId, req.query.repoId)] : []),
           ...(req.query.epicId ? [eq(shapeConversations.epicIssueId, req.query.epicId)] : []),
         ),
@@ -384,6 +390,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       conversations: rows.map(({ conv, repo, projectName, epicNumber, epicTitle, epicState }) => ({
         id: conv.id,
         title: conv.title,
+        kind: conv.kind,
         repo,
         repoId: conv.repoId,
         scope: conv.scope,
@@ -396,9 +403,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     };
   });
 
-  app.post<{ Body: { repoId?: string; projectId?: string; epicId?: string; title?: string; newProduct?: boolean; orgId?: string } }>("/api/shape", async (req, reply) => {
+  app.post<{ Body: { repoId?: string; projectId?: string; epicId?: string; title?: string; newProduct?: boolean; orgId?: string; kind?: string } }>("/api/shape", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
+    const kind: Kind = req.body?.kind === "investigate" ? "investigate" : "shape";
+    if (kind === "investigate" && (req.body?.newProduct || req.body?.epicId)) {
+      return reply.code(400).send({ error: "an investigation is about a running product: pick its project or repository" });
+    }
     if (req.body?.newProduct) {
       // A new product: no repository, no code to read.
       const orgId = req.body.orgId && ctx.orgIds.includes(req.body.orgId) ? req.body.orgId : ctx.orgIds[0];
@@ -439,11 +450,11 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
     const repo = (await db.select().from(repos).where(and(eq(repos.id, repoId), inArray(repos.orgId, ctx.orgIds))).limit(1))[0];
     if (!repo) return reply.code(404).send({ error: "repository not found" });
-    const title = req.body?.title?.trim() || (epic ? `About: ${epic.title}` : "New idea");
+    const title = req.body?.title?.trim() || (epic ? `About: ${epic.title}` : kind === "investigate" ? "New investigation" : "New idea");
     const row = (
       await db
         .insert(shapeConversations)
-        .values({ orgId: repo.orgId, userId: ctx.userId, repoId: repo.id, scope, title, epicIssueId: epic?.id ?? null })
+        .values({ orgId: repo.orgId, userId: ctx.userId, repoId: repo.id, scope, kind, title, epicIssueId: epic?.id ?? null })
         .returning()
     )[0]!;
     return { id: row.id };
@@ -474,6 +485,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       conversation: {
         id: conv.id,
         orgId: conv.orgId,
+        kind: conv.kind,
         title: conv.title,
         repoId: conv.repoId,
         repo: conv.repoFullName,
@@ -555,7 +567,10 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const [owner, name] = conv.repoFullName ? (conv.repoFullName.split("/") as [string, string]) : [undefined, undefined];
       const epic = await epicRef(conv.epicIssueId);
       const where = await whereItRuns(conv);
-      const header = !owner
+      const investigating = conv.kind === "investigate";
+      const header = investigating
+        ? `${where} This is an investigation: the person noticed a problem in production. Your checkout is the latest default branch; the production logs, when a log tool is connected, are in your tools.`
+        : !owner
         ? `${where} This is a Shape conversation: the person is shaping an idea for a new product.`
         : epic
         ? `${where} This is a Shape conversation about epic #${epic.number}, "${epic.title}" (${epic.state ?? "no state"}): the person is discussing work the factory has in progress. Your checkout is the epic's branch where it exists.`
@@ -564,13 +579,13 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       // A session less than a day old is resumed: the model keeps what it
       // already read and the transcript is not sent again. Older than that,
       // or never opened, the message starts cold with the full grounding.
-      const session = conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? resumableSession(conv.askSession) : null;
+      const session = conv.askSessionAt && Date.now() - conv.askSessionAt.getTime() < SESSION_TTL_MS ? resumableSession(conv.askSession, conv.kind) : null;
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
         mcpServers: await mcpPayloadFor(deps, conv.orgId),
         context: session ? header : await grounding(conv, epic, earlier, header),
-        instructions: SHAPE_INSTRUCTIONS,
+        instructions: investigating ? INVESTIGATE_INSTRUCTIONS : SHAPE_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
         mode: "shape",
         images: attachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.bytesB64 })),
@@ -590,7 +605,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const nextSession = got.session ?? (got.resumed === true ? session : null);
       await db
         .update(shapeConversations)
-        .set({ ...(nextSession ? { askSession: storedSession(nextSession), askSessionAt: new Date() } : { askSession: null, askSessionAt: null }), updatedAt: new Date() })
+        .set({ ...(nextSession ? { askSession: storedSession(nextSession, conv.kind), askSessionAt: new Date() } : { askSession: null, askSessionAt: null }), updatedAt: new Date() })
         .where(eq(shapeConversations.id, conv.id));
       await db
         .update(shapeMessages)
@@ -713,7 +728,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         question: "Write the requirement from this conversation.",
         mcpServers: await mcpPayloadFor(deps, conv.orgId),
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
-        instructions: SPEC_INSTRUCTIONS,
+        instructions: conv.kind === "investigate" ? INVESTIGATE_SPEC_INSTRUCTIONS : SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
         mode: "shape",
         ...(branch ? { branch } : {}),
@@ -855,7 +870,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
           attachments.map((a) => `- [${a.name}](${origin}/api/shape/attachments/${a.id})`).join("\n"),
       );
     }
-    parts.push(`<!-- shaped in Compass: ${origin}/shape/${conv.id} -->`);
+    parts.push(`<!-- ${conv.kind === "investigate" ? "investigated" : "shaped"} in Compass: ${origin}/${conv.kind === "investigate" ? "investigate" : "shape"}/${conv.id} -->`);
     if (!conv.repoId || !conv.repoFullName) return reply.code(400).send({ error: "pick the repository the work opens in" });
     const homeId = conv.repoId;
     const repo = { id: homeId, orgId: conv.orgId, fullName: conv.repoFullName };

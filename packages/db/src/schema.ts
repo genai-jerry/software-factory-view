@@ -629,6 +629,8 @@ export const shapeConversations = pgTable(
     userId: uuid("user_id").notNull(),
     /** The home repository: the session's working directory, and where the issue opens. Null for a new product (scope `new`) until it is opened as work. */
     repoId: uuid("repo_id").references(() => repos.id, { onDelete: "cascade" }),
+    /** `shape`: shaping an idea. `investigate`: finding out what went wrong in production (logs + code), then planning the fix. */
+    kind: text("kind").$type<"shape" | "investigate">().notNull().default("shape"),
     /** `repo`: about one repository. `project`: spans every factory-enabled repository of the home repo's project. `new`: a new product with no repository; Claude reads no code. */
     scope: text("scope").notNull().default("repo"),
     title: text("title").notNull(),

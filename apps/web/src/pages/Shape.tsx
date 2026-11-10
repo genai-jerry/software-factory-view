@@ -34,6 +34,46 @@ interface Pending {
   dataUrl: string;
 }
 
+type Kind = "shape" | "investigate";
+
+/** The words of each kind of conversation: an idea being shaped, or a production problem being investigated. */
+const COPY = {
+  shape: {
+    base: "/shape",
+    crumb: "Shape",
+    heading: "Shape an idea",
+    sideIntro: "Talk it through with the factory. It reads the code, draws the screen, then writes the requirement.",
+    listLabel: "Your ideas",
+    newButton: "New idea",
+    empty: "Nothing shaped yet. Start with a question or a screenshot, and the factory answers from the code.",
+    intro: "Pick a product on the left and press New idea. Ask what a page does today, paste a screenshot, or ask for a new screen to be drawn. When the idea is clear, the factory writes the requirement and you open it as work.",
+    placeholder: "Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line.",
+    writeSpec: "Write the requirement",
+    showSpec: "Show the requirement",
+    specWord: "requirement",
+  },
+  investigate: {
+    base: "/investigate",
+    crumb: "Investigate",
+    heading: "Investigate a problem",
+    sideIntro: "Describe what you noticed in production. The factory searches the logs, reads the code, says what happened, and plans the fix.",
+    listLabel: "Your investigations",
+    newButton: "New investigation",
+    empty: "Nothing investigated yet. Describe what you noticed — what, roughly when, and who it affected.",
+    intro: "Pick where it happened on the left and press New investigation. Describe what you noticed. The factory looks at the production logs and the code, tells you what happened and why, and plans the fix. When the cause is clear, you turn the fix into work.",
+    placeholder: "What did you notice? What, roughly when, and who or what did it affect? Enter sends; Shift+Enter for a new line.",
+    writeSpec: "Write the fix plan",
+    showSpec: "Show the fix plan",
+    specWord: "fix plan",
+  },
+} as const;
+
+const INVESTIGATE_SUGGESTIONS = [
+  "What errors repeated most in the last 24 hours?",
+  "Leads say their replies vanished this afternoon — what do the logs show?",
+  "Something failed around the last deploy — what happened?",
+];
+
 const SUGGESTIONS = [
   "What does the leads page show today?",
   "Visualise a day-wise calling panel beside the monthly table",
@@ -133,11 +173,15 @@ function failureText(e: unknown): string {
   return e instanceof ApiError ? e.message : "That did not go through. Try again.";
 }
 
-export function ShapePage() {
+export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["shape"], queryFn: () => api.get<{ conversations: ShapeConversationSummary[] }>("/api/shape") });
+  const copy = COPY[kind];
+  const list = useQuery({
+    queryKey: ["shape", "list", kind],
+    queryFn: () => api.get<{ conversations: ShapeConversationSummary[] }>(kind === "investigate" ? "/api/shape?kind=investigate" : "/api/shape"),
+  });
   const targets = useQuery({ queryKey: ["work-targets"], queryFn: () => api.get<{ targets: Target[] }>("/api/work/targets") });
   const focus = useFocus();
   const board = useQuery({ queryKey: ["board", focus.key], queryFn: () => api.get<{ cards: BoardCard[] }>(`/api/board${focus.qs}`) });
@@ -145,7 +189,8 @@ export function ShapePage() {
   const [repoId, setRepoId] = useState("");
   const [start, setStart] = useState<"fresh" | "epic">("fresh");
   const [epicId, setEpicId] = useState("");
-  const options = targetOptions(enabled);
+  // An investigation is about something that is running: no "something new".
+  const options = targetOptions(enabled).filter((o) => kind === "shape" || o.value !== NEW_PRODUCT);
   // The focus filter picks the default: its repo, else "All of" its project when that is on offer, else the first choice.
   const chosen =
     repoId ||
@@ -162,11 +207,14 @@ export function ShapePage() {
     mutationFn: () =>
       api.post<{ id: string }>(
         "/api/shape",
-        start === "epic" ? { epicId: chosenEpic } : fresh ? { newProduct: true } : spanning ? { projectId: chosen.slice("project:".length) } : { repoId: chosen },
+        {
+          ...(start === "epic" ? { epicId: chosenEpic } : fresh ? { newProduct: true } : spanning ? { projectId: chosen.slice("project:".length) } : { repoId: chosen }),
+          ...(kind === "investigate" ? { kind } : {}),
+        },
       ),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["shape"] });
-      navigate(`/shape/${r.id}`);
+      navigate(`${copy.base}/${r.id}`);
     },
   });
   const canStart = start === "epic" ? Boolean(chosenEpic) : Boolean(chosen);
@@ -175,9 +223,10 @@ export function ShapePage() {
 
   return (
     <div className="shape">
-      <aside className="shape-list card" aria-label="Your ideas">
-        <h2>Shape an idea</h2>
-        <p className="muted">Talk it through with the factory. It reads the code, draws the screen, then writes the requirement.</p>
+      <aside className="shape-list card" aria-label={copy.listLabel}>
+        <h2>{copy.heading}</h2>
+        <p className="muted">{copy.sideIntro}</p>
+        {kind === "shape" && (
         <div className="shape-start-pick" role="radiogroup" aria-label="How to start">
           <label className={start === "fresh" ? "on" : ""}>
             <input type="radio" name="shape-start" checked={start === "fresh"} onChange={() => setStart("fresh")} /> Start fresh
@@ -186,10 +235,11 @@ export function ShapePage() {
             <input type="radio" name="shape-start" checked={start === "epic"} onChange={() => setStart("epic")} /> About an epic
           </label>
         </div>
+        )}
         {start === "fresh" ? (
           <>
             <label htmlFor="shape-repo" className="muted">
-              Which product
+              {kind === "investigate" ? "Where did it happen" : "Which product"}
             </label>
             {targets.isLoading ? (
               <p className="muted">Reading the projects…</p>
@@ -232,18 +282,18 @@ export function ShapePage() {
           </>
         )}
         <button type="button" className="primary" disabled={!canStart || create.isPending} onClick={() => create.mutate()}>
-          {create.isPending ? "Opening…" : "New idea"}
+          {create.isPending ? "Opening…" : copy.newButton}
         </button>
         {create.isError && <p className="decision-failure">{failureText(create.error)}</p>}
         {list.isLoading ? (
           <p className="muted">Loading…</p>
         ) : conversations.length === 0 ? (
-          <p className="muted shape-empty">Nothing shaped yet. Start with a question or a screenshot, and the factory answers from the code.</p>
+          <p className="muted shape-empty">{copy.empty}</p>
         ) : (
           <ul className="shape-convs">
             {conversations.map((c) => (
               <li key={c.id} className={c.id === id ? "current" : ""}>
-                <Link to={`/shape/${c.id}`}>
+                <Link to={`${copy.base}/${c.id}`}>
                   <span className="shape-conv-title">{c.title}</span>
                   {c.epic && <span className="shape-conv-epic muted">About {c.epic.title}</span>}
                   <span className="shape-conv-meta">
@@ -261,10 +311,8 @@ export function ShapePage() {
           <Conversation id={id} key={id} />
         ) : (
           <section className="card shape-intro">
-            <h1>Shape an idea</h1>
-            <p>
-              Pick a product on the left and press <strong>New idea</strong>. Ask what a page does today, paste a screenshot, or ask for a new screen to be drawn. When the idea is clear, the factory writes the requirement and you open it as work.
-            </p>
+            <h1>{copy.heading}</h1>
+            <p>{copy.intro}</p>
           </section>
         )}
       </main>
@@ -294,6 +342,15 @@ function Conversation({ id }: { id: string }) {
     void qc.invalidateQueries({ queryKey: ["shape", id] });
     void qc.invalidateQueries({ queryKey: ["shape"] });
   };
+  // An investigation reads production logs through a tool the org connects in Tools.
+  const orgIdForTools = q.data?.conversation?.kind === "investigate" ? q.data.conversation.orgId : undefined;
+  const tools = useQuery({
+    queryKey: ["org-tools", orgIdForTools],
+    queryFn: () => api.get<{ servers: Array<{ enabled: boolean; useShape: boolean }> }>(`/api/orgs/${orgIdForTools}/tools`),
+    enabled: Boolean(orgIdForTools),
+    retry: false,
+  });
+  const logTool: boolean | null = tools.data ? tools.data.servers.some((s) => s.enabled && s.useShape) : null;
 
   const send = useMutation({
     mutationFn: async ({ body, files }: { body: string; files: Pending[] }) => {
@@ -378,6 +435,8 @@ function Conversation({ id }: { id: string }) {
   }
   if (!q.data?.conversation) return <p className="muted">Loading…</p>;
   const conversation = q.data.conversation;
+  const copy = COPY[conversation.kind === "investigate" ? "investigate" : "shape"];
+  const investigating = conversation.kind === "investigate";
   const messages = q.data.messages ?? [];
   // Once the issue is projected, the idea is about its epic and the chat goes on
   // (on the epic's branch). Until then there is nothing to talk to yet.
@@ -389,7 +448,7 @@ function Conversation({ id }: { id: string }) {
   // Spanning the project until it becomes an epic, which lives in one repository.
   const acrossProject = conversation.scope === "project" && !conversation.epic;
   const newProduct = conversation.scope === "new" || !conversation.repo;
-  const canGoNew = !newProduct && !conversation.epic && !conversation.issueUrl && opened === null;
+  const canGoNew = !investigating && !newProduct && !conversation.epic && !conversation.issueUrl && opened === null;
   // Only the newest proposal is live: an earlier one was superseded in the talk.
   const lastProposalId = [...messages].reverse().find((m) => m.repoProposal)?.id;
   const lastWorkProposal = [...messages].reverse().find((m) => m.workProposal);
@@ -402,16 +461,18 @@ function Conversation({ id }: { id: string }) {
     conversation.epic || !notWorkYet
       ? null // about an epic, or just opened: the banner below says where it went
       : specPending
-        ? "Compass is writing the requirement from this conversation. It takes a minute or two and opens beside the chat."
+        ? `Compass is writing the ${copy.specWord} from this conversation. It takes a minute or two and opens beside the chat.`
         : cardWaiting
           ? "check Claude's proposal in the card under its last answer, and press its button. Replying “yes” in the chat does not do it."
           : messages.length === 0
             ? null
-            : newProduct
+            : newProduct && !investigating
               ? "this product has no repository yet. Ask Claude to propose one, or press Open as work and create it there."
               : conversation.spec
-                ? "read the requirement, then press Open as work — or ask Claude to open it as work."
-                : "when the idea is clear, press Write the requirement — or ask Claude to open it as work.";
+                ? `read the ${copy.specWord}, then press Open as work — or ask Claude to open it as work.`
+                : investigating
+                  ? "keep asking until the cause is clear. Then press Write the fix plan — or ask Claude to open it as work."
+                  : "when the idea is clear, press Write the requirement — or ask Claude to open it as work.";
   const where = acrossProject ? (conversation.project?.name ?? "the project") : shortRepo(conversation.repo ?? "");
 
   return (
@@ -419,7 +480,7 @@ function Conversation({ id }: { id: string }) {
       <header className="shape-head">
         <div>
           <p className="crumb">
-            <Link to="/shape">Shape</Link> › {conversation.title}
+            <Link to={copy.base}>{copy.crumb}</Link> › {conversation.title}
           </p>
           <h1>{conversation.title}</h1>
           <p className="muted">
@@ -453,7 +514,7 @@ function Conversation({ id }: { id: string }) {
             disabled={writeSpec.isPending || specPending || messages.length === 0}
             onClick={() => (conversation.spec && !showSpec ? setShowSpec(true) : writeSpec.mutate())}
           >
-            {specPending ? "Writing…" : conversation.spec ? (showSpec ? "Requirement" : "Show the requirement") : "Write the requirement"}
+            {specPending ? "Writing…" : conversation.spec ? (showSpec ? (investigating ? "Fix plan" : "Requirement") : copy.showSpec) : copy.writeSpec}
           </button>
           <button type="button" className="primary" disabled={!conversation.spec || inFactory} onClick={() => setOpening(true)}>
             Open as work
@@ -461,6 +522,12 @@ function Conversation({ id }: { id: string }) {
         </div>
       </header>
       {writeSpec.isError && <p className="decision-failure">{failureText(writeSpec.error)}</p>}
+      {investigating && logTool === false && (
+        <p className="banner" role="note">
+          No tool is connected, so Claude can read the code but not the production logs.{" "}
+          <Link to="/tools">Connect the log tool in Tools</Link> (setup: <code>tools/log-reader</code> in the factory repository).
+        </p>
+      )}
       {nextStep && (
         <p className="shape-next" role="status">
           <strong>Next:</strong> {nextStep}
@@ -480,12 +547,14 @@ function Conversation({ id }: { id: string }) {
                 <p className="muted">
                   {conversation.epic
                     ? `Ask anything about ${conversation.epic.title}, or paste a screenshot. Some ways to start:`
-                    : newProduct
-                      ? "Describe the product: who it is for, what they do with it, and anything you already know it needs. Paste a sketch if you have one."
-                      : `Ask anything about ${where}, or paste a screenshot. Some ways to start:`}
+                    : investigating
+                      ? `Describe what you noticed in ${where}: what, roughly when, and who or what it affected. Claude searches the production logs and reads the code. Some ways to start:`
+                      : newProduct
+                        ? "Describe the product: who it is for, what they do with it, and anything you already know it needs. Paste a sketch if you have one."
+                        : `Ask anything about ${where}, or paste a screenshot. Some ways to start:`}
                 </p>
                 <div className="shape-chips">
-                  {(conversation.epic ? EPIC_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                  {(conversation.epic ? EPIC_SUGGESTIONS : investigating ? INVESTIGATE_SUGGESTIONS : SUGGESTIONS).map((s) => (
                     <button key={s} type="button" className="chip" disabled={composerBusy} onClick={() => send.mutate({ body: s, files: [] })}>
                       {s}
                     </button>
@@ -565,7 +634,7 @@ function Conversation({ id }: { id: string }) {
                 aria-label="Your message"
                 rows={3}
                 value={text}
-                placeholder={answering ? "Waiting for the answer…" : "Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line."}
+                placeholder={answering ? "Waiting for the answer…" : copy.placeholder}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKey}
                 onPaste={onPaste}
