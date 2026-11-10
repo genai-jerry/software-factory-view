@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { FocusProvider } from "../lib/filter.js";
@@ -121,6 +121,27 @@ describe("WorkPage", () => {
     // The counters add up.
     expect(screen.getByText("need you").previousSibling).toHaveTextContent("2");
     expect(screen.getByText("1 approval, 1 test run")).toBeInTheDocument();
+  });
+});
+
+describe("WorkPage: shipped work", () => {
+  it("lists an epic that is live in production under its own heading, not 'the factory is working'", async () => {
+    const live: BoardCard = { ...epic, epicId: "e50", number: 50, title: "Whatsapp outbox, shipped", state: "factory:deployed", daysInState: 0 };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/board")) return { columns: [], cards: [live, quietEpic] };
+      if (path.startsWith("/api/my-work")) return { needsYou: [], mine: [], waitingOn: [] };
+      if (path.startsWith("/api/running")) return { running: [] };
+      if (path.startsWith("/api/estates")) return { estates: [], ingestion: { lastReceivedAt: null, lastProcessedAt: null, pending: 0 } };
+      throw new Error(`unexpected GET ${path}`);
+    });
+    renderAt("/", <WorkPage />);
+    const heading = await screen.findByRole("heading", { name: /In production/ });
+    const shipped = heading.closest("section")!;
+    expect(within(shipped).getByText("Whatsapp outbox, shipped")).toBeInTheDocument();
+    expect(within(shipped).getByText(/Nothing is running on these and nothing waits on you/)).toBeInTheDocument();
+    const working = screen.getByRole("heading", { name: "The factory is working" }).closest("section")!;
+    expect(within(working).queryByText("Whatsapp outbox, shipped")).toBeNull();
+    expect(within(working).getByText("Sarvam changes")).toBeInTheDocument();
   });
 });
 

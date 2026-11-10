@@ -116,7 +116,7 @@ describe("buildWork", () => {
     expect(row.pointer).toBe("Run: 16 of 16 tests are left.");
     expect(row.who).toBe("You run the tests");
     expect(row.link).toBe("/work/e1");
-    expect(lists.counts).toEqual({ you: 1, others: 0, working: 0 });
+    expect(lists.counts).toEqual({ you: 1, others: 0, working: 0, inProduction: 0 });
   });
 
   it("asks the reader to start a review when a written task waits for one", () => {
@@ -183,10 +183,31 @@ describe("buildWork", () => {
     expect(lists.counts.working).toBe(1);
   });
 
+  it("keeps an epic that is live in production out of 'the factory is working'", () => {
+    const live = card({ epicId: "e9", number: 9, title: "Live epic", state: "factory:deployed", daysInState: 1 });
+    const building = card({ epicId: "e8", number: 8, title: "Building", state: "factory:design-approved", tasks: rollup({ total: 3, inReview: 1 }) });
+    const lists = buildWork([live, building], [], []);
+    expect(lists.inProduction.map((w) => w.card.title)).toEqual(["Live epic"]);
+    expect(lists.working.map((w) => w.card.title)).toEqual(["Building"]);
+    expect(lists.counts).toMatchObject({ working: 1, inProduction: 1 });
+    expect(lists.inProduction[0]!.pointer).toBe("In production. Nothing is running on it; it stays here while it is watched.");
+    // A run still going on it (the Ops watch, when there is one) is the factory working.
+    const withRun = buildWork([live], [], [{ epicId: "e9", kind: "epic", role: "ops", issueId: "x", number: 9, title: "t", repo: "r", runId: "r1", epicNumber: 9, epicTitle: "Live epic" } as never]);
+    expect(withRun.inProduction).toEqual([]);
+    expect(withRun.working).toHaveLength(1);
+  });
+
+  it("does not say a person has to merge a fast-lane fix", () => {
+    const fast = card({ epicId: "f1", number: 74, title: "A small fix", state: "factory:fast-track", daysInState: 0 });
+    const [item] = buildWork([fast], [], []).working;
+    expect(item!.pointer).toMatch(/the factory merges the fix onto staging once its checks are green/);
+    expect(item!.pointer).not.toMatch(/waits for someone/);
+  });
+
   it("counts a gate that waits on someone else, not on me", () => {
     const lists = buildWork([card({ state: "factory:spec-ready" })], [], []);
     expect(lists.working[0]!.who).toBe("Someone else decides");
-    expect(lists.counts).toEqual({ you: 0, others: 1, working: 0 });
+    expect(lists.counts).toEqual({ you: 0, others: 1, working: 0, inProduction: 0 });
   });
 
   it("says how many of the remaining tests can run now", () => {
