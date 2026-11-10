@@ -12,6 +12,7 @@ import { requirementBody } from "../openspec-draft.js";
 import { INVESTIGATE_INSTRUCTIONS, INVESTIGATE_SPEC_INSTRUCTIONS, SHAPE_INSTRUCTIONS, SPEC_INSTRUCTIONS } from "../shape-prompts.js";
 import { openWorkIssue } from "./activity.js";
 import { artifactSources, claudeTokenFor } from "./qa.js";
+import { askModels } from "../model-settings.js";
 
 /**
  * Shape — a conversation that turns an idea into work. A person picks the
@@ -640,6 +641,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
         mcpServers: await mcpPayloadFor(deps, conv.orgId, conv.projectId),
+        models: await askModels(deps, conv.orgId, conv.projectId, conv.kind === "investigate" ? "investigate" : "shape"),
         context: session ? header : await grounding(conv, epic, earlier, header),
         instructions: investigating ? INVESTIGATE_INSTRUCTIONS : SHAPE_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
@@ -836,6 +838,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
         ...(owner && name ? { owner, repo: name } : {}),
         question: "Write the requirement from this conversation.",
         mcpServers: await mcpPayloadFor(deps, conv.orgId, conv.projectId),
+        models: await askModels(deps, conv.orgId, conv.projectId, conv.kind === "investigate" ? "investigate" : "shape"),
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: conv.kind === "investigate" ? INVESTIGATE_SPEC_INSTRUCTIONS : SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,

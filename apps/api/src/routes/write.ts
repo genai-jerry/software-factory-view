@@ -16,6 +16,7 @@ import { loadBlockedMeta } from "../attention.js";
 import { askOrchestrator } from "../orchestrator-dispatch.js";
 import { readRetainedAgentSecrets } from "../orchestrator-secrets.js";
 import { loadEpic } from "./read.js";
+import { askModels } from "../model-settings.js";
 
 /**
  * Thread, decision and blocked-reply writes. Everything that reaches GitHub
@@ -170,6 +171,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
       mcpServers: await mcpPayloadFor(deps, thread.orgId, repo.projectId),
+      models: await askModels(deps, thread.orgId, repo.projectId, "ask"),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
 
@@ -293,6 +295,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
       mcpServers: await mcpPayloadFor(deps, issue.orgId, repo.projectId),
+      models: await askModels(deps, issue.orgId, repo.projectId, "ask"),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
     await db.insert(auditLog).values({

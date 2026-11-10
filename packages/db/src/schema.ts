@@ -825,3 +825,24 @@ export const mcpServers = pgTable(
   },
   (t) => [uniqueIndex("mcp_servers_org_name").on(t.orgId, t.name)],
 );
+
+/**
+ * Compass → Models: the Claude models each factory phase runs on, in
+ * preference order (the first one the credential reaches wins). `scope` is
+ * "org" for the org's own choice, or a project id for that project's. A phase
+ * a scope does not name falls back to the org, then the repo's
+ * `.github/factory-models.json`, then the factory's default.
+ */
+export const modelSettings = pgTable(
+  "model_settings",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    chains: jsonb("chains").$type<Record<string, string[]>>().notNull().default({}),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("model_settings_org_scope").on(t.orgId, t.scope)],
+);

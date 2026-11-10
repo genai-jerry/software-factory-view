@@ -350,6 +350,8 @@ export type AskBody = {
   session?: string;
   /** The org's Compass → Tools servers (mcpPayloadFor); the orchestrator picks the ones for this mode. */
   mcpServers?: McpServerPayload[];
+  /** Compass → Models: the chain this ask runs on, first choice first. Absent: the repo's file and the factory default decide. */
+  models?: string[];
 };
 
 /** A finished answer. */
@@ -395,6 +397,7 @@ function askPayload(body: AskBody): Record<string, unknown> {
     ...(body.conversation ? { conversation: body.conversation } : {}),
     ...(body.session ? { session: body.session } : {}),
     ...(body.mcpServers ? { mcp_servers: body.mcpServers } : {}),
+    ...(body.models && body.models.length > 0 ? { models: body.models } : {}),
   };
 }
 

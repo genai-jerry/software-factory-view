@@ -24,6 +24,7 @@ import {
 } from "../orchestrator-dispatch.js";
 import { loadGateApprovers, nextStepFor } from "../start-gate.js";
 import { loadEpic, loadIssue } from "./read.js";
+import { chainsForRepo } from "../model-settings.js";
 
 /**
  * Same-origin stand-in for the orchestrator's /runs JSON. GitHub comments
@@ -149,6 +150,16 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     const repo = (await deps.dbh.db.select({ orgId: repos.orgId, projectId: repos.projectId }).from(repos).where(eq(repos.fullName, fullName)).limit(1))[0];
     if (!repo) return reply.code(404).send({ error: "unknown repository" });
     return { servers: await mcpPayloadFor(deps, repo.orgId, repo.projectId) };
+  });
+
+  /** Compass → Models: the model chains a repository's runs use, by phase. Read by the orchestrator before each run. */
+  app.get<{ Querystring: { repo?: string } }>("/api/orchestrator/models", async (req, reply) => {
+    if (!orchestratorAuthorised(req.headers.authorization)) return reply.code(401).send({ error: "dispatch token required" });
+    const fullName = (req.query.repo ?? "").trim();
+    if (!fullName) return reply.code(400).send({ error: "repo is required" });
+    const chains = await chainsForRepo(deps, fullName);
+    if (!chains) return reply.code(404).send({ error: "unknown repository" });
+    return { models: chains };
   });
 
   app.get<{ Params: { source: string; id: string } }>("/api/orchestrator/attachments/:source/:id", async (req, reply) => {

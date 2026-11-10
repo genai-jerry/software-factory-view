@@ -94,6 +94,7 @@ export function Shell({
             <div className="sidenav-foot">
               <NavLink to="/telegram">Telegram</NavLink>
               <NavLink to="/tools">Tools</NavLink>
+              <NavLink to="/models">Models</NavLink>
               {showSettings && (
                 <NavLink to="/settings">{setup?.canEditApp && !me.orgs.some((o) => isOrgAdminRole(o.role)) ? "GitHub App" : "Settings"}</NavLink>
               )}
@@ -237,6 +238,9 @@ function MoreMenu({
       </NavLink>
       <NavLink to="/tools" onClick={onNavigate}>
         Tools
+      </NavLink>
+      <NavLink to="/models" onClick={onNavigate}>
+        Models
       </NavLink>
       {showSettings && setup?.canEditApp && (
         <NavLink to="/settings" onClick={onNavigate}>
