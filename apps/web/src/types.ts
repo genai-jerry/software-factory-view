@@ -677,6 +677,8 @@ export interface ShapeEpicRef {
 export interface ShapeConversationSummary {
   id: string;
   title: string;
+  /** `investigate`: finding what went wrong in production. Absent or `shape`: shaping an idea. */
+  kind?: "shape" | "investigate";
   /** Null for a new product, which has no repository until it is opened as work. */
   repo: string | null;
   repoId: string | null;
@@ -718,6 +720,7 @@ export interface ShapeMessage {
 export interface ShapeConversation {
   conversation: {
     id: string;
+    kind?: "shape" | "investigate";
     title: string;
     repoId: string | null;
     repo: string | null;

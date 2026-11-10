@@ -31,6 +31,8 @@ function renderAt(path: string) {
         <Routes>
           <Route path="/shape" element={<ShapePage />} />
           <Route path="/shape/:id" element={<ShapePage />} />
+          <Route path="/investigate" element={<ShapePage kind="investigate" />} />
+          <Route path="/investigate/:id" element={<ShapePage kind="investigate" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -540,6 +542,54 @@ describe("ShapePage for a new product", () => {
     await userEvent.type(name, "Mirror translator");
     await userEvent.click(screen.getByRole("button", { name: "Create the repository and open it" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/repos", expect.objectContaining({ name: "mirror", projectName: "Mirror translator" })));
+  });
+});
+
+describe("Investigate", () => {
+  const found: ShapeConversation = {
+    conversation: { ...conversation.conversation, kind: "investigate", title: "Replies vanished", orgId: "o1", spec: null },
+    messages: [],
+  };
+  const open = (tools: unknown) => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape?kind=investigate") return { conversations: [{ ...summaries[0]!, kind: "investigate", title: "Replies vanished" }] };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return found;
+      if (path === "/api/orgs/o1/tools") return tools;
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+  };
+
+  it("starts an investigation in a running product: no epic, no 'something new'", async () => {
+    open({ servers: [] });
+    vi.mocked(api.post).mockResolvedValue({ id: "i9" });
+    renderAt("/investigate");
+    expect((await screen.findAllByRole("heading", { name: "Investigate a problem" })).length).toBeGreaterThan(0);
+    expect(screen.queryByText("About an epic")).toBeNull();
+    expect(await screen.findByLabelText("Where did it happen")).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Something new/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "New investigation" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { repoId: "r1", kind: "investigate" }));
+  });
+
+  it("talks about logs and fix plans, and says when no log tool is connected", async () => {
+    open({ servers: [] });
+    renderAt("/investigate/c1");
+    expect(await screen.findByRole("button", { name: "Write the fix plan" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Investigate" })).toHaveAttribute("href", "/investigate");
+    expect(screen.getByText(/Claude searches the production logs and reads the code/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "What errors repeated most in the last 24 hours?" })).toBeInTheDocument();
+    expect(await screen.findByText(/No tool is connected, so Claude can read the code but not the production logs/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Treat it as a new product/ })).toBeNull();
+  });
+
+  it("does not nag when a tool is connected", async () => {
+    open({ servers: [{ enabled: true, useShape: true }] });
+    renderAt("/investigate/c1");
+    await screen.findByRole("button", { name: "Write the fix plan" });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/orgs/o1/tools"));
+    expect(screen.queryByText(/No tool is connected/)).toBeNull();
   });
 });
 

@@ -659,3 +659,52 @@ describe("Claude proposes a repository for a new product", () => {
   });
 });
 
+
+describe("Investigate: the same conversation, a different job", () => {
+  it("is its own list, runs on its own instructions with the org's tools, and files a fix as work", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId: id.repo, kind: "investigate" } });
+    expect(created.statusCode).toBe(200);
+    const convId = (created.json() as { id: string }).id;
+    expect(((await view(convId)) as { conversation: { kind: string; title: string } }).conversation).toMatchObject({ kind: "investigate", title: "New investigation" });
+
+    // Separate lists: an investigation is not an idea, and the other way round.
+    const ideas = (await app.inject({ method: "GET", url: "/api/shape", headers: { cookie: jerryCookie } })).json() as { conversations: Array<{ id: string }> };
+    const investigations = (await app.inject({ method: "GET", url: "/api/shape?kind=investigate", headers: { cookie: jerryCookie } })).json() as { conversations: Array<{ id: string; kind: string }> };
+    expect(ideas.conversations.some((c) => c.id === convId)).toBe(false);
+    expect(investigations.conversations.find((c) => c.id === convId)).toMatchObject({ kind: "investigate" });
+
+    let calls = stubNetwork("Two errors repeat since 17:30.", { session: "inv-1" });
+    await say(convId, { text: "Leads say their replies vanished this afternoon" });
+    const ask = calls.find((c) => c.url === `${ORCH}/ask`)!;
+    expect(ask.body).toMatchObject({ owner: "acme", repo: "app", mode: "shape" });
+    const flat = String(ask.body!.instructions).replace(/\\s+/g, " ");
+    expect(flat).toContain("investigating a problem someone noticed in production");
+    expect(flat).toContain("Log lines arrive MASKED");
+    expect(flat).not.toContain("shape an idea"); // not the Shape rules
+    expect(String(ask.body!.context)).toContain("This is an investigation");
+    expect(ask.body).toHaveProperty("mcp_servers"); // the org's tools, where the log tool lives
+
+    // Its session is not a Shape session: Shape instructions never resume it, and its own do.
+    const { resumableSession, storedSession } = await import("../src/routes/shape.js");
+    const row = (await deps.dbh.db.select().from(shapeConversations).where(eq(shapeConversations.id, convId)))[0]!;
+    expect(row.askSession).toBe(storedSession("inv-1", "investigate"));
+    expect(resumableSession(row.askSession, "investigate")).toBe("inv-1");
+    expect(resumableSession(row.askSession, "shape")).toBeNull();
+
+    // The requirement is written from the evidence, then filed under a title that says it is a fix.
+    calls = stubNetwork("## Problem / need\\nReplies were dropped.");
+    await writeSpec(convId);
+    expect(String(calls.find((c) => c.url === `${ORCH}/ask`)!.body!.instructions)).toContain("INVESTIGATION of a production problem");
+    calls = stubNetwork("");
+    const opened = await app.inject({ method: "POST", url: `/api/shape/${convId}/work`, headers: headers(jerryCookie), payload: { title: "Fix: a lead's reply is lost" } });
+    expect(opened.statusCode).toBe(200);
+    const issue = calls.find((c) => c.url.endsWith("/repos/acme/app/issues"))!;
+    expect(String(issue.body!.body)).toContain("investigated in Compass:");
+    expect(String(issue.body!.body)).toContain(`/investigate/${convId}`);
+  });
+
+  it("is about a running product, not a new one or an epic", async () => {
+    const r = await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { newProduct: true, kind: "investigate" } });
+    expect(r.statusCode).toBe(400);
+  });
+});

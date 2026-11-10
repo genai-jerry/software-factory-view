@@ -166,6 +166,7 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
       <NavLink to="/activity">Activity</NavLink>
       {!onMore && <NavLink to="/environments">Environments</NavLink>}
       <NavLink to="/shape">Shape</NavLink>
+      <NavLink to="/investigate">Investigate</NavLink>
       {onMore ? (
         <button type="button" className="nav-more" onClick={onMore}>
           More

@@ -140,6 +140,8 @@ export function App() {
         <Route path="/runs/:runId" element={<OrchestratorRunPage />} />
         <Route path="/shape" element={<ShapePage />} />
         <Route path="/shape/:id" element={<ShapePage />} />
+        <Route path="/investigate" element={<ShapePage kind="investigate" />} />
+        <Route path="/investigate/:id" element={<ShapePage kind="investigate" />} />
         <Route
           path="/settings"
           element={canReachSettings(user!, setup.data) ? <SettingsPage me={user!} /> : <Navigate to="/" replace />}
