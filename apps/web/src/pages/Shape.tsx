@@ -577,6 +577,7 @@ function Conversation({ id }: { id: string }) {
                       defaultTitle={m.workProposal?.title ?? conversation.title}
                       defaultFast={m.workProposal?.fast ?? false}
                       hasSpec={Boolean(conversation.spec)}
+                      specWriting={specPending}
                       homes={newProduct ? (conversation.homes ?? []) : acrossProject ? (conversation.project?.repos ?? []) : []}
                       newProduct={newProduct}
                       orgId={conversation.orgId}
@@ -692,6 +693,7 @@ function Conversation({ id }: { id: string }) {
           <OpenAsWork
             id={id}
             defaultTitle={conversation.title}
+            specWriting={specPending}
             homes={newProduct ? (conversation.homes ?? []) : acrossProject ? (conversation.project?.repos ?? []) : []}
             newProduct={newProduct}
             orgId={conversation.orgId}
@@ -1129,6 +1131,7 @@ function OpenAsWork({
   orgId,
   defaultRepoId,
   hasSpec = true,
+  specWriting = false,
   defaultFast = false,
   onCancel,
   onDone,
@@ -1144,6 +1147,8 @@ function OpenAsWork({
   defaultRepoId: string;
   /** False when no requirement is written yet: it is written first, then opened (Claude's proposal card). */
   hasSpec?: boolean;
+  /** The requirement is being written (here or from another click): opening waits for it. */
+  specWriting?: boolean;
   defaultFast?: boolean;
   /** Absent in the chat card, which has nothing to cancel back to. */
   onCancel?: () => void;
@@ -1237,10 +1242,10 @@ function OpenAsWork({
         <button
           type="button"
           className="primary"
-          disabled={!title.trim() || open.isPending || (creating ? !repoForm.ready : newProduct && !repoId)}
+          disabled={!title.trim() || open.isPending || specWriting || (creating ? !repoForm.ready : newProduct && !repoId)}
           onClick={() => open.mutate()}
         >
-          {open.isPending ? busy : action}
+          {open.isPending ? busy : specWriting ? "Writing the requirement…" : action}
         </button>
         {onCancel && (
           <button type="button" className="secondary" onClick={onCancel} disabled={open.isPending}>

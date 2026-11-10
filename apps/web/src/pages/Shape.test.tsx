@@ -518,6 +518,23 @@ describe("ShapePage for a new product", () => {
     expect(await screen.findByText(/press its button\. Replying “yes” in the chat does not do it/)).toBeInTheDocument();
   });
 
+  it("disables the proposal's button while the requirement is being written", async () => {
+    const writing: ShapeConversation = {
+      conversation: { ...conversation.conversation, orgId: "o1", specStatus: "pending" },
+      messages: [conversation.messages[0]!, { ...conversation.messages[1]!, mocks: [], workProposal: { title: "Panel", fast: false } }],
+    };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: summaries };
+      if (path === "/api/work/targets") return targets;
+      if (path === "/api/shape/c1") return writing;
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    renderAt("/shape/c1");
+    const card = await screen.findByLabelText("Open as work");
+    expect(within(card).getByRole("button", { name: "Writing the requirement…" })).toBeDisabled();
+  });
+
   it("lets the person name a new project, starting from the repository's name", async () => {
     const fresh: ShapeConversation = {
       conversation: { ...conversation.conversation, title: "Mirror", orgId: "o1", scope: "new", repo: null, repoId: null, spec: "## What\nAn app.", homes: [] },
