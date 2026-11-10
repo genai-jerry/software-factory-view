@@ -226,6 +226,51 @@ describe("serving the orchestrator", () => {
   });
 });
 
+describe("tools for particular projects", () => {
+  it("goes only to sessions in its projects; unscoped tools go everywhere", async () => {
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "dispatch-tok";
+    const { estates, projects: projectsTable, repos } = await import("@console/db");
+    const d = deps.dbh.db;
+    const estate = (await d.insert(estates).values({ orgId, name: "scoped", installationId: 77 }).returning())[0]!;
+    const beacon = (await d.insert(projectsTable).values({ orgId, name: "Beacon" }).returning())[0]!;
+    const lens = (await d.insert(projectsTable).values({ orgId, name: "Lens" }).returning())[0]!;
+    const mk = (name: string, projectId: string | null) =>
+      d.insert(repos).values({ orgId, estateId: estate.id, ghNodeId: `R-${name}`, fullName: `acme/${name}`, projectId }).onConflictDoNothing();
+    await mk("beacon-api", beacon.id);
+    await mk("lens-app", lens.id);
+    await mk("loose", null);
+
+    const logs = (await add({ label: "Beacon logs", url: SERVER, projectIds: [beacon.id] })).json();
+    await add({ label: "Docs", url: SERVER });
+    expect(logs.projectIds).toEqual([beacon.id]);
+
+    const seenBy = async (repo: string) =>
+      ((await app.inject({ method: "GET", url: `/api/orchestrator/mcp-servers?repo=acme/${repo}`, headers: { authorization: "Bearer dispatch-tok" } })).json().servers as Array<{ name: string }>).map((x) => x.name).sort();
+    expect(await seenBy("beacon-api")).toEqual(["beacon_logs", "docs"]);
+    expect(await seenBy("lens-app")).toEqual(["docs"]);
+    expect(await seenBy("loose")).toEqual(["docs"]); // no project: never a scoped server
+
+    // Change the scope, or clear it back to every project.
+    const both = await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${logs.id}`, headers: admin, payload: { projectIds: [beacon.id, lens.id] } });
+    expect(both.json().projectIds.sort()).toEqual([beacon.id, lens.id].sort());
+    expect(await seenBy("lens-app")).toEqual(["beacon_logs", "docs"]);
+    await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${logs.id}`, headers: admin, payload: { projectIds: [] } });
+    expect(await seenBy("loose")).toEqual(["beacon_logs", "docs"]);
+  });
+
+  it("refuses a project that is not this organisation's", async () => {
+    const { orgs, projects: projectsTable } = await import("@console/db");
+    const other = (await deps.dbh.db.insert(orgs).values({ name: "other-org" }).returning())[0]!;
+    const theirs = (await deps.dbh.db.insert(projectsTable).values({ orgId: other.id, name: "Theirs" }).returning())[0]!;
+    const refused = await add({ label: "Docs", url: SERVER, projectIds: [theirs.id] });
+    expect(refused.statusCode).toBe(400);
+    const ok = (await add({ label: "Docs", url: SERVER })).json();
+    const patched = await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${ok.id}`, headers: admin, payload: { projectIds: [theirs.id] } });
+    expect(patched.statusCode).toBe(400);
+    expect(patched.json().error).toMatch(/not in this organisation/);
+  });
+});
+
 describe("helpers", () => {
   it("makes ids Claude can use, unique in the org", () => {
     expect(slugFor("Sarvam Docs!", new Set())).toBe("sarvam_docs");

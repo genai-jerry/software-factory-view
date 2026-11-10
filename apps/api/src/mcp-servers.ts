@@ -1,5 +1,5 @@
 import { decryptSecret } from "@console/core";
-import { mcpServers } from "@console/db";
+import { mcpServers, repos } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import type { AppDeps } from "./context.js";
 
@@ -23,13 +23,20 @@ export interface McpServerPayload {
   use_build: boolean;
 }
 
-export async function mcpPayloadFor(deps: AppDeps, orgId: string): Promise<McpServerPayload[]> {
+/**
+ * `projectId` is the project the session is about. A server scoped to projects
+ * goes only to a session in one of them; with no project known (a new product,
+ * a repository outside any project) only unscoped servers go. That keeps one
+ * product's production logs out of another's investigation.
+ */
+export async function mcpPayloadFor(deps: AppDeps, orgId: string, projectId: string | null = null): Promise<McpServerPayload[]> {
   const rows = await deps.dbh.db
     .select()
     .from(mcpServers)
     .where(and(eq(mcpServers.orgId, orgId), eq(mcpServers.enabled, true)));
   const out: McpServerPayload[] = [];
   for (const r of rows) {
+    if (r.projectIds.length > 0 && !(projectId && r.projectIds.includes(projectId))) continue;
     const tools = r.tools.filter((t) => t.allowed).map((t) => t.name);
     if (tools.length === 0) continue;
     let headers: Record<string, string> = {};
@@ -54,4 +61,10 @@ export async function mcpPayloadFor(deps: AppDeps, orgId: string): Promise<McpSe
     });
   }
   return out;
+}
+
+/** The same, for a session in a repository: its project decides which scoped servers apply. */
+export async function mcpPayloadForRepo(deps: AppDeps, orgId: string, repoId: string | null): Promise<McpServerPayload[]> {
+  const repo = repoId ? (await deps.dbh.db.select({ projectId: repos.projectId }).from(repos).where(eq(repos.id, repoId)).limit(1))[0] : undefined;
+  return mcpPayloadFor(deps, orgId, repo?.projectId ?? null);
 }

@@ -808,6 +808,8 @@ export const mcpServers = pgTable(
     /** Sealed JSON object of request headers (API keys); never sent to the browser. */
     encryptedHeaders: text("encrypted_headers"),
     headerNames: jsonb("header_names").$type<string[]>().notNull().default([]),
+    /** Projects this server is for. Empty: every project of the org. Otherwise only conversations and runs in those projects get it. */
+    projectIds: jsonb("project_ids").$type<string[]>().notNull().default([]),
     tools: jsonb("tools").$type<McpTool[]>().notNull().default([]),
     useShape: boolean("use_shape").notNull().default(true),
     useAsk: boolean("use_ask").notNull().default(true),

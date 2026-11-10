@@ -169,7 +169,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       branch: `factory/epic-${epic.number}`,
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
-      mcpServers: await mcpPayloadFor(deps, thread.orgId),
+      mcpServers: await mcpPayloadFor(deps, thread.orgId, repo.projectId),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
 
@@ -292,7 +292,7 @@ export function registerWriteRoutes(app: FastifyInstance, deps: AppDeps): void {
       ...(epic ? { branch: `factory/epic-${epic.number}` } : {}),
       anthropicApiKey: secrets.anthropicApiKey,
       claudeCodeOauthToken: secrets.claudeCodeOauthToken,
-      mcpServers: await mcpPayloadFor(deps, issue.orgId),
+      mcpServers: await mcpPayloadFor(deps, issue.orgId, repo.projectId),
     });
     if ("error" in got) return reply.code(got.status === 429 ? 429 : 502).send({ error: got.error });
     await db.insert(auditLog).values({

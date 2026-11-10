@@ -1,6 +1,6 @@
 import { decryptSecret, encryptSecret } from "@console/core";
-import { auditLog, mcpServers, type McpTool } from "@console/db";
-import { and, eq } from "drizzle-orm";
+import { auditLog, mcpServers, projects, type McpTool } from "@console/db";
+import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
 import { listMcpTools, type ListedTool } from "../mcp-client.js";
@@ -30,6 +30,7 @@ function view(r: Row) {
     url: r.url,
     transport: r.transport,
     headerNames: r.headerNames,
+    projectIds: r.projectIds,
     tools: r.tools,
     useShape: r.useShape,
     useAsk: r.useAsk,
@@ -95,6 +96,17 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { db } = deps.dbh;
   const production = deps.cfg.NODE_ENV === "production";
 
+  /** The ids given, if every one is a project of this org; else an error to show. */
+  const checkProjects = async (orgId: string, raw: unknown): Promise<{ ids: string[] } | { error: string }> => {
+    if (raw === undefined || raw === null) return { ids: [] };
+    if (!Array.isArray(raw) || raw.some((x) => typeof x !== "string")) return { error: "projectIds must be a list of project ids." };
+    const ids = [...new Set(raw as string[])];
+    if (ids.length === 0) return { ids };
+    const found = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.orgId, orgId), inArray(projects.id, ids)));
+    if (found.length !== ids.length) return { error: "One of those projects is not in this organisation." };
+    return { ids };
+  };
+
   const sealHeaders = (headers: Record<string, string>): { sealed: string | null } | { error: string } => {
     if (Object.keys(headers).length === 0) return { sealed: null };
     if (!deps.cfg.CONSOLE_MASTER_KEY) return { error: "Headers are stored sealed, and this Compass has no CONSOLE_MASTER_KEY." };
@@ -121,7 +133,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
     };
   });
 
-  app.post<{ Params: { id: string }; Body: { label?: unknown; url?: unknown; transport?: unknown; headers?: unknown } }>(
+  app.post<{ Params: { id: string }; Body: { label?: unknown; url?: unknown; transport?: unknown; headers?: unknown; projectIds?: unknown } }>(
     "/api/orgs/:id/tools",
     async (req, reply) => {
       const ctx = await requireAuth(deps, req, reply);
@@ -136,6 +148,8 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
       if ("error" in hdr) return reply.code(400).send({ error: hdr.error });
       const sealed = sealHeaders(hdr.headers);
       if ("error" in sealed) return reply.code(409).send({ error: sealed.error });
+      const scope = await checkProjects(found.org.id, body.projectIds);
+      if ("error" in scope) return reply.code(400).send({ error: scope.error });
 
       // Nothing is saved until the server answers: a typo should not become a broken tool.
       const listed = await listMcpTools(url.url, transport, hdr.headers, { allowLocal: !production });
@@ -156,6 +170,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
           url: url.url,
           encryptedHeaders: sealed.sealed,
           headerNames: Object.keys(hdr.headers),
+          projectIds: scope.ids,
           tools: mergeTools(listed.tools, []),
           checkedAt: new Date(),
           updatedBy: ctx.login,
@@ -168,7 +183,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.patch<{
     Params: { id: string; sid: string };
-    Body: { label?: unknown; enabled?: unknown; useShape?: unknown; useAsk?: unknown; useBuild?: unknown; tools?: unknown; headers?: unknown };
+    Body: { label?: unknown; enabled?: unknown; useShape?: unknown; useAsk?: unknown; useBuild?: unknown; tools?: unknown; headers?: unknown; projectIds?: unknown };
   }>("/api/orgs/:id/tools/:sid", async (req, reply) => {
     const ctx = await requireAuth(deps, req, reply);
     if (!ctx) return;
@@ -180,6 +195,11 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
     const set: Partial<typeof mcpServers.$inferInsert> = { updatedAt: new Date(), updatedBy: ctx.login };
     if (typeof b.label === "string" && b.label.trim()) set.label = b.label.trim().slice(0, 60);
     for (const k of ["enabled", "useShape", "useAsk", "useBuild"] as const) if (typeof b[k] === "boolean") set[k] = b[k];
+    if (b.projectIds !== undefined) {
+      const scope = await checkProjects(found.org.id, b.projectIds);
+      if ("error" in scope) return reply.code(400).send({ error: scope.error });
+      set.projectIds = scope.ids;
+    }
     if (b.tools && typeof b.tools === "object") {
       const want = b.tools as Record<string, unknown>;
       set.tools = row.tools.map((t) => (typeof want[t.name] === "boolean" ? { ...t, allowed: want[t.name] as boolean } : t));
