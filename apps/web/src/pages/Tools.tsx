@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "../api.js";
-import type { Me } from "../types.js";
+import type { Me, ProjectsData } from "../types.js";
 
 export interface McpToolView {
   name: string;
@@ -18,6 +18,8 @@ export interface McpServerView {
   url: string;
   transport: "http" | "sse";
   headerNames: string[];
+  /** The projects this server is for; empty means every project. */
+  projectIds: string[];
   tools: McpToolView[];
   useShape: boolean;
   useAsk: boolean;
@@ -66,8 +68,43 @@ export function ToolsPage({ me }: { me: Me }) {
   );
 }
 
+interface ProjectRef {
+  id: string;
+  name: string;
+}
+
+/** Which projects a tool is for: tick some, or tick none for every project. */
+function ProjectPicker({ projects, value, onChange, disabled }: { projects: ProjectRef[]; value: string[]; onChange: (ids: string[]) => void; disabled?: boolean }) {
+  if (projects.length === 0) return <p className="muted">No projects yet, so this tool is for everything.</p>;
+  return (
+    <fieldset style={{ border: 0, padding: 0, margin: "0.6rem 0" }}>
+      <legend className="muted">For projects</legend>
+      <div className="row" style={{ flexWrap: "wrap", gap: "1rem" }}>
+        {projects.map((p) => (
+          <label key={p.id}>
+            <input
+              type="checkbox"
+              checked={value.includes(p.id)}
+              disabled={disabled}
+              onChange={(e) => onChange(e.target.checked ? [...value, p.id] : value.filter((x) => x !== p.id))}
+            />{" "}
+            {p.name}
+          </label>
+        ))}
+      </div>
+      <p className="muted">
+        {value.length === 0
+          ? "None ticked: every project can use it."
+          : "Only conversations and runs in the ticked projects get it. One project's production logs stay out of another's investigation."}
+      </p>
+    </fieldset>
+  );
+}
+
 function OrgToolsCard({ orgId }: { orgId: string }) {
   const q = useQuery({ queryKey: ["org-tools", orgId], queryFn: () => api.get<OrgTools>(`/api/orgs/${orgId}/tools`) });
+  const allProjects = useQuery({ queryKey: ["projects"], queryFn: () => api.get<ProjectsData>("/api/projects") });
+  const projects: ProjectRef[] = (allProjects.data?.projects ?? []).filter((p) => p.orgId === orgId).map((p) => ({ id: p.id, name: p.name }));
   if (q.isLoading) return <p className="muted">Loading…</p>;
   if (q.isError || !q.data) return <div className="banner error">{errorText(q.error)}</div>;
   const d = q.data;
@@ -76,14 +113,14 @@ function OrgToolsCard({ orgId }: { orgId: string }) {
       <h2>{d.orgName}</h2>
       {d.servers.length === 0 && <p className="muted">No tools yet. Claude can read the code and the issue threads, and builds can also search the web.</p>}
       {d.servers.map((s) => (
-        <ServerBlock key={s.id} orgId={orgId} server={s} canEdit={d.canEdit} />
+        <ServerBlock key={s.id} orgId={orgId} server={s} canEdit={d.canEdit} projects={projects} />
       ))}
-      {d.canEdit ? <AddServer orgId={orgId} /> : <p className="muted">An org admin adds and changes tools.</p>}
+      {d.canEdit ? <AddServer orgId={orgId} projects={projects} /> : <p className="muted">An org admin adds and changes tools.</p>}
     </section>
   );
 }
 
-function ServerBlock({ orgId, server: s, canEdit }: { orgId: string; server: McpServerView; canEdit: boolean }) {
+function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; server: McpServerView; canEdit: boolean; projects: ProjectRef[] }) {
   const qc = useQueryClient();
   const [failure, setFailure] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -122,6 +159,8 @@ function ServerBlock({ orgId, server: s, canEdit }: { orgId: string; server: Mcp
         </span>
       </div>
       {s.checkError && <p className="decision-failure">Last test failed: {s.checkError}</p>}
+
+      <ProjectPicker projects={projects} value={s.projectIds ?? []} disabled={!canEdit || busy} onChange={(ids) => change.mutate({ projectIds: ids })} />
 
       <fieldset style={{ border: 0, padding: 0, margin: "0.6rem 0" }}>
         <legend className="muted">Used in</legend>
@@ -189,12 +228,13 @@ function ServerBlock({ orgId, server: s, canEdit }: { orgId: string; server: Mcp
   );
 }
 
-function AddServer({ orgId }: { orgId: string }) {
+function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] }) {
   const qc = useQueryClient();
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [transport, setTransport] = useState<"http" | "sse">("http");
   const [headers, setHeaders] = useState<Array<{ name: string; value: string }>>([]);
+  const [projectIds, setProjectIds] = useState<string[]>([]);
   const add = useMutation({
     mutationFn: () =>
       api.post<McpServerView>(`/api/orgs/${orgId}/tools`, {
@@ -202,12 +242,14 @@ function AddServer({ orgId }: { orgId: string }) {
         url: url.trim(),
         transport,
         headers: headers.filter((h) => h.name.trim() || h.value.trim()),
+        ...(projectIds.length > 0 ? { projectIds } : {}),
       }),
     onSuccess: () => {
       setLabel("");
       setUrl("");
       setTransport("http");
       setHeaders([]);
+      setProjectIds([]);
       void qc.invalidateQueries({ queryKey: ["org-tools", orgId] });
     },
   });
@@ -259,6 +301,7 @@ function AddServer({ orgId }: { orgId: string }) {
             </button>
           </div>
         ))}
+        <ProjectPicker projects={projects} value={projectIds} onChange={setProjectIds} />
         <div className="decision-actions">
           <button type="button" onClick={() => setHeaders((hs) => [...hs, { name: "", value: "" }])}>
             Add a header (API key)

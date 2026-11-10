@@ -583,7 +583,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: text || "Look at the attached image and say what you see.",
-        mcpServers: await mcpPayloadFor(deps, conv.orgId),
+        mcpServers: await mcpPayloadFor(deps, conv.orgId, conv.projectId),
         context: session ? header : await grounding(conv, epic, earlier, header),
         instructions: investigating ? INVESTIGATE_INSTRUCTIONS : SHAPE_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,
@@ -726,7 +726,7 @@ export function registerShapeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const got = await askOrchestrator(deps.cfg, {
         ...(owner && name ? { owner, repo: name } : {}),
         question: "Write the requirement from this conversation.",
-        mcpServers: await mcpPayloadFor(deps, conv.orgId),
+        mcpServers: await mcpPayloadFor(deps, conv.orgId, conv.projectId),
         context: `${await grounding(conv, epic, messages, header)}${recentMocks ? `\n\nMocks the conversation produced:\n\n${recentMocks}` : ""}${recentDiagrams ? `\n\nDiagrams the conversation produced:\n\n${recentDiagrams}` : ""}`,
         instructions: conv.kind === "investigate" ? INVESTIGATE_SPEC_INSTRUCTIONS : SPEC_INSTRUCTIONS,
         claudeCodeOauthToken: claudeToken,

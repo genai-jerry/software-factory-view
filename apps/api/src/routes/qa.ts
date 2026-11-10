@@ -270,7 +270,7 @@ async function runAsk(
         instructions: CLI_INSTRUCTIONS,
         branch: `factory/epic-${epic.number}`,
         claudeCodeOauthToken: claudeToken,
-        mcpServers: await mcpPayloadFor(deps, repo.orgId),
+        mcpServers: await mcpPayloadFor(deps, repo.orgId, repo.projectId),
       });
       if ("ok" in got) {
         result = {

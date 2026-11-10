@@ -146,9 +146,9 @@ export function registerOrchestratorRoutes(app: FastifyInstance, deps: AppDeps):
     if (!orchestratorAuthorised(req.headers.authorization)) return reply.code(401).send({ error: "dispatch token required" });
     const fullName = (req.query.repo ?? "").trim();
     if (!fullName) return reply.code(400).send({ error: "repo is required" });
-    const repo = (await deps.dbh.db.select({ orgId: repos.orgId }).from(repos).where(eq(repos.fullName, fullName)).limit(1))[0];
+    const repo = (await deps.dbh.db.select({ orgId: repos.orgId, projectId: repos.projectId }).from(repos).where(eq(repos.fullName, fullName)).limit(1))[0];
     if (!repo) return reply.code(404).send({ error: "unknown repository" });
-    return { servers: await mcpPayloadFor(deps, repo.orgId) };
+    return { servers: await mcpPayloadFor(deps, repo.orgId, repo.projectId) };
   });
 
   app.get<{ Params: { source: string; id: string } }>("/api/orchestrator/attachments/:source/:id", async (req, reply) => {

@@ -708,3 +708,34 @@ describe("Investigate: the same conversation, a different job", () => {
     expect(r.statusCode).toBe(400);
   });
 });
+
+describe("Investigate and project-scoped tools", () => {
+  it("offers a project's log tool to that project's investigations only", async () => {
+    const { estates, mcpServers, projects: projectsTable, repos: reposTable } = await import("@console/db");
+    const d = deps.dbh.db;
+    const estate = (await d.insert(estates).values({ orgId: id.org!, name: "scoped-tools", installationId: 91 }).returning())[0]!;
+    const beacon = (await d.insert(projectsTable).values({ orgId: id.org!, name: "Beacon logs project" }).returning())[0]!;
+    const lens = (await d.insert(projectsTable).values({ orgId: id.org!, name: "Lens logs project" }).returning())[0]!;
+    const repoIn = async (name: string, projectId: string) =>
+      (await d.insert(reposTable).values({ orgId: id.org!, estateId: estate.id, ghNodeId: `R-${name}`, fullName: `acme/${name}`, factoryEnabled: true, projectId }).returning())[0]!;
+    const beaconRepo = await repoIn("beacon-svc", beacon.id);
+    const lensRepo = await repoIn("lens-svc", lens.id);
+    const server = (name: string, projectIds: string[]) => ({
+      orgId: id.org!, name, label: name, url: `https://${name}.example.com/mcp`, projectIds,
+      tools: [{ name: "search_logs", readOnly: true, allowed: true }],
+    });
+    await d.insert(mcpServers).values([server("beacon_logs", [beacon.id]), server("lens_logs", [lens.id]), server("shared_docs", [])] as never);
+
+    const namesFor = async (repoId: string) => {
+      const convId = ((await app.inject({ method: "POST", url: "/api/shape", headers: headers(jerryCookie), payload: { repoId, kind: "investigate" } })).json() as { id: string }).id;
+      const calls = stubNetwork("Looking.");
+      await say(convId, { text: "Something broke" });
+      return ((calls.find((c) => c.url === `${ORCH}/ask`)!.body!.mcp_servers as Array<{ name: string }>) ?? []).map((x) => x.name).sort();
+    };
+    expect(await namesFor(beaconRepo.id)).toEqual(["beacon_logs", "shared_docs"]);
+    expect(await namesFor(lensRepo.id)).toEqual(["lens_logs", "shared_docs"]);
+    // No project (a repository outside any): only what is for everyone.
+    expect(await namesFor(id.repo!)).toEqual(["shared_docs"]);
+  });
+});
+
