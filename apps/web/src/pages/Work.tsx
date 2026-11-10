@@ -115,6 +115,18 @@ export function WorkPage() {
             )}
           </section>
 
+          {lists.inProduction.length > 0 && (
+            <section className="card" aria-labelledby="in-production">
+              <h2 id="in-production">
+                In production <span className="muted">({lists.inProduction.length})</span>
+              </h2>
+              <p className="muted">Live for customers. Nothing is running on these and nothing waits on you.</p>
+              {lists.inProduction.map((w) => (
+                <WorkRow item={w} key={w.card.epicId} />
+              ))}
+            </section>
+          )}
+
           {doneThisWeek.length > 0 && (
             <section className="card" aria-labelledby="done">
               <h2 id="done">

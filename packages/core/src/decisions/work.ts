@@ -123,8 +123,10 @@ export interface WorkItem {
 export interface WorkLists {
   needsDecision: WorkItem[];
   working: WorkItem[];
+  /** Shipped and in their watch period: nothing is running on them, so they are not "the factory is working". */
+  inProduction: WorkItem[];
   done: WorkItem[];
-  counts: { you: number; others: number; working: number };
+  counts: { you: number; others: number; working: number; inProduction: number };
 }
 
 /** A gate or merge the epic sits at, whoever's turn it is. */
@@ -229,14 +231,14 @@ function workingLine(stage: Stage | null, card: BoardCard, running: RunningItem[
     case "test":
       return `Tests are waiting on someone else. ${testLine(tasks)}`.trim();
     case "release":
-      if (card.state === "factory:deployed") return "In production, in its watch period.";
+      if (card.state === "factory:deployed") return "In production. Nothing is running on it; it stays here while it is watched.";
       if (live && live.kind === "epic") return live.role === "release" ? "Being released to staging now." : now;
       // Approved: the factory is finishing it (the label stays at the gate meanwhile).
       if (card.releaseApprovedBy) return `Release approved by @${card.releaseApprovedBy}. The factory is finishing the last pieces.`;
       return "Waiting on someone else to release it.";
     default:
       if (now) return now;
-      if (card.state === "factory:fast-track") return "Fast lane: a pull request waits for someone to read and merge it.";
+      if (card.state === "factory:fast-track") return "Fast lane: the factory merges the fix onto staging once its checks are green. It reaches production with the next promotion.";
       if (card.blocked) return "Held. Someone has to answer the factory.";
       return peopleLabel(card.state);
   }
@@ -334,6 +336,7 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
 
   const needsDecision: WorkItem[] = [];
   const working: WorkItem[] = [];
+  const inProduction: WorkItem[] = [];
   const done: WorkItem[] = [];
   let others = 0;
 
@@ -358,6 +361,10 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
       needsDecision.push(item);
     } else if (!card.open) {
       done.push(item);
+    } else if (card.state === "factory:deployed" && live.length === 0) {
+      // In production, in its watch period: no run, nothing to do. The factory has no role
+      // that closes it yet, so listing it as "working" said something was happening.
+      inProduction.push(item);
     } else {
       if (who.startsWith("Someone else")) others += 1;
       working.push(item);
@@ -366,12 +373,14 @@ export function buildWork(cards: BoardCard[], needsYou: AttentionEntry[], runnin
 
   needsDecision.sort((a, b) => newestAge(a) - newestAge(b) || ASK_RANK[a.ask!] - ASK_RANK[b.ask!]);
   working.sort((a, b) => Number(b.running.length > 0) - Number(a.running.length > 0) || a.card.daysInState - b.card.daysInState);
+  inProduction.sort((a, b) => a.card.daysInState - b.card.daysInState);
 
   return {
     needsDecision,
     working,
+    inProduction,
     done,
-    counts: { you: needsDecision.length, others, working: working.length - others },
+    counts: { you: needsDecision.length, others, working: working.length - others, inProduction: inProduction.length },
   };
 }
 
