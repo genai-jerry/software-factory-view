@@ -7,6 +7,7 @@ import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { splitOpenSpec } from "../lib/openspec.js";
+import { downloadSpecPdf } from "../lib/spec-pdf.js";
 import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
 import { localTimesHtml } from "../lib/localTimes.js";
 
@@ -684,7 +685,7 @@ function Conversation({ id }: { id: string }) {
           </aside>
         )}
         {showSpec && !specPending && conversation.spec !== null && (
-          <SpecPanel id={id} spec={conversation.spec} failedNote={conversation.specStatus === "failed" ? conversation.specError : null} onRewrite={() => writeSpec.mutate()} onClose={() => setShowSpec(false)} onSaved={refresh} />
+          <SpecPanel id={id} title={conversation.title} kind={investigating ? "Fix plan" : "Requirement"} spec={conversation.spec} failedNote={conversation.specStatus === "failed" ? conversation.specError : null} onRewrite={() => writeSpec.mutate()} onClose={() => setShowSpec(false)} onSaved={refresh} />
         )}
       </div>
 
@@ -822,6 +823,8 @@ function Mock({ html, n }: { html: string; n: number }) {
 
 function SpecPanel({
   id,
+  title,
+  kind,
   spec,
   failedNote,
   onRewrite,
@@ -829,6 +832,8 @@ function SpecPanel({
   onSaved,
 }: {
   id: string;
+  title: string;
+  kind: string;
   spec: string;
   failedNote?: string | null;
   onRewrite: () => void;
@@ -838,6 +843,7 @@ function SpecPanel({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(spec);
   useEffect(() => setDraft(spec), [spec]);
+  const pdf = useMutation({ mutationFn: () => downloadSpecPdf({ title, kind, spec }) });
   const save = useMutation({
     mutationFn: () => api.put(`/api/shape/${id}/spec`, { spec: draft }),
     onSuccess: () => {
@@ -848,7 +854,7 @@ function SpecPanel({
   return (
     <aside className="card shape-spec" aria-label="Requirement">
       <div className="spread">
-        <h2>Requirement</h2>
+        <h2>{kind}</h2>
         <span className="row">
           {editing ? (
             <>
@@ -867,9 +873,14 @@ function SpecPanel({
               </button>
             </>
           ) : (
-            <button type="button" className="secondary" onClick={() => setEditing(true)}>
-              Edit
-            </button>
+            <>
+              <button type="button" className="secondary" onClick={() => setEditing(true)}>
+                Edit
+              </button>
+              <button type="button" className="secondary" disabled={pdf.isPending} onClick={() => pdf.mutate()}>
+                {pdf.isPending ? "Making the PDF…" : "Download PDF"}
+              </button>
+            </>
           )}
           <button type="button" className="link" onClick={onClose} aria-label="Close the requirement">
             Close
@@ -887,6 +898,7 @@ function SpecPanel({
       )}
       {editing ? <textarea className="shape-spec-edit" value={draft} onChange={(e) => setDraft(e.target.value)} rows={24} aria-label="Requirement text" /> : <RequirementView spec={spec} />}
       {save.isError && <p className="decision-failure">{failureText(save.error)}</p>}
+      {pdf.isError && <p className="decision-failure">The PDF could not be made: {pdf.error instanceof Error ? pdf.error.message : "try again."}</p>}
     </aside>
   );
 }

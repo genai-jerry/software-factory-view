@@ -13,6 +13,8 @@ const focusState = vi.hoisted(() => ({ project: "", setProject: (_id: string) =>
 vi.mock("../lib/filter.js", () => ({
   useFocus: () => ({ project: focusState.project, repo: "", setProject: (id: string) => focusState.setProject(id), setRepo: () => undefined, qs: "", key: "" }),
 }));
+const pdf = vi.hoisted(() => ({ download: vi.fn(async (_input: unknown) => undefined) }));
+vi.mock("../lib/spec-pdf.js", () => ({ downloadSpecPdf: (input: unknown) => pdf.download(input) }));
 const { api } = await import("../api.js");
 const { ShapePage } = await import("./Shape.js");
 
@@ -207,6 +209,9 @@ describe("ShapePage", () => {
     expect(within(specFile).getByText("WHEN").tagName).toBe("STRONG");
     // The fences themselves never show.
     expect(panel.textContent).not.toContain("````");
+    // Download PDF hands over the spec as it stands, named after the conversation.
+    await userEvent.click(within(panel).getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(pdf.download).toHaveBeenCalledWith({ title: "Day-wise calling panel", kind: "Requirement", spec }));
   });
 
   it("opens the requirement as work and shows where it went", async () => {
