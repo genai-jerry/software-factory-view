@@ -62,3 +62,27 @@ describe("run events timeline", () => {
     ).toEqual([{ ts: undefined, kind: undefined, message: "cloning the repo" }]);
   });
 });
+
+describe("a model the run skipped", () => {
+  it("says why, when the orchestrator recorded it", () => {
+    render(
+      <OrchestratorRunBody
+        run={{
+          role: "release",
+          outcome: "running",
+          model: "claude-sonnet-5-5",
+          model_fallbacks: ["claude-opus-5-5"],
+          guards: { fallback_reasons: { "claude-opus-5-5": "Claude refused it (exit 1): model not available on your plan" } },
+        }}
+      />,
+    );
+    expect(screen.getByText(/claude-opus-5-5 was not reachable with this credential — using claude-sonnet-5-5/)).toBeInTheDocument();
+    expect(screen.getByText("Claude refused it (exit 1): model not available on your plan")).toBeInTheDocument();
+  });
+
+  it("still says it was skipped on a run from before the reason was kept", () => {
+    render(<OrchestratorRunBody run={{ role: "qa", outcome: "success", model: "claude-sonnet-5-5", model_fallbacks: ["claude-opus-5-5"] }} />);
+    expect(screen.getByText(/was not reachable/)).toBeInTheDocument();
+    expect(document.querySelector(".fallback-reasons")).toBeNull();
+  });
+});

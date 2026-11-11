@@ -24,7 +24,7 @@ export type OrchestratorRunLog = {
   error?: string | null;
   status?: string;
   events?: RunEvent[] | unknown;
-  guards?: { phase?: string; fallbacks?: string[]; model?: string } | unknown;
+  guards?: { phase?: string; fallbacks?: string[]; fallback_reasons?: Record<string, string>; model?: string } | unknown;
 };
 
 export function runPhase(run?: OrchestratorRunLog | null): string | undefined {
@@ -41,6 +41,15 @@ function runFallbacks(run?: OrchestratorRunLog | null): string[] {
     return g.fallbacks.filter((x): x is string => typeof x === "string");
   }
   return [];
+}
+
+/** Why the orchestrator skipped each model, as its probe saw it (absent on older runs). */
+export function runFallbackReasons(run?: OrchestratorRunLog | null): Record<string, string> {
+  const g = run?.guards;
+  if (!g || typeof g !== "object" || !("fallback_reasons" in g)) return {};
+  const raw = (g as { fallback_reasons?: unknown }).fallback_reasons;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
 }
 
 export function useLiveOrchestratorRun(opts: {
@@ -168,6 +177,7 @@ function outcomeLabel(run: OrchestratorRunLog): string {
 export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
   const phase = runPhase(run);
   const fallbacks = runFallbacks(run);
+  const reasons = runFallbackReasons(run);
   const outcome = outcomeLabel(run);
   const repoLabel = run.issue != null ? `${run.repo ?? ""}#${run.issue}` : (run.repo ?? "—");
   const rows: Array<[string, ReactNode]> = [
@@ -196,6 +206,17 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
       {fallbacks.length > 0 && (
         <div className="banner stale" style={{ marginTop: "0.75rem" }}>
           {fallbacks.join(", ")} was not reachable with this credential — using {run.model ?? "the next model in the chain"}.
+          {fallbacks.some((m) => reasons[m]) && (
+            <ul className="fallback-reasons" style={{ margin: "0.4rem 0 0", paddingLeft: "1.2rem" }}>
+              {fallbacks
+                .filter((m) => reasons[m])
+                .map((m) => (
+                  <li key={m}>
+                    <strong>{m}:</strong> {reasons[m]}
+                  </li>
+                ))}
+            </ul>
+          )}
         </div>
       )}
       <dl className="run-fields">
