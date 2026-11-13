@@ -456,8 +456,45 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; paddin
   margin: 0.15rem 0.25rem 0 0;
 }
 
-.check-row { display: flex; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; align-items: baseline; }
+.check-row { display: flex; flex-wrap: wrap; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; align-items: baseline; }
 .check-row:last-child { border-bottom: none; }
+
+/*
+ * Settings and Onboarding rows (epic #178 spec, "Settings rows on a phone").
+ * A row wraps instead of cutting off: the repository or estate name takes
+ * what room is left and breaks inside itself, the time never breaks, and an
+ * error starts its own line. At 360px the name takes a line and the time and
+ * status wrap under it, all visible. Classes replace the inline min-widths
+ * that pushed the time off a phone screen.
+ */
+.check-row-label { min-width: 11rem; }
+.check-row-name { flex: 1 1 12rem; }
+.check-row-time { white-space: nowrap; }
+.check-row-detail { flex: 1 1 12rem; }
+.check-row-error { flex-basis: 100%; }
+@media (max-width: 767px) {
+  .check-row-label { min-width: 0; }
+}
+
+/* Form widths as classes, capped to the row so a field never runs off a phone. */
+.field-auto { width: auto; max-width: 100%; }
+.field-w10 { width: 10rem; max-width: 100%; }
+.field-w14 { width: 14rem; max-width: 100%; }
+.field-w18 { width: 18rem; max-width: 100%; }
+.row-tight { gap: 0.35rem; }
+.estate-pick { margin-bottom: 1rem; }
+
+/* Long URLs, branch names and error text on these two screens break onto the next line. */
+.settings-page code, .settings-page .banner,
+.onboarding-page code, .onboarding-page .banner { overflow-wrap: anywhere; }
+.onboarding-page .check-row > span { min-width: 0; overflow-wrap: anywhere; }
+
+/* Who can release a project: two columns that stack, one person per line. */
+.perm-columns { align-items: flex-start; gap: 1.5rem; }
+.perm-column { border: 0; padding: 0; margin: 0; flex: 1 1 14rem; min-width: 0; }
+.perm-column > legend { font-weight: 600; padding: 0; }
+.perm-column > p.muted { margin: 0 0 0.3rem; }
+.perm-column > .perm-member { display: flex; align-items: center; }
 .check-icon { width: 1.2rem; text-align: center; }
 .check-icon.ok { color: var(--green); }
 .check-icon.fail { color: var(--red); }
@@ -1090,6 +1127,11 @@ ol.run-events time {
 
 .secret-field { display: flex; gap: 0.35rem; align-items: stretch; }
 .secret-field input { flex: 1; }
+/* On a phone the secret field takes the whole row and its Show button sits under the input. */
+@media (max-width: 767px) {
+  .secret-field { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
+  .secret-field input { flex: 1 1 100%; }
+}
 
 .onboarding-step { border-bottom: 1px solid var(--border); padding: 0.5rem 0; }
 .onboarding-step > summary {

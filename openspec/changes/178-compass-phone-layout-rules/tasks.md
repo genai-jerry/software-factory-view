@@ -91,6 +91,7 @@ these bars stack on, which is why this waits for it.
 ## Task 4 — Settings and Onboarding fit a phone screen
 
 **Repo:** software-factory-view. **Depends on:** Task 1.
+**Status:** done (#183).
 
 At 360px wide, Settings (`apps/web/src/pages/Settings.tsx`) and Onboarding
 (`Onboarding.tsx`) fit the screen: rows wrap instead of being cut off, and
