@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /ux\.spec\.ts/,
+  testMatch: /\.spec\.ts$/,
   timeout: 30_000,
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
