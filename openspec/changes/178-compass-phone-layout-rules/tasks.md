@@ -68,6 +68,7 @@ today is fixed by its own task below.
 ## Task 2 — The one-row bottom nav, with Activity in More
 
 **Repo:** software-factory-view. **Depends on:** Task 1.
+**Status:** done (#181).
 
 On screens narrower than 1024px the bottom nav shows exactly five items in
 one row: Work, Decisions, Shape, Investigate, More. Activity moves into the
