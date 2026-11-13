@@ -103,6 +103,7 @@ checked*.
 ## Task 5 — The remaining screens fit a phone screen
 
 **Repo:** software-factory-view. **Depends on:** Task 1.
+**Status:** done (#184).
 
 At 360px wide, every other screen fits: the epic workspace
 (`EpicWorkspace.tsx`), Tools, Models, Environments, the run page

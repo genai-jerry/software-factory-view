@@ -30,7 +30,7 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
   const { issue } = data;
   return (
     <div>
-      <div className="row" style={{ margin: "0 0 0.5rem" }}>
+      <div className="row peek-badges">
         <span className="badge state">{peopleLabel(issue.state)}</span>
         <span className="badge">{PHASE_LABELS[issue.phase]}</span>
         <RepoChip fullName={issue.repo} />
@@ -41,19 +41,19 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
         ))}
       </div>
 
-      <p style={{ marginTop: "0.75rem" }}>{data.sentence}</p>
+      <p className="peek-sentence wrap-anywhere">{data.sentence}</p>
       {data.nextMover && (
-        <p className="muted" style={{ marginTop: "0.25rem" }}>
+        <p className="muted peek-next wrap-anywhere">
           <strong>Next:</strong> {data.nextMover}
         </p>
       )}
 
       {data.blocked && (
-        <div className="banner error" style={{ marginTop: "0.75rem" }}>
+        <div className="banner error peek-block wrap-anywhere">
           {(data.blocked.questions?.length ?? 0) > 1 ? (
             <span>
               The agent asked:
-              <ol style={{ margin: "0.25rem 0 0 1.25rem", padding: 0 }}>
+              <ol className="peek-questions">
                 {data.blocked.questions!.map((q, i) => (
                   <li key={i}>{q}</li>
                 ))}
@@ -72,12 +72,12 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       {data.blocked && <ReplyBox issueId={issue.id} />}
 
       {data.prs.length > 0 && (
-        <div style={{ marginTop: "0.75rem" }}>
-          <h4 className="muted" style={{ margin: "0 0 0.35rem" }}>
+        <div className="peek-section">
+          <h4 className="muted peek-heading">
             Open pull requests
           </h4>
           {data.prs.map((pr) => (
-            <p style={{ margin: "0 0 0.25rem" }} key={pr.number}>
+            <p className="peek-pr wrap-anywhere" key={pr.number}>
               <a href={pr.htmlUrl} target="_blank" rel="noreferrer">
                 PR #{pr.number} {pr.title}
               </a>{" "}
@@ -91,8 +91,8 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       )}
 
       {(data.deps.blockedBy.length > 0 || data.deps.blocks.length > 0) && (
-        <div style={{ marginTop: "1rem" }}>
-          <h4 className="muted" style={{ margin: "0 0 0.35rem" }}>
+        <div className="peek-section">
+          <h4 className="muted peek-heading">
             Dependencies
           </h4>
           {data.deps.blockedBy.length > 0 && <DepStrip label="Blocked by" nodes={data.deps.blockedBy} onFocus={onFocus} />}
@@ -101,13 +101,13 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
       )}
 
       {data.lastEvent && (
-        <p className="muted" style={{ marginTop: "0.75rem" }}>
+        <p className="muted peek-sentence wrap-anywhere">
           Last move: {data.lastEvent.detail}
           {data.lastEvent.actor && ` by ${data.lastEvent.actor}`} · {new Date(data.lastEvent.at).toLocaleString()}
         </p>
       )}
 
-      <div className="row" style={{ marginTop: "1rem" }}>
+      <div className="row peek-section">
         {/* Each kind lands on the tab that can act on it: a task on the board,
             a system test case or a bug report on the Tests tab, an epic at its
             open gate. */}
@@ -128,7 +128,7 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
         <GitHubLink href={issue.htmlUrl} />
       </div>
 
-      <div style={{ marginTop: "1rem" }}>
+      <div className="peek-section">
         <QaPanel scope={{ kind: "issue", id: issue.id }} />
       </div>
     </div>
@@ -137,7 +137,7 @@ function PeekBody({ data, onFocus, onClose }: { data: IssuePeekData; onFocus: (i
 
 function DepStrip({ label, nodes, onFocus }: { label: string; nodes: DepNode[]; onFocus: (id: string) => void }) {
   return (
-    <div className="row" style={{ marginBottom: "0.35rem" }}>
+    <div className="row peek-deps">
       <span className="muted">{label}</span>
       {nodes.map((n) => (
         <button className={`dep-node${n.open ? "" : " done"}`} key={n.id} onClick={() => onFocus(n.id)} title={n.title}>
@@ -160,7 +160,7 @@ function ReplyBox({ issueId }: { issueId: string }) {
     },
   });
   return (
-    <div style={{ marginTop: "0.5rem" }}>
+    <div className="peek-reply">
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}

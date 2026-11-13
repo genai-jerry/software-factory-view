@@ -126,7 +126,7 @@ export function OrchestratorRunDetail({
       {transcript.data?.transcript ? (
         <>
           <h4 style={{ margin: "1rem 0 0.4rem" }}>Transcript</h4>
-          <pre className="run-log">{transcript.data.transcript}</pre>
+          <pre className="run-log scroll-x">{transcript.data.transcript}</pre>
         </>
       ) : (
         !done && run.data && (
@@ -223,7 +223,7 @@ export function OrchestratorRunBody({ run }: { run: OrchestratorRunLog }) {
         {rows.map(([label, value]) => (
           <div key={label}>
             <dt>{label}</dt>
-            <dd>{value}</dd>
+            <dd className="wrap-anywhere">{value}</dd>
           </div>
         ))}
       </dl>
@@ -258,7 +258,7 @@ export function RunEventList({ events }: { events: RunEvent[] }) {
         {events.map((event, i) => (
           <li key={`${event.ts ?? "t"}-${i}`}>
             {event.ts ? <time dateTime={event.ts}>{formatEventTime(event.ts)}</time> : null}
-            <span>{event.message}</span>
+            <span className="wrap-anywhere">{event.message}</span>
           </li>
         ))}
       </ol>

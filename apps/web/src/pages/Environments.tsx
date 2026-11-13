@@ -109,7 +109,7 @@ function EnvCardView({ card, now, onOpen, wide }: { card: EnvCard; now: number; 
             <RepoChip fullName={card.repo} title={card.kind === "staging" ? `The staging branch of ${card.repo}` : `Built in ${card.repo}`} />
           )}
         </span>
-        <span className="env-title">{card.title}</span>
+        <span className="env-title wrap-anywhere">{card.title}</span>
         <span className="env-line">
           <span className="env-dot" aria-hidden="true" />
           {card.active ? turnLine(card.active, card, now) : card.queue.length ? `Waiting · ${card.queue.length} queued` : stateWord(state)}
@@ -216,7 +216,7 @@ function Pulls({ card, now }: { card: EnvCard; now: number }) {
                   <span className="env-pull-num">#{p.number}</span>
                   <span className="env-pull-title">{p.title}</span>
                 </a>
-                <span className="env-pull-meta">
+                <span className="env-pull-meta wrap-anywhere">
                   {pullState(p, now)} · {p.headRef} → {p.baseRef}
                 </span>
               </li>
@@ -259,7 +259,7 @@ function OnStaging({ card }: { card: EnvCard }) {
     <span className="env-onstaging">
       <span className="env-onstaging-head">Merged onto staging</span>
       {card.onStaging.map((e) => (
-        <span key={e.ref} className="env-onstaging-item">
+        <span key={e.ref} className="env-onstaging-item wrap-anywhere">
           <span className="env-swatch" style={{ background: laneColor(e.ref) }} aria-hidden="true" />
           {e.title}
         </span>
@@ -275,7 +275,7 @@ function StagingQueue({ card }: { card: EnvCard }) {
   return (
     <ol className="env-queue" aria-label="Order onto staging">
       {line.map((t, i) => (
-        <li key={`${t.runId ?? i}`}>
+        <li key={`${t.runId ?? i}`} className="wrap-anywhere">
           <span className="env-queue-n">{i + 1}</span>
           {t.title ?? t.role}
           {i === 0 && card.active ? <b> · now</b> : <span className="muted"> · waiting</span>}
@@ -540,7 +540,7 @@ function LaneRow({ lane, row, now, onOpen }: { lane: EnvLane; row: number; now: 
         ) : (
           <div className="env-card env-idle env-ghost">
             <span className="env-kind">EPIC</span>
-            <span className="env-title">{lane.title}</span>
+            <span className="env-title wrap-anywhere">{lane.title}</span>
             <span className="env-sub">No environment of its own yet.</span>
           </div>
         )}

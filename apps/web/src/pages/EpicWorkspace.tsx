@@ -111,7 +111,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
   return (
     <div>
       <div className="spread">
-        <h1 style={{ marginBottom: 0 }}>
+        <h1 className="wrap-anywhere" style={{ marginBottom: 0 }}>
           Epic #{data.epic.number} · {data.epic.title}{" "}
           <GitHubLink href={data.epic.htmlUrl} />
         </h1>
@@ -134,7 +134,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
           shows the name only when a factory:on-epic state proves the branch
           is in use for this epic. */}
       {(data.epic.state === "factory:on-epic" || data.tasks.some((t) => t.state === "factory:on-epic")) && (
-        <p className="muted" style={{ marginTop: 4 }}>
+        <p className="muted wrap-anywhere" style={{ marginTop: 4 }}>
           Assembling on epic branch <code>factory/epic-{data.epic.number}</code>
         </p>
       )}
@@ -170,7 +170,7 @@ export function EpicWorkspacePage({ me }: { me: Me }) {
       {data.blockedSubIssues.length > 0 && (
         <div className="banner error">
           {data.blockedSubIssues.map((b) => (
-            <div key={b.id}>
+            <div key={b.id} className="wrap-anywhere">
               ⛔ Task #{b.number} is blocked: {b.title} —{" "}
               <Link to={`/epics/${data.epic.id}?tab=threads&thread=${encodeURIComponent(`task/${b.number}`)}`}>
                 answer it from a thread
@@ -516,7 +516,7 @@ function OverviewTab({ data }: { data: EpicWorkspace }) {
       {data.change && (
         <div className="card">
           <h3>Change folder</h3>
-          <p>
+          <p className="wrap-anywhere">
             <code>openspec/changes/{data.change.slug}/</code> — {data.artifacts.length} artifacts
             {data.artifacts.some((a) => a.diverged) && (
               <span className="badge gate" style={{ marginLeft: 8 }}>
@@ -568,7 +568,7 @@ function ArtifactsTab({ data }: { data: EpicWorkspace }) {
         {artifact.isError && <p className="muted">{(artifact.error as ApiError).message}</p>}
         {artifact.data && (
           <>
-            <p className="muted">
+            <p className="muted wrap-anywhere">
               rendering <code>{artifact.data.sha.slice(0, 7)}</code> ({artifact.data.ref})
             </p>
             <div className="markdown-body" dangerouslySetInnerHTML={{ __html: localTimesHtml(artifact.data.html, null) }} />
@@ -709,7 +709,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
         <div className="card">
           <h3>What you are approving</h3>
           {g.documentPrs.map((pr) => (
-            <p key={pr.id}>
+            <p key={pr.id} className="wrap-anywhere">
               <span className={`badge ${pr.state === "open" ? "state" : ""}`}>{pr.state}</span> PR #{pr.number} {pr.title}{" "}
               <span className="muted">
                 ({pr.headRef} → {pr.baseRef}, CI: {pr.ciStatus ?? "unknown"})
@@ -730,6 +730,8 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               {g.assembly.allGreen ? "all tasks landed" : "not every task has landed"}
             </span>
           </div>
+          {/* Wide tables scroll inside their own box on a phone, never the page. */}
+          <div className="scroll-x">
           <table className="assembly-table">
             <thead>
               <tr>
@@ -755,6 +757,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
               )}
             </tbody>
           </table>
+          </div>
           {/* The test matrix (FACTORY.md §4b): what a person actually
               exercised. Where the factory holds this gate on the cases it
               never lets the epic arrive here with any open, so an epic that
@@ -776,6 +779,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
                   releases this epic to staging with those unverified — read the matrix below before you do.
                 </div>
               )}
+              <div className="scroll-x">
               <table className="assembly-table">
                 <thead>
                   <tr>
@@ -810,6 +814,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </>
           )}
           {/* Bugs (FACTORY.md §4c). Same reasoning as the matrix above, one
@@ -859,7 +864,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
             </>
           )}
           {g.assembly.prs.length > 0 && (
-            <p className="muted">
+            <p className="muted wrap-anywhere">
               Open against this epic:{" "}
               {g.assembly.prs.map((pr) => (
                 <span key={pr.id}>
@@ -887,7 +892,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
 
       {g.artifacts.map((a) => (
         <div className="card" key={a.path}>
-          <h3>
+          <h3 className="wrap-anywhere">
             {a.kind}: <code>{a.path}</code>{" "}
             <span className="muted">@{a.sha?.slice(0, 7) ?? "?"}</span>
           </h3>
@@ -905,7 +910,7 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
           {g.releasePrs.length === 0 && <p className="muted">No open promotion or task PRs found.</p>}
           {g.releasePrs.map((pr) => (
             <div className="spread" key={pr.id} style={{ padding: "0.35rem 0" }}>
-              <span>
+              <span className="wrap-anywhere">
                 <span className="badge">{pr.kind}</span> #{pr.number} {pr.title}{" "}
                 <span className="muted">(CI: {pr.ciStatus ?? "unknown"})</span>
                 <GitHubLink href={pr.htmlUrl} />

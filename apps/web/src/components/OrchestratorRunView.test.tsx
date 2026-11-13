@@ -49,6 +49,11 @@ describe("run events timeline", () => {
     expect(list).toHaveTextContent("pushing the branch");
   });
 
+  it("wraps a long event message inside the list rather than widening the page", () => {
+    render(<OrchestratorRunBody run={{ role: "qa", outcome: "running", events: [{ kind: "phase", message: "pushing factory/184-a-very-long-branch-name" }] }} />);
+    expect(screen.getByText("pushing factory/184-a-very-long-branch-name").className).toContain("wrap-anywhere");
+  });
+
   it("hides the timeline when the orchestrator has not sent events yet", () => {
     render(<OrchestratorRunBody run={{ role: "intake", outcome: "running" }} />);
     expect(screen.queryByRole("list", { name: "Run events" })).toBeNull();

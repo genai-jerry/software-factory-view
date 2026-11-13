@@ -155,13 +155,12 @@ function ModelSlot({
   disabled: boolean;
   onChange: (v: string) => void;
 }) {
-  const style = { flex: "1 1 12rem", minWidth: 0 };
   if (!listed) {
-    return <input aria-label={label} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style} />;
+    return <input aria-label={label} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="model-slot" />;
   }
   const known = listed.some((m) => m.id === value);
   return (
-    <select aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style}>
+    <select aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="model-slot">
       <option value="">{placeholder}</option>
       {value && !known && <option value={value}>{value} (not offered to this credential)</option>}
       {listed.map((m) => (
@@ -245,10 +244,10 @@ function ChainsForm({
         return (
           <fieldset key={p.id} style={{ border: 0, borderTop: "1px solid var(--border)", padding: "0.8rem 0", margin: 0 }}>
             <legend className="sr-only">{p.label}</legend>
-            <div>
+            <div className="wrap-anywhere">
               <strong>{p.label}</strong> <span className="muted">— {p.detail}</span>
             </div>
-            <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
+            <div className="row model-chain">
               {draft[phaseKey(p)]!.map((m, i) => (
                 <ModelSlot
                   key={i}
@@ -265,7 +264,7 @@ function ChainsForm({
             {p.steps.length > 1 || p.steps[0]!.label !== p.label ? (
               <button
                 type="button"
-                className="link"
+                className="link model-steps-toggle"
                 aria-expanded={isOpen}
                 onClick={() => setOpen((o) => (o.has(p.id) ? new Set([...o].filter((x) => x !== p.id)) : new Set([...o, p.id])))}
               >
@@ -277,10 +276,10 @@ function ChainsForm({
               <div style={{ marginLeft: "1rem", borderLeft: "2px solid var(--border)", paddingLeft: "0.8rem" }}>
                 {p.steps.map((s) => (
                   <div key={s.key} style={{ padding: "0.5rem 0" }}>
-                    <div>
+                    <div className="wrap-anywhere">
                       {s.label} <span className="muted">— {s.detail}</span>
                     </div>
-                    <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
+                    <div className="row model-chain">
                       {draft[s.key]!.map((m, i) => (
                         <ModelSlot
                           key={i}
