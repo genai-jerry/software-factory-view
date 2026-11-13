@@ -45,6 +45,7 @@ graph TD
 ## Task 1 — The three screen sizes and the shared phone rules
 
 **Repo:** software-factory-view. **Depends on:** nothing.
+**Status:** done (#180).
 
 Give the whole app one set of screen sizes and one set of phone rules, in
 `apps/web/src/styles.css`, for every later task to build on:
