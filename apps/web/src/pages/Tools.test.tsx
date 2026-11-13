@@ -123,5 +123,12 @@ describe("the Tools page", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add server" }));
     expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/tools", expect.objectContaining({ url: "https://logs.example.com/mcp", projectIds: ["p-lens"] }));
   });
-});
 
+  it("wraps a long server URL inside its own line on a phone screen, not with an inline style", async () => {
+    vi.mocked(api.get).mockImplementation(respond([sarvam]) as never);
+    renderPage();
+    const url = (await screen.findAllByText(/docs\.sarvam\.ai\/_mcp\/server/)).find((el) => el.tagName === "SPAN")!;
+    expect(url.className).toContain("wrap-anywhere");
+    expect(url.getAttribute("style")).toBeNull();
+  });
+});

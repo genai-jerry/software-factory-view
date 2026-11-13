@@ -149,16 +149,16 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
   return (
     <div className="tool-server" style={{ borderTop: "1px solid var(--border)", padding: "0.9rem 0" }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem" }}>
-        <h3 style={{ margin: 0 }}>
+        <h3 className="wrap-anywhere" style={{ margin: 0 }}>
           {s.label} {!s.enabled && <span className="badge">off</span>}
         </h3>
-        <span className="muted" style={{ wordBreak: "break-all" }}>
+        <span className="muted wrap-anywhere">
           {s.url}
           {s.transport === "sse" ? " · SSE" : ""}
           {s.headerNames.length > 0 ? ` · headers: ${s.headerNames.join(", ")}` : ""}
         </span>
       </div>
-      {s.checkError && <p className="decision-failure">Last test failed: {s.checkError}</p>}
+      {s.checkError && <p className="decision-failure wrap-anywhere">Last test failed: {s.checkError}</p>}
 
       <ProjectPicker projects={projects} value={s.projectIds ?? []} disabled={!canEdit || busy} onChange={(ids) => change.mutate({ projectIds: ids })} />
 
@@ -180,7 +180,7 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
         <ul className="facts" style={{ listStyle: "none", paddingLeft: 0 }}>
           {s.tools.map((t) => (
             <li key={t.name}>
-              <label>
+              <label className="wrap-anywhere">
                 <input
                   type="checkbox"
                   checked={t.allowed}
@@ -189,7 +189,7 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
                 />{" "}
                 <strong>{t.title ?? t.name}</strong> {t.readOnly ? <span className="badge">read-only</span> : <span className="badge blocked">can change things</span>}
               </label>
-              {t.description && <div className="muted">{t.description}</div>}
+              {t.description && <div className="muted wrap-anywhere">{t.description}</div>}
             </li>
           ))}
         </ul>
@@ -223,7 +223,7 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
           {s.checkedAt && <span className="muted">Tested {new Date(s.checkedAt).toLocaleString()}</span>}
         </div>
       )}
-      {failure && <p className="decision-failure">{failure}</p>}
+      {failure && <p className="decision-failure wrap-anywhere">{failure}</p>}
     </div>
   );
 }
@@ -264,7 +264,7 @@ function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] 
       }}
     >
       <h3>Add an MCP server</h3>
-      <p className="muted">
+      <p className="muted wrap-anywhere">
         Paste the server&apos;s URL — the same one you would give claude.ai, like <code>https://docs.sarvam.ai/_mcp/server</code>. Compass connects and lists its
         tools before saving. Read-only tools start allowed; tools that can change things start off.
       </p>
@@ -285,8 +285,8 @@ function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] 
           </select>
         </label>
         {headers.map((h, i) => (
-          <div key={i} className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
-            <input aria-label="Header name" value={h.name} onChange={(e) => setHeader(i, { name: e.target.value })} placeholder="Authorization" style={{ flex: "1 1 10rem" }} />
+          <div key={i} className="row tool-header-row">
+            <input aria-label="Header name" className="tool-header-name" value={h.name} onChange={(e) => setHeader(i, { name: e.target.value })} placeholder="Authorization" />
             <input
               aria-label="Header value"
               type="password"
@@ -294,7 +294,7 @@ function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] 
               value={h.value}
               onChange={(e) => setHeader(i, { value: e.target.value })}
               placeholder="Bearer …"
-              style={{ flex: "2 1 14rem", fontFamily: "var(--font-mono)" }}
+              className="tool-header-value"
             />
             <button type="button" onClick={() => setHeaders((hs) => hs.filter((_, j) => j !== i))}>
               Remove

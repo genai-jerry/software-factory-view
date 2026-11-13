@@ -1670,3 +1670,40 @@ a.wi-stage:hover { text-decoration: underline; }
 /* A status chip that opens the live run behind it. */
 a.chip-link { text-decoration: none; cursor: pointer; }
 a.chip-link:hover { text-decoration: underline; }
+
+/* ---- The remaining screens on a phone (epic 178, task 5; design "Task 5") ----
+   Wide content wraps or scrolls inside its own box (.scroll-x, .wrap-anywhere
+   above), so no screen scrolls the page sideways at 360px. */
+
+/* Run page: the log scrolls inside itself; the run's facts stack on phones. */
+.run-page pre.run-log { max-width: 100%; }
+.run-sofar li > span:first-child { min-width: 0; }
+ol.run-events li > span { min-width: 0; }
+
+/* Issue peek: its rows, as classes rather than inline styles. */
+.peek-badges { margin: 0 0 0.5rem; }
+.peek-sentence { margin-top: 0.75rem; }
+.peek-next { margin-top: 0.25rem; }
+.peek-block { margin-top: 0.75rem; }
+.peek-questions { margin: 0.25rem 0 0 1.25rem; padding: 0; }
+.peek-section { margin-top: 1rem; }
+.peek-heading { margin: 0 0 0.35rem; }
+.peek-pr { margin: 0 0 0.25rem; }
+.peek-deps { margin-bottom: 0.35rem; }
+.peek-reply { margin-top: 0.5rem; }
+
+/* Tools: the header-name and header-value inputs of a new tool. */
+.tool-header-row { gap: 0.35rem; }
+.tool-header-name { flex: 1 1 10rem; min-width: 0; }
+.tool-header-value { flex: 2 1 14rem; min-width: 0; font-family: var(--font-mono); }
+
+/* Models: each phase's chain of models wraps; a slot never outgrows the row. */
+.model-chain { gap: 0.5rem; margin-top: 0.3rem; }
+.model-slot { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+.model-steps-toggle { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 767px) {
+  .run-fields > div { grid-template-columns: minmax(0, 1fr); gap: 0.1rem; }
+  .tool-header-name, .tool-header-value { flex-basis: 100%; }
+  .model-slot { flex-basis: 100%; }
+}

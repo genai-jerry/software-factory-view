@@ -48,10 +48,10 @@ export function OrchestratorRunPage() {
                   : `finished ${story.finishedAt ? story.finishedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""} · took ${story.minutes ?? 0} min`}
               </span>
             </p>
-            <h1>
+            <h1 className="wrap-anywhere">
               {title ? plainTitle(title) : "This item"}
             </h1>
-            {epicTitle && <p className="muted">Part of {epicTitle}.</p>}
+            {epicTitle && <p className="muted wrap-anywhere">Part of {epicTitle}.</p>}
           </header>
 
           <nav aria-label="Steps" className="wi-rail">
@@ -67,7 +67,7 @@ export function OrchestratorRunPage() {
             <div className="wi-main">
               <section className={`card ${story.running ? "run-now" : ""}`}>
                 <h2>{story.running ? "Now" : "How it ended"}</h2>
-                <p className="need">{story.now}</p>
+                <p className="need wrap-anywhere">{story.now}</p>
                 {story.fixAttempts > 0 && story.running && (
                   <p className="muted">
                     Fix attempt {story.fixAttempts}. It stops and asks a person if the tests still fail after three.
@@ -83,7 +83,7 @@ export function OrchestratorRunPage() {
                   <ol className="run-sofar">
                     {story.soFar.map((p, i) => (
                       <li key={i} className={p.now ? "now" : "done"}>
-                        <span>{p.words}</span>
+                        <span className="wrap-anywhere">{p.words}</span>
                         <span className="muted">{p.took}</span>
                       </li>
                     ))}
@@ -98,7 +98,7 @@ export function OrchestratorRunPage() {
 
               <details className="card run-log-fold">
                 <summary>Full log, for engineers</summary>
-                <p className="muted">
+                <p className="muted wrap-anywhere">
                   Run <code>{runId}</code>
                   {run.data?.model && <> · model {run.data.model}</>}
                 </p>
