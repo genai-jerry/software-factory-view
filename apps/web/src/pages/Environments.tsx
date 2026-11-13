@@ -6,6 +6,7 @@ import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
 import { lengthWords } from "../lib/runs.js";
+import { useIsPhone } from "../lib/screens.js";
 import type { EnvCard, EnvironmentsView, EnvLane, EnvMerge, EnvPull, EnvSession, EnvTurn } from "../types.js";
 import { localTimesText } from "../lib/localTimes.js";
 
@@ -163,15 +164,41 @@ function pullState(p: EnvPull, now: number): string {
  * popup listing every pull request behind the card, each linking to GitHub.
  * It sits beside the card's own button (a button inside a button is not a
  * thing), so the card still opens what the environment remembers.
+ *
+ * On a phone the list opens in the bottom sheet instead (epic #178, design
+ * D5): a popover pinned to a card's corner can run off a 360px screen. The
+ * sheet closes on Escape and returns focus by itself, so the listeners below
+ * serve the popover only.
  */
+function PullList({ card, now }: { card: EnvCard; now: number }) {
+  return (
+    <ul className="env-pulls-list">
+      {card.pulls.map((p) => (
+        <li key={p.number} className={`env-pull is-${p.state}`}>
+          <a href={p.url} target="_blank" rel="noreferrer" className="env-pull-link">
+            <span className="env-pull-dot" aria-hidden="true" />
+            <span className="env-pull-num">#{p.number}</span>
+            <span className="env-pull-title">{p.title}</span>
+          </a>
+          <span className="env-pull-meta">
+            {pullState(p, now)} · {p.headRef} → {p.baseRef}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Pulls({ card, now }: { card: EnvCard; now: number }) {
+  const phone = useIsPhone();
   const [open, setOpen] = useState(false);
+  const asPopover = open && !phone;
   const wrap = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const popId = useId();
   const merged = card.pulls.filter((p) => p.state === "merged").length;
   useEffect(() => {
-    if (!open) return;
+    if (!asPopover) return;
     const away = (e: MouseEvent) => {
       if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
     };
@@ -188,7 +215,7 @@ function Pulls({ card, now }: { card: EnvCard; now: number }) {
       document.removeEventListener("mousedown", away);
       document.removeEventListener("keydown", key);
     };
-  }, [open]);
+  }, [asPopover]);
   return (
     <div className="env-pulls" ref={wrap}>
       <button
@@ -197,7 +224,7 @@ function Pulls({ card, now }: { card: EnvCard; now: number }) {
         className={`env-pulls-btn${open ? " is-open" : ""}`}
         aria-label={pullsLabel(card)}
         aria-expanded={open}
-        aria-controls={open ? popId : undefined}
+        aria-controls={asPopover ? popId : undefined}
         title={pullsLabel(card)}
         onClick={() => setOpen((o) => !o)}
       >
@@ -206,23 +233,15 @@ function Pulls({ card, now }: { card: EnvCard; now: number }) {
         </svg>
         <span className="env-pulls-n">{merged || card.pulls.length}</span>
       </button>
-      {open && (
+      {open && !phone && (
         <div className="env-pulls-pop" role="dialog" id={popId} aria-label={`Pull requests · ${card.title}`}>
-          <ul className="env-pulls-list">
-            {card.pulls.map((p) => (
-              <li key={p.number} className={`env-pull is-${p.state}`}>
-                <a href={p.url} target="_blank" rel="noreferrer" className="env-pull-link">
-                  <span className="env-pull-dot" aria-hidden="true" />
-                  <span className="env-pull-num">#{p.number}</span>
-                  <span className="env-pull-title">{p.title}</span>
-                </a>
-                <span className="env-pull-meta">
-                  {pullState(p, now)} · {p.headRef} → {p.baseRef}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <PullList card={card} now={now} />
         </div>
+      )}
+      {open && phone && (
+        <Sheet title={`Pull requests · ${card.title}`} onClose={() => setOpen(false)}>
+          <PullList card={card} now={now} />
+        </Sheet>
       )}
     </div>
   );

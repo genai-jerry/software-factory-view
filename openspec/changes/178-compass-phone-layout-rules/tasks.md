@@ -115,6 +115,7 @@ Task 1 rules. No screen scrolls the page sideways.
 ## Task 6 — The runs list and other popovers open as sheets
 
 **Repo:** software-factory-view. **Depends on:** Task 1.
+**Status:** done (#185).
 
 On phones, the runs list opened from the header (`RunsBadge.tsx`) opens as a
 sheet that stays fully on screen, using the existing `Sheet` component.

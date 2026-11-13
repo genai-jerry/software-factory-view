@@ -1435,16 +1435,23 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .runs-pill.live { color: var(--text); border-color: var(--accent, #2b6cb0); }
 .runs-pill.live .dot { background: var(--accent, #2b6cb0); animation: runs-pulse 1.6s ease-in-out infinite; }
 @keyframes runs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/*
+ * The popover (tablet and desktop; phones get the bottom sheet, design D5) is
+ * capped to the screen, so it cannot leave a 768px screen either: its widths
+ * never exceed the viewport less a margin on each side.
+ */
 .runs-pop {
-  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 30; min-width: 20rem; max-width: 28rem;
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 30;
+  min-width: min(20rem, calc(100vw - 2rem)); max-width: min(28rem, calc(100vw - 2rem));
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); padding: 0.75rem 0.9rem;
 }
 .runs-pop h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
-.runs-pop ul { list-style: none; margin: 0; padding: 0; }
-.runs-pop li { padding: 0.3rem 0; border-top: 1px solid var(--border); }
-.runs-pop li:first-child { border-top: 0; }
-.runs-pop p { margin: 0.5rem 0 0; }
+.runs-list { list-style: none; margin: 0; padding: 0; }
+.runs-list li { padding: 0.3rem 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.runs-list li:first-child { border-top: 0; }
+.sheet .runs-list li { padding: 0.6rem 0; }
+.runs-all { margin: 0.5rem 0 0; }
 @media (prefers-reduced-motion: reduce) { .runs-pill.live .dot { animation: none; } }
 
 /* Shape — a chat that turns an idea into work. */
@@ -1560,8 +1567,15 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 }
 .env-pulls-btn:hover, .env-pulls-btn.is-open { color: var(--accent); border-color: var(--accent); }
 .env-pulls-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Below desktop the icon is a touch target like every other control (the 44px rule above). */
+@media (max-width: 1023px) {
+  .env-pulls-btn { min-height: var(--target); min-width: var(--target); justify-content: center; }
+  .env-card-wrap > .env-pulls { top: 0; right: 0; }
+  /* The bigger icon sits in the card's corner: keep the card's text clear of it. */
+  .env-card-wrap:has(> .env-pulls) > .env-card { padding-right: calc(var(--target) + 0.25rem); }
+}
 .env-pulls-pop {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: min(26rem, 80vw); max-height: 20rem; overflow: auto;
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: min(26rem, calc(100vw - 2rem)); max-height: 20rem; overflow: auto;
   padding: 0.4rem 0; background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 0.8rem; text-align: left;
 }

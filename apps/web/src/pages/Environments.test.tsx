@@ -211,6 +211,28 @@ describe("EnvironmentsPage", () => {
     expect(icon.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("opens the pull requests in the bottom sheet on a phone, not a popup that can leave the screen", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn((q: string) => ({
+      matches: q === "(max-width: 767px)",
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      show(view);
+      const board = await screen.findByLabelText("Build environments");
+      fireEvent.click(within(board).getByRole("button", { name: "Pull requests of The status map: 1 merged, 1 open" }));
+      const sheet = screen.getByRole("dialog", { name: "Pull requests · The status map" });
+      expect(sheet).toHaveClass("sheet");
+      expect(document.querySelector(".env-pulls-pop")).toBeNull();
+      expect(within(sheet).getAllByRole("listitem")).toHaveLength(2);
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("says on a card which branch its last run merged onto, and names the pull requests in the sheet", async () => {
     show(view);
     const board = await screen.findByLabelText("Build environments");

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api.js")>()),
@@ -38,6 +38,58 @@ describe("RunsBadge", () => {
     expect(pop).toHaveTextContent("the task “compute counts” of Day-wise");
     expect(screen.getByRole("link", { name: /Release manager on Bug/ })).toHaveAttribute("href", "/runs/r1");
     expect(screen.getByRole("link", { name: /compute counts/ })).toHaveAttribute("href", "/work/e35");
+  });
+
+  describe("on each screen size", () => {
+    const original = window.matchMedia;
+    afterEach(() => {
+      window.matchMedia = original;
+    });
+    function screenIs(phone: boolean) {
+      window.matchMedia = vi.fn((q: string) => ({
+        matches: phone && q === "(max-width: 767px)",
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia;
+    }
+    const oneRun = {
+      running: [{ issueId: "e36", number: 36, title: "Ship it", repo: "a/b", kind: "epic", role: "release", runId: "r1", epicId: "e36", epicNumber: 36, epicTitle: "Ship it" }],
+    };
+
+    it("opens the list as a bottom sheet on a phone, and closes it on Escape", async () => {
+      screenIs(true);
+      vi.mocked(api.get).mockResolvedValue(oneRun);
+      const { container } = renderIn(<RunsBadge />);
+      await userEvent.click(await screen.findByRole("button", { name: /1 running/ }));
+      const sheet = screen.getByRole("dialog", { name: "Running now" });
+      expect(sheet).toHaveClass("sheet");
+      expect(sheet).toHaveAttribute("aria-modal", "true");
+      expect(container.querySelector(".runs-pop")).toBeNull();
+      expect(sheet).toHaveTextContent("Release manager on Ship it");
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("closes the phone sheet when a run is picked", async () => {
+      screenIs(true);
+      vi.mocked(api.get).mockResolvedValue(oneRun);
+      renderIn(<RunsBadge />);
+      await userEvent.click(await screen.findByRole("button", { name: /1 running/ }));
+      await userEvent.click(screen.getByRole("link", { name: /Release manager on Ship it/ }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("keeps the popover on tablet and desktop", async () => {
+      screenIs(false);
+      vi.mocked(api.get).mockResolvedValue(oneRun);
+      const { container } = renderIn(<RunsBadge />);
+      await userEvent.click(await screen.findByRole("button", { name: /1 running/ }));
+      const pop = screen.getByRole("dialog", { name: "Running now" });
+      expect(pop).toHaveClass("runs-pop");
+      expect(container.querySelector(".sheet")).toBeNull();
+      await userEvent.click(document.body);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
   });
 
   it("says the factory is idle when nothing runs", async () => {
