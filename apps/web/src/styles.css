@@ -135,8 +135,6 @@ html, body { max-width: 100%; overflow-x: hidden; }
 img, video, iframe, svg { max-width: 100%; }
 .scroll-x { overflow-x: auto; max-width: 100%; overscroll-behavior-x: contain; }
 .wrap-anywhere { overflow-wrap: anywhere; min-width: 0; }
-/* A flex or grid child defaults to min-width: auto and so refuses to shrink below its content. Zero specificity: any class still wins. */
-:where(.main) > :where(*) { min-width: 0; }
 
 body {
   margin: 0;
@@ -596,7 +594,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; paddin
 }
 
 @media (max-width: 767px) {
-  .ticket-head { grid-template-columns: 2.2rem 1fr; }
+  .ticket-head { grid-template-columns: 2.2rem minmax(0, 1fr); }
   .ticket-status { grid-column: 2; text-align: left; }
   .ticket-body { padding-left: 0.9rem; }
 }
@@ -629,7 +627,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; paddin
 .engine-card .engine-name { font-weight: 600; display: block; }
 .engine-card .muted { margin: 0.35rem 0 0; }
 @media (max-width: 767px) {
-  .engine-grid { grid-template-columns: 1fr; }
+  .engine-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---- My work / peek drawer (plan 07 §4) ---- */
@@ -1298,8 +1296,8 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .sidenav-group .sidenav-group-title { color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.2rem 0.6rem; }
 
 @media (max-width: 767px) {
-  .work-counters { grid-template-columns: 1fr; }
-  .work-row { grid-template-columns: 1fr; gap: 0.3rem; }
+  .work-counters { grid-template-columns: minmax(0, 1fr); }
+  .work-row { grid-template-columns: minmax(0, 1fr); gap: 0.3rem; }
   .work-row-who { text-align: left; }
 }
 
@@ -1336,7 +1334,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .stage-chip.done { background: var(--ok-bg); border-color: var(--green); color: var(--ok-fg); }
 
 @media (max-width: 1023px) {
-  .wi-body { grid-template-columns: 1fr; }
+  .wi-body { grid-template-columns: minmax(0, 1fr); }
   .wi-side { position: static; }
 }
 
@@ -1370,7 +1368,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .needs-answer blockquote.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem; border-left: 3px solid var(--halt); background: var(--bg-raised); font-style: italic; }
 .needs-answer ol.question { margin: 0.5rem 0; padding: 0.6rem 0.9rem 0.6rem 2rem; border-left: 3px solid var(--halt); background: var(--bg-raised); }
 .needs-answer ol.question li { margin: 0.2rem 0; }
-@media (max-width: 767px) { .rel-step { grid-template-columns: 1fr; gap: 0.2rem; } }
+@media (max-width: 767px) { .rel-step { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; } }
 
 /* ---- Redesign: Clarify and Design boards ---- */
 .agree-list { margin: 0; padding: 0; list-style: none; }
@@ -1405,7 +1403,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .act-line:hover .act-text { color: var(--accent); text-decoration: none; }
 .act-time { color: var(--text-dim); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .act-meta { display: flex; gap: 0.4rem; align-items: center; }
-@media (max-width: 767px) { .act-line { grid-template-columns: 3.5rem 1fr; } .act-meta { grid-column: 2; } }
+@media (max-width: 767px) { .act-line { grid-template-columns: 3.5rem minmax(0, 1fr); } .act-meta { grid-column: 2; } }
 
 /* A Mermaid task tree rendered as chains (apps/api render.ts) */
 .rel-body ol.chain, .markdown-body ol.chain { padding-left: 1.25rem; }
@@ -1510,9 +1508,9 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-fast { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.25rem 0 0.75rem; }
 .shape-fast input { width: auto; margin-top: 0.2rem; }
 @media (max-width: 1023px) {
-  .shape { grid-template-columns: 1fr; }
+  .shape { grid-template-columns: minmax(0, 1fr); }
   .shape-list, .shape-spec { position: static; }
-  .shape-body.with-spec { grid-template-columns: 1fr; }
+  .shape-body.with-spec { grid-template-columns: minmax(0, 1fr); }
 }
 .shape-start-pick { display: flex; gap: 0.4rem; margin: 0.25rem 0 0.5rem; }
 .shape-start-pick label { flex: 1; display: flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
@@ -1624,7 +1622,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .env-note { white-space: pre-wrap; font-size: 0.88rem; }
 @media (prefers-reduced-motion: reduce) { .env-running .env-dot { animation: none; } }
 @media (max-width: 1023px) {
-  .env-flow { grid-template-columns: 1fr; }
+  .env-flow { grid-template-columns: minmax(0, 1fr); }
   .env-flow > * { grid-column: 1 !important; grid-row: auto !important; }
   .env-arrow, .env-colhead:not(:first-child), .env-flow > div[aria-hidden="true"] { display: none; }
   .env-colhead:first-child { display: none; }

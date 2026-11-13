@@ -24,6 +24,26 @@ describe("styles.css screen sizes", () => {
     expect(used.filter((q) => !allowed.has(q))).toEqual([]);
   });
 
+  it("never lets a phone or tablet grid column grow wider than the screen", () => {
+    // A bare 1fr track is minmax(auto, 1fr): its column will not shrink below
+    // its longest word or widest pre, so the page grows sideways. Every grid
+    // a width query re-lays uses minmax(0, 1fr) instead (design, wrap or scroll rule).
+    const bare: string[] = [];
+    for (const m of css.matchAll(/@media[^{]*\(m(?:in|ax)-width:\s*\d+px\)[^{]*\{/g)) {
+      let depth = 0;
+      let end = m.index! + m[0].length - 1;
+      for (; end < css.length; end++) {
+        if (css[end] === "{") depth++;
+        else if (css[end] === "}" && --depth === 0) break;
+      }
+      const block = css.slice(m.index!, end);
+      for (const g of block.matchAll(/grid-template-columns:([^;}]*)/g)) {
+        if (/(^|[\s,])1fr\b/.test(g[1]!.replace(/minmax\([^)]*\)/g, ""))) bare.push(g[0].trim());
+      }
+    }
+    expect(bare).toEqual([]);
+  });
+
   it("carries the shared wrap-or-scroll classes and the 44px phone rule", () => {
     expect(css).toMatch(/\.scroll-x\s*\{[^}]*overflow-x:\s*auto/);
     expect(css).toMatch(/\.wrap-anywhere\s*\{[^}]*overflow-wrap:\s*anywhere/);
