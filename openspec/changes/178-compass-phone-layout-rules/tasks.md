@@ -126,6 +126,7 @@ leave the screen the same treatment.
 ## Task 7 — Shape and Investigate: the chat fills the phone screen
 
 **Repo:** software-factory-view. **Depends on:** Task 1.
+**Status:** done (#186).
 
 On phones, Shape and Investigate (`apps/web/src/pages/Shape.tsx`) show the
 chat full screen. The conversation list moves behind a "Conversations"

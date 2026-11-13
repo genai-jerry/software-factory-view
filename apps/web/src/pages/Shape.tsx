@@ -6,6 +6,7 @@ import { Diagram } from "../components/Diagram.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { Sheet } from "../components/Sheet.js";
 import { useFocus } from "../lib/filter.js";
+import { useIsPhone } from "../lib/screens.js";
 import { splitOpenSpec } from "../lib/openspec.js";
 import { downloadSpecPdf } from "../lib/spec-pdf.js";
 import type { BoardCard, ShapeConversation, ShapeConversationSummary, ShapeMessage } from "../types.js";
@@ -47,6 +48,7 @@ const COPY = {
     listLabel: "Your ideas",
     newButton: "New idea",
     empty: "Nothing shaped yet. Start with a question or a screenshot, and the factory answers from the code.",
+    introPhone: "Press Conversations, pick a product and press New idea. Ask what a page does today, paste a screenshot, or ask for a new screen to be drawn. When the idea is clear, the factory writes the requirement and you open it as work.",
     intro: "Pick a product on the left and press New idea. Ask what a page does today, paste a screenshot, or ask for a new screen to be drawn. When the idea is clear, the factory writes the requirement and you open it as work.",
     placeholder: "Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line.",
     writeSpec: "Write the requirement",
@@ -61,6 +63,7 @@ const COPY = {
     listLabel: "Your investigations",
     newButton: "New investigation",
     empty: "Nothing investigated yet. Describe what you noticed — what, roughly when, and who it affected.",
+    introPhone: "Press Conversations, pick where it happened and press New investigation. Describe what you noticed. The factory looks at the production logs and the code, tells you what happened and why, and plans the fix.",
     intro: "Pick where it happened on the left and press New investigation. Describe what you noticed. The factory looks at the production logs and the code, tells you what happened and why, and plans the fix. When the cause is clear, you turn the fix into work.",
     placeholder: "What did you notice? What, roughly when, and who or what did it affect? Enter sends; Shift+Enter for a new line.",
     writeSpec: "Write the fix plan",
@@ -176,6 +179,56 @@ function failureText(e: unknown): string {
 
 export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
   const { id } = useParams();
+  const copy = COPY[kind];
+  // Epic #178, design D6: on phones the list above the chat pushed the
+  // composer below the fold, so phones show the chat alone and the list —
+  // with its start controls — opens from a Conversations button as a sheet.
+  // Tablet and desktop keep the list beside (or above) the chat.
+  const phone = useIsPhone();
+  const [listOpen, setListOpen] = useState(false);
+
+  return (
+    <div className="shape">
+      {!phone && (
+        <aside className="shape-list card" aria-label={copy.listLabel}>
+          <ConversationList kind={kind} />
+        </aside>
+      )}
+      <main className="shape-main">
+        {phone && (
+          <div className="shape-phone-bar">
+            <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setListOpen(true)}>
+              Conversations
+            </button>
+          </div>
+        )}
+        {id ? (
+          <Conversation id={id} key={id} />
+        ) : (
+          <section className="card shape-intro">
+            <h1>{copy.heading}</h1>
+            <p>{phone ? copy.introPhone : copy.intro}</p>
+          </section>
+        )}
+      </main>
+      {phone && listOpen && (
+        <Sheet title="Conversations" onClose={() => setListOpen(false)}>
+          <section className="shape-list" aria-label={copy.listLabel}>
+            <ConversationList kind={kind} onPick={() => setListOpen(false)} />
+          </section>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The start controls and the person's conversations of one kind. Beside the
+ * chat on tablet and desktop; inside the Conversations sheet on phones, where
+ * `onPick` closes the sheet once a conversation is picked or started.
+ */
+function ConversationList({ kind, onPick }: { kind: Kind; onPick?: () => void }) {
+  const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const copy = COPY[kind];
@@ -216,6 +269,7 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["shape"] });
       navigate(`${copy.base}/${r.id}`);
+      onPick?.();
     },
   });
   const canStart = start === "epic" ? Boolean(chosenEpic) : Boolean(chosen);
@@ -223,8 +277,7 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
   const conversations = list.data?.conversations ?? [];
 
   return (
-    <div className="shape">
-      <aside className="shape-list card" aria-label={copy.listLabel}>
+    <>
         <h2>{copy.heading}</h2>
         <p className="muted">{copy.sideIntro}</p>
         {kind === "shape" && (
@@ -294,7 +347,7 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
           <ul className="shape-convs">
             {conversations.map((c) => (
               <li key={c.id} className={c.id === id ? "current" : ""}>
-                <Link to={`${copy.base}/${c.id}`}>
+                <Link to={`${copy.base}/${c.id}`} onClick={onPick}>
                   <span className="shape-conv-title">{c.title}</span>
                   {c.epic && <span className="shape-conv-epic muted">About {c.epic.title}</span>}
                   <span className="shape-conv-meta">
@@ -306,18 +359,7 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
             ))}
           </ul>
         )}
-      </aside>
-      <main className="shape-main">
-        {id ? (
-          <Conversation id={id} key={id} />
-        ) : (
-          <section className="card shape-intro">
-            <h1>{copy.heading}</h1>
-            <p>{copy.intro}</p>
-          </section>
-        )}
-      </main>
-    </div>
+    </>
   );
 }
 

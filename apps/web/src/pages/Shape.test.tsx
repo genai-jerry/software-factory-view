@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShapeConversation, ShapeConversationSummary } from "../types.js";
 
 vi.mock("../api.js", async (importOriginal) => ({
@@ -615,3 +615,58 @@ describe("Investigate", () => {
   });
 });
 
+
+/**
+ * Epic #178, design D6 — spec scenario "Finding past conversations": at 360px
+ * the chat fills the screen and a Conversations button opens the list as a
+ * sheet. Tablet and desktop keep the list in the page.
+ */
+describe("Shape on a phone", () => {
+  const original = window.matchMedia;
+  function screenIs(phone: boolean) {
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === "(max-width: 767px)" ? phone : false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+  }
+  afterEach(() => {
+    window.matchMedia = original;
+  });
+
+  it("shows the chat alone, and opens the conversations in a sheet from the Conversations button", async () => {
+    screenIs(true);
+    renderAt("/shape/c1");
+    expect(await screen.findByRole("region", { name: "Conversation" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Your ideas" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Day-wise calling panel/ })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    const sheet = screen.getByRole("dialog", { name: "Conversations" });
+    expect(await within(sheet).findByRole("link", { name: /Day-wise calling panel/ })).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "New idea" })).toBeInTheDocument();
+
+    await userEvent.click(within(sheet).getByRole("link", { name: /Day-wise calling panel/ }));
+    expect(screen.queryByRole("dialog", { name: "Conversations" })).toBeNull();
+  });
+
+  it("closes the sheet once a new conversation is started", async () => {
+    screenIs(true);
+    vi.mocked(api.post).mockResolvedValue({ id: "c9" });
+    renderAt("/shape");
+    expect(await screen.findByText(/Press Conversations/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    const sheet = screen.getByRole("dialog", { name: "Conversations" });
+    await userEvent.click(await within(sheet).findByRole("button", { name: "New idea" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { repoId: "r1" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Conversations" })).toBeNull());
+  });
+
+  it("keeps the list in the page on tablet and desktop, with no Conversations button", async () => {
+    screenIs(false);
+    renderAt("/investigate");
+    expect(await screen.findByRole("complementary", { name: "Your investigations" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conversations" })).toBeNull();
+  });
+});
