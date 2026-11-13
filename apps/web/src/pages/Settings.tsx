@@ -66,7 +66,7 @@ export function SettingsPage({ me }: { me: Me }) {
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/api/setup/status") });
 
   return (
-    <div>
+    <div className="settings-page">
       <h1>Settings</h1>
       {setup.data?.canEditApp && setup.data && <GitHubAppSection status={setup.data} />}
       {setup.data?.canEditApp && <IngestionLogSection />}
@@ -180,15 +180,13 @@ function IngestionLogSection() {
           <span className={`check-icon ${d.processedAt ? "ok" : d.error ? "fail" : ""}`}>
             {d.processedAt ? "✓" : d.error ? "✗" : "…"}
           </span>
-          <span style={{ minWidth: "11rem" }}>
+          <span className="check-row-label wrap-anywhere">
             {d.event}
             {d.action ? `.${d.action}` : ""}
           </span>
-          <span className="muted" style={{ minWidth: "16rem" }}>
-            {d.repo ?? "—"}
-          </span>
-          <span className="muted">{new Date(d.receivedAt).toLocaleString()}</span>
-          {d.error && <span className="muted" style={{ flex: 1 }}>{d.error}</span>}
+          <span className="muted check-row-name wrap-anywhere">{d.repo ?? "—"}</span>
+          <span className="muted check-row-time">{new Date(d.receivedAt).toLocaleString()}</span>
+          {d.error && <span className="muted check-row-error wrap-anywhere">{d.error}</span>}
         </div>
       ))}
 
@@ -204,13 +202,13 @@ function IngestionLogSection() {
           <span className={`check-icon ${r.errors.length ? "fail" : r.finishedAt ? "ok" : ""}`}>
             {r.errors.length ? "✗" : r.finishedAt ? "✓" : "…"}
           </span>
-          <span style={{ minWidth: "11rem" }}>{r.trigger}</span>
-          <span className="muted" style={{ minWidth: "10rem" }}>{r.estateName ?? "—"}</span>
-          <span className="muted">{new Date(r.startedAt).toLocaleString()}</span>
+          <span className="check-row-label wrap-anywhere">{r.trigger}</span>
+          <span className="muted check-row-name wrap-anywhere">{r.estateName ?? "—"}</span>
+          <span className="muted check-row-time">{new Date(r.startedAt).toLocaleString()}</span>
           <span className="muted">
             {r.reposWalked} repos · {r.issuesSeen} issues · {r.pullsSeen} PRs
           </span>
-          {r.errors.length > 0 && <span className="muted" style={{ flex: 1 }}>{r.errors.join(" · ")}</span>}
+          {r.errors.length > 0 && <span className="muted check-row-error wrap-anywhere">{r.errors.join(" · ")}</span>}
         </div>
       ))}
     </div>
@@ -293,14 +291,12 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
       {repos.map((r) => (
         <div className="project-row" key={r.id}>
           <RepoChip fullName={r.fullName} />
-          <span style={{ flex: 1 }} className="muted">
-            {r.fullName}
-          </span>
+          <span className="muted check-row-name wrap-anywhere">{r.fullName}</span>
           <select
             value={r.projectId ?? ""}
             disabled={!canEdit}
             onChange={(e) => assign.mutate({ repoId: r.id, projectId: e.target.value || null })}
-            style={{ width: "auto" }}
+            className="field-auto"
           >
             <option value="">— no project —</option>
             {projects.map((p) => (
@@ -320,7 +316,7 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="new project name"
-              style={{ width: "14rem" }}
+              className="field-w14"
             />
             <button disabled={!newName.trim() || create.isPending} onClick={() => create.mutate()}>
               Add project
@@ -332,12 +328,12 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
               <span className="muted">Rename:</span>
               {projects.map((p) =>
                 renaming?.id === p.id ? (
-                  <span key={p.id} className="row" style={{ gap: "0.35rem" }}>
+                  <span key={p.id} className="row row-tight">
                     <input
                       aria-label={`New name for ${p.name}`}
                       value={renaming.name}
                       onChange={(e) => setRenaming({ id: p.id, name: e.target.value })}
-                      style={{ width: "14rem" }}
+                      className="field-w14"
                     />
                     <button disabled={!renaming.name.trim() || rename.isPending} onClick={() => rename.mutate(renaming)}>
                       Save
@@ -347,7 +343,12 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
                     </button>
                   </span>
                 ) : (
-                  <button key={p.id} onClick={() => setRenaming({ id: p.id, name: p.name })} title={`Rename ${p.name}`}>
+                  <button
+                    key={p.id}
+                    className="wrap-anywhere"
+                    onClick={() => setRenaming({ id: p.id, name: p.name })}
+                    title={`Rename ${p.name}`}
+                  >
                     {p.name.length > 40 ? `${p.name.slice(0, 40)}…` : p.name} ✎
                   </button>
                 ),
@@ -359,7 +360,7 @@ function ProjectsSection({ orgId, canEdit }: { orgId: string; canEdit: boolean }
             <div className="row" style={{ marginTop: "0.5rem" }}>
               <span className="muted">Delete:</span>
               {projects.map((p) => (
-                <button key={p.id} className="danger" disabled={remove.isPending} onClick={() => remove.mutate(p.id)}>
+                <button key={p.id} className="danger wrap-anywhere" disabled={remove.isPending} onClick={() => remove.mutate(p.id)}>
                   {p.name} ✕
                 </button>
               ))}
@@ -403,19 +404,18 @@ export function ReleasePermissions({ projectId, name, canEdit }: { projectId: st
       [list]: value[list].includes(login) ? value[list].filter((l) => l !== login) : [...value[list], login],
     });
   const column = (list: "production" | "staging", label: string, hint: string) => (
-    <fieldset style={{ border: 0, padding: 0, margin: 0, flex: "1 1 14rem" }}>
-      <legend style={{ fontWeight: 600, padding: 0 }}>{label}</legend>
-      <p className="muted" style={{ margin: "0 0 0.3rem" }}>{hint}</p>
+    <fieldset className="perm-column">
+      <legend>{label}</legend>
+      <p className="muted">{hint}</p>
       {people.map((login) => (
-        <label key={login} style={{ display: "block" }}>
+        <label key={login} className="perm-member">
           <input
             type="checkbox"
-            style={{ width: "auto", marginRight: 6 }}
             disabled={!canEdit}
             checked={value[list].includes(login)}
             onChange={() => toggle(list, login)}
           />
-          @{login}
+          <span className="wrap-anywhere">@{login}</span>
         </label>
       ))}
     </fieldset>
@@ -427,7 +427,7 @@ export function ReleasePermissions({ projectId, name, canEdit }: { projectId: st
       {q.data.mixed && (
         <div className="banner stale">This project's repos have different lists. Saving makes them the same.</div>
       )}
-      <div className="row" style={{ alignItems: "flex-start", gap: "1.5rem", flexWrap: "wrap" }}>
+      <div className="row perm-columns">
         {column("production", "Production", "Ship to customers. At least one person.")}
         {column("staging", "Staging", "Leave empty to use the production list.")}
       </div>
@@ -445,7 +445,7 @@ export function ReleasePermissions({ projectId, name, canEdit }: { projectId: st
       )}
       {save.isError && <div className="banner error">{(save.error as ApiError).message}</div>}
       {failed.length > 0 && (
-        <div className="banner error">Not saved on: {failed.map((r) => `${r.repo} (${r.error})`).join("; ")}</div>
+        <div className="banner error wrap-anywhere">Not saved on: {failed.map((r) => `${r.repo} (${r.error})`).join("; ")}</div>
       )}
     </div>
   );
@@ -548,7 +548,7 @@ function BranchesSection({
           disabled={!canEdit}
           onChange={(e) => setDefaultBranch(e.target.value)}
           placeholder="main"
-          style={{ width: "10rem" }}
+          className="field-w10"
         />
         <label className="muted" htmlFor="org-staging-branch">
           Staging
@@ -559,7 +559,7 @@ function BranchesSection({
           disabled={!canEdit}
           onChange={(e) => setStagingBranch(e.target.value)}
           placeholder="staging"
-          style={{ width: "10rem" }}
+          className="field-w10"
         />
         <button disabled={!canEdit || !dirty || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : "Save"}
@@ -632,7 +632,7 @@ function InsightSection({
       </p>
       <div className="row">
         <label style={{ minWidth: "4.5rem" }}>Provider</label>
-        <select value={provider} onChange={(e) => pickProvider(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
+        <select value={provider} onChange={(e) => pickProvider(e.target.value)} disabled={!canEdit} className="field-auto">
           {s.insight.providers.map((p) => (
             <option value={p} key={p}>
               {PROVIDER_LABELS[p] ?? p}
@@ -674,7 +674,7 @@ function InsightSection({
             value={models.includes(model) ? model : ""}
             onChange={(e) => (e.target.value === "__manual" ? setManual(true) : setModel(e.target.value))}
             disabled={!canEdit}
-            style={{ width: "18rem" }}
+            className="field-w18"
           >
             <option value="">— select a model —</option>
             {models.map((m) => (
@@ -691,7 +691,7 @@ function InsightSection({
             onChange={(e) => setModel(e.target.value)}
             placeholder={provider === "anthropic" ? `default: ${s.insight.defaultModel}` : "model id (required)"}
             disabled={!canEdit}
-            style={{ width: "18rem" }}
+            className="field-w18"
           />
         )}
         <datalist id={`models-${orgId}-${provider}`}>
@@ -763,7 +763,7 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
         </p>
       )}
       <div className="row">
-        <select value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ width: "auto" }}>
+        <select value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} className="field-auto">
           {s.allowedSecrets.map((n) => (
             <option key={n} value={n}>
               {n}
@@ -776,7 +776,7 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
           onChange={(e) => setValue(e.target.value)}
           placeholder="token value"
           disabled={!canEdit}
-          style={{ width: "18rem" }}
+          className="field-w18"
         />
         <button className="primary" disabled={!canEdit || !value || write.isPending} onClick={() => write.mutate({ name, value })}>
           {write.isPending ? "Saving…" : actions ? "Write to all repos" : "Store in Console"}
@@ -790,8 +790,8 @@ function SecretsSection({ orgId, settings: s, canEdit }: { orgId: string; settin
           {write.data.results.map((r) => (
             <div className="check-row" key={r.repo}>
               <span className={`check-icon ${r.ok ? "ok" : "fail"}`}>{r.ok ? "✓" : "✗"}</span>
-              <span style={{ flex: 1 }}>{r.repo}</span>
-              {r.error && <span className="muted">{r.error}</span>}
+              <span className="check-row-name wrap-anywhere">{r.repo}</span>
+              {r.error && <span className="muted check-row-error wrap-anywhere">{r.error}</span>}
             </div>
           ))}
           {write.data.githubActions && write.data.results.length === 0 && <p className="muted">No connected repos in this org yet.</p>}

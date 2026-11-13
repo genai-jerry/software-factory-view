@@ -12,6 +12,8 @@ import { FactoryRunStatus } from "../src/components/FactoryRunStatus.js";
 import { HomePage } from "../src/pages/Home.js";
 import { ExpediteToggle, GateTab, TasksTab } from "../src/pages/EpicWorkspace.js";
 import { TestsTab } from "../src/pages/SystemTests.js";
+import { SettingsPage } from "../src/pages/Settings.js";
+import { OnboardingPage } from "../src/pages/Onboarding.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE } from "../src/lib/labels.js";
 import type { EpicWorkspace, GatePanelData, Me, SetupStatus } from "../src/types.js";
 import "@fontsource/ibm-plex-sans/400.css";
@@ -602,6 +604,24 @@ function ApiDownScreen() {
   );
 }
 
+/**
+ * The real Settings and Onboarding pages, fetching through `api.get` like the
+ * app does. The spec answers `/api/*` with `page.route`, so these screens test
+ * the pages themselves rather than a copy of their markup (epic #178, task
+ * "Settings and Onboarding fit a phone screen").
+ */
+const liveClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+
+function LivePageScreen({ page }: { page: "settings" | "onboarding" }) {
+  return (
+    <QueryClientProvider client={liveClient}>
+      <Shell me={me} setup={setup}>
+        {page === "settings" ? <SettingsPage me={me} /> : <OnboardingPage />}
+      </Shell>
+    </QueryClientProvider>
+  );
+}
+
 function Screen() {
   switch (screen) {
     case "peek":
@@ -630,6 +650,10 @@ function Screen() {
       return <GatePanelScreen panel={gsPanelWithTests} />;
     case "gate-g3":
       return <GatePanelScreen panel={g3Panel} />;
+    case "settings-page":
+      return <LivePageScreen page="settings" />;
+    case "onboarding-page":
+      return <LivePageScreen page="onboarding" />;
     case "api-down":
       return <ApiDownScreen />;
     default:

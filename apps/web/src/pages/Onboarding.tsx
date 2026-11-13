@@ -283,7 +283,7 @@ export function OnboardingPage() {
   const chosen = estateId ?? estates.data?.estates[0]?.id ?? null;
 
   return (
-    <div>
+    <div className="onboarding-page">
       <h1>Onboarding</h1>
       <p className="muted">
         Factory-enable a repository step by step. Every action lands in GitHub as labels, secrets and one PR — the Console keeps
@@ -291,7 +291,7 @@ export function OnboardingPage() {
       </p>
 
       {estates.data && estates.data.estates.length > 1 && (
-        <select value={chosen ?? ""} onChange={(e) => setEstateId(e.target.value)} style={{ width: "auto", marginBottom: "1rem" }}>
+        <select value={chosen ?? ""} onChange={(e) => setEstateId(e.target.value)} className="field-auto estate-pick">
           {estates.data.estates.map((e) => (
             <option key={e.id} value={e.id}>
               {e.name}
@@ -580,7 +580,7 @@ function AccountRepos({
   return (
     <div className={`repo-account${highlight ? " highlight" : ""}`}>
       <div className="spread">
-        <span>
+        <span className="wrap-anywhere">
           {inst.avatarUrl && <img src={inst.avatarUrl} alt="" width={18} height={18} className="repo-account-avatar" />}
           <strong>{inst.account}</strong> <span className="muted">({inst.accountType.toLowerCase()})</span>{" "}
           {inst.estateId ? (
@@ -614,7 +614,7 @@ function AccountRepos({
                 checked={r.connected || Boolean(selected[r.nodeId])}
                 onChange={(e) => setSelected({ ...selected, [r.nodeId]: e.target.checked })}
               />
-              {r.fullName} {r.private && <span className="muted">(private)</span>}
+              <span className="wrap-anywhere">{r.fullName}</span> {r.private && <span className="muted">(private)</span>}
               {r.connected && <span className="badge merge">already connected</span>}
               {installed && !r.inInstallation && !r.connected && (
                 <span className="badge">not on the App yet</span>
@@ -878,7 +878,7 @@ function RepoOnboarding({
   return (
     <div className="card">
       <div className="spread">
-        <h3 style={{ margin: 0 }}>
+        <h3 className="wrap-anywhere" style={{ margin: 0 }}>
           {repo.fullName}{" "}
           {setup ? (
             <span className="badge merge">Setup</span>
@@ -963,7 +963,7 @@ function RepoOnboarding({
                   <span className="muted"> · wrote {String(repo.steps["secrets"]!.detail["name"])}</span>
                 )}
               </span>
-              <select value={secretName} onChange={(e) => setSecretName(e.target.value)} style={{ width: "auto" }}>
+              <select value={secretName} onChange={(e) => setSecretName(e.target.value)} className="field-auto">
                 <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
                 <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
                 <option value="FACTORY_CROSS_REPO_TOKEN">FACTORY_CROSS_REPO_TOKEN</option>
@@ -973,7 +973,7 @@ function RepoOnboarding({
                 placeholder="secret value"
                 value={secretValue}
                 onChange={(e) => setSecretValue(e.target.value)}
-                style={{ width: "14rem" }}
+                className="field-w14"
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -1176,8 +1176,8 @@ function RepoOnboarding({
                     <span className={`check-icon ${c.ok === true ? "ok" : c.ok === false ? "fail" : "skip"}`}>
                       {c.ok === true ? "pass" : c.ok === false ? "fail" : "skip"}
                     </span>
-                    <strong>{c.check}</strong>
-                    <span className="muted" style={{ flex: 1 }}>
+                    <strong className="wrap-anywhere">{c.check}</strong>
+                    <span className="muted check-row-detail wrap-anywhere">
                       {c.ok === false ? `Fix: ${c.detail}` : c.detail}
                     </span>
                   </div>
