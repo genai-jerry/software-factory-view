@@ -858,7 +858,10 @@ ol.run-events time {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* One row of five at every width under 1024px (epic 178, design D2). The
+     fixed height is the one value the sticky bars sit on top of (D3). */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  height: calc(var(--nav-h) + var(--safe-bottom));
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   padding-bottom: var(--safe-bottom);
@@ -870,8 +873,13 @@ ol.run-events time {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  height: var(--nav-h);
   min-height: var(--target);
+  min-width: 0;
   padding: 0.45rem 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-dim);
   text-decoration: none;
   font-size: 0.78rem;
@@ -881,6 +889,7 @@ ol.run-events time {
   gap: 0.1rem;
 }
 .bottom-nav a.active,
+.bottom-nav .nav-more.active,
 .bottom-nav a:hover,
 .bottom-nav .nav-more:hover {
   color: var(--text);

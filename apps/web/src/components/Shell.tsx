@@ -126,7 +126,11 @@ export function Shell({
         </div>
 
         <nav className="bottom-nav" aria-label="Primary">
-          <PrimaryLinks inboxCount={inboxCount} onMore={() => setMoreOpen(true)} />
+          <PrimaryLinks
+            inboxCount={inboxCount}
+            onMore={() => setMoreOpen(true)}
+            moreActive={isMorePage(location.pathname)}
+          />
         </nav>
       </div>
 
@@ -150,7 +154,45 @@ export function Shell({
   );
 }
 
-function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () => void }) {
+/**
+ * The screens the bottom nav reaches only through More (design D2). When the
+ * person is on one of them, the More button shows as the active item so they
+ * can see where they are; a button cannot carry `aria-current`, so it takes
+ * the `active` class instead.
+ */
+const MORE_PATHS = [
+  "/activity",
+  "/environments",
+  "/pipeline",
+  "/flow",
+  "/blocked",
+  "/decision-log",
+  "/onboarding",
+  "/telegram",
+  "/tools",
+  "/models",
+  "/settings",
+];
+
+export function isMorePage(pathname: string): boolean {
+  return MORE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+/**
+ * The side nav (desktop) lists every primary screen. The bottom nav (below
+ * 1024px, `onMore` set) shows exactly five items in one row — Work,
+ * Decisions, Shape, Investigate, More — and Activity moves into the More
+ * sheet (epic 178, design D2): six items wrapped to two rows on a phone.
+ */
+function PrimaryLinks({
+  inboxCount,
+  onMore,
+  moreActive = false,
+}: {
+  inboxCount: number;
+  onMore?: () => void;
+  moreActive?: boolean;
+}) {
   return (
     <>
       <NavLink to="/" end>
@@ -164,12 +206,12 @@ function PrimaryLinks({ inboxCount, onMore }: { inboxCount: number; onMore?: () 
           </span>
         )}
       </NavLink>
-      <NavLink to="/activity">Activity</NavLink>
+      {!onMore && <NavLink to="/activity">Activity</NavLink>}
       {!onMore && <NavLink to="/environments">Environments</NavLink>}
       <NavLink to="/shape">Shape</NavLink>
       <NavLink to="/investigate">Investigate</NavLink>
       {onMore ? (
-        <button type="button" className="nav-more" onClick={onMore}>
+        <button type="button" className={moreActive ? "nav-more active" : "nav-more"} onClick={onMore}>
           More
         </button>
       ) : (
@@ -229,6 +271,9 @@ function MoreMenu({
   const themeLabel = themePref === "system" ? "System" : themePref === "light" ? "Light" : "Dark";
   return (
     <div className="more-menu">
+      <NavLink to="/activity" onClick={onNavigate}>
+        Activity
+      </NavLink>
       <NavLink to="/environments" onClick={onNavigate}>
         Environments
       </NavLink>
