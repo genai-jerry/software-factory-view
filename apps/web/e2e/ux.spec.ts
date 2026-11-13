@@ -81,6 +81,39 @@ test.describe("phone jobs 360px", () => {
     expect(results.violations, results.violations.map((v) => `${v.id}: ${v.help}`).join("\n")).toEqual([]);
   });
 
+  // Spec scenario "Nav on a phone" (epic 178, task 2): one row of five at
+  // every width under 1024px, and Activity reachable from More.
+  for (const width of [360, 600, 1023]) {
+    test(`bottom nav is one row of five at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto("/e2e.html?screen=shell");
+      const nav = page.locator("nav.bottom-nav");
+      await expect(nav).toBeVisible();
+      const items = await nav.evaluate((el) =>
+        Array.from(el.children).map((c) => {
+          const r = c.getBoundingClientRect();
+          return { text: (c.textContent ?? "").trim(), top: Math.round(r.top), height: r.height };
+        }),
+      );
+      expect(items.map((i) => i.text)).toEqual(["Work", "Decisions", "Shape", "Investigate", "More"]);
+      expect(new Set(items.map((i) => i.top)).size).toBe(1);
+      const navBox = (await nav.boundingBox())!;
+      expect(navBox.height).toBeLessThan(items[0]!.height * 2);
+    });
+  }
+
+  test("Activity opens from the More sheet", async ({ page }) => {
+    await page.goto("/e2e.html?screen=shell");
+    await page.locator("nav.bottom-nav").getByRole("button", { name: "More" }).click();
+    const sheet = page.getByRole("dialog", { name: "More" });
+    const activity = sheet.getByRole("link", { name: "Activity" });
+    await expect(activity).toHaveAttribute("href", "/activity");
+    await activity.click();
+    // The harness routes in memory, so the URL bar does not change; landing on
+    // a More page lights the More button instead.
+    await expect(page.locator("nav.bottom-nav").getByRole("button", { name: "More" })).toHaveClass(/\bactive\b/);
+  });
+
   test("More sheet closes on Escape", async ({ page }) => {
     await page.goto("/e2e.html?screen=shell");
     await page.getByRole("button", { name: "More" }).click();
