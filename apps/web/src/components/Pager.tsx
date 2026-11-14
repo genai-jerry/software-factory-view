@@ -2,7 +2,23 @@
  * Newer / older buttons for a list shown a page at a time, with where you are
  * ("6–10 of 23"). Renders nothing when everything fits on one page.
  */
-export function Pager({ page, size, total, onPage, label }: { page: number; size: number; total: number; onPage: (p: number) => void; label: string }) {
+export function Pager({
+  page,
+  size,
+  total,
+  onPage,
+  label,
+  prev = "‹ Newer",
+  next = "Older ›",
+}: {
+  page: number;
+  size: number;
+  total: number;
+  onPage: (p: number) => void;
+  label: string;
+  prev?: string;
+  next?: string;
+}) {
   const pages = Math.ceil(total / size);
   if (pages <= 1) return null;
   const from = page * size + 1;
@@ -10,13 +26,13 @@ export function Pager({ page, size, total, onPage, label }: { page: number; size
   return (
     <nav className="pager" aria-label={label}>
       <button type="button" className="secondary" disabled={page === 0} onClick={() => onPage(page - 1)}>
-        ‹ Newer
+        {prev}
       </button>
       <span className="muted">
         {from}–{to} of {total}
       </span>
       <button type="button" className="secondary" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>
-        Older ›
+        {next}
       </button>
     </nav>
   );
