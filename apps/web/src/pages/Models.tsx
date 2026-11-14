@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { ApiError, api } from "../api.js";
 import type { Me } from "../types.js";
 
@@ -39,7 +39,7 @@ interface AvailableModel {
 }
 
 type Available =
-  | { ok: true; source: "claude-sign-in" | "api-key"; models: AvailableModel[]; listedAt: string }
+  | { ok: true; source: "known" | "api-key"; models: AvailableModel[]; listedAt: string }
   | { ok: false; error: string };
 
 /** Two slots per setting: the first choice, and the one used when it cannot be reached. */
@@ -89,6 +89,8 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
   const project = d.projects.find((p) => p.id === scope);
   const current = project ?? d.org;
   const listed = available.data?.ok ? available.data.models : null;
+  // A fixed list is a suggestion, not what the credential can use: any id may be typed.
+  const suggestOnly = available.data?.ok === true && available.data.source === "known";
 
   return (
     <section className="card">
@@ -109,11 +111,19 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
       </p>
 
       <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "baseline" }}>
-        {available.isLoading && <span className="muted">Asking Claude which models it offers…</span>}
+        {available.isLoading && <span className="muted">Finding the models on offer…</span>}
         {available.data?.ok && (
           <span className="muted">
-            {available.data.models.length} models offered to the factory&apos;s {available.data.source === "claude-sign-in" ? "Claude sign-in" : "API key"}, listed{" "}
-            {new Date(available.data.listedAt).toLocaleTimeString()}.
+            {available.data.source === "known" ? (
+              <>
+                {available.data.models.length} current Claude models. With only a Claude sign-in stored, Compass does not ask Claude for the list; type
+                any other model id.
+              </>
+            ) : (
+              <>
+                {available.data.models.length} models offered to the factory&apos;s API key, listed {new Date(available.data.listedAt).toLocaleTimeString()}.
+              </>
+            )}
           </span>
         )}
         {available.data && !available.data.ok && <span className="decision-failure">{available.data.error} You can still type a model id.</span>}
@@ -129,6 +139,7 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
         scope={scope}
         phases={d.phases}
         listed={listed}
+        suggestOnly={suggestOnly}
         value={current.chains}
         inherited={project ? d.org.chains : null}
         canEdit={d.canEdit}
@@ -139,11 +150,15 @@ function OrgModelsCard({ orgId }: { orgId: string }) {
   );
 }
 
-/** One model slot: a list of what Claude offers when it answered, else a typed id. */
+/**
+ * One model slot: a list of what Claude offers when it answered, a typed id
+ * with suggestions when the list is Compass's own, else a typed id.
+ */
 function ModelSlot({
   label,
   value,
   listed,
+  suggestOnly,
   placeholder,
   disabled,
   onChange,
@@ -151,11 +166,27 @@ function ModelSlot({
   label: string;
   value: string;
   listed: AvailableModel[] | null;
+  suggestOnly: boolean;
   placeholder: string;
   disabled: boolean;
   onChange: (v: string) => void;
 }) {
   const style = { flex: "1 1 12rem", minWidth: 0 };
+  const suggestions = useId();
+  if (listed && suggestOnly) {
+    return (
+      <>
+        <input aria-label={label} list={suggestions} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style} />
+        <datalist id={suggestions}>
+          {listed.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </datalist>
+      </>
+    );
+  }
   if (!listed) {
     return <input aria-label={label} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={style} />;
   }
@@ -179,6 +210,7 @@ function ChainsForm({
   scope,
   phases,
   listed,
+  suggestOnly,
   value,
   inherited,
   canEdit,
@@ -189,6 +221,7 @@ function ChainsForm({
   scope: string;
   phases: Phase[];
   listed: AvailableModel[] | null;
+  suggestOnly: boolean;
   value: Record<string, string[]>;
   /** For a project: the organisation's chains, shown where the project sets nothing. */
   inherited: Record<string, string[]> | null;
@@ -255,6 +288,7 @@ function ChainsForm({
                   label={`${p.label}: ${i === 0 ? "first choice" : "if that is unavailable"}`}
                   value={m}
                   listed={listed}
+                  suggestOnly={suggestOnly}
                   placeholder={i === 0 ? "First choice" : "If unavailable"}
                   disabled={busy}
                   onChange={(v) => set(phaseKey(p), i, v)}
@@ -287,6 +321,7 @@ function ChainsForm({
                           label={`${p.label} › ${s.label}: ${i === 0 ? "first choice" : "if that is unavailable"}`}
                           value={m}
                           listed={listed}
+                          suggestOnly={suggestOnly}
                           placeholder={i === 0 ? "Same as the phase" : "If unavailable"}
                           disabled={busy}
                           onChange={(v) => set(s.key, i, v)}
