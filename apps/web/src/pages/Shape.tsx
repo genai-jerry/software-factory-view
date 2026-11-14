@@ -174,6 +174,9 @@ function failureText(e: unknown): string {
   return e instanceof ApiError ? e.message : "That did not go through. Try again.";
 }
 
+/** Conversations listed at first, and added by each "See more". */
+export const LIST_STEP = 5;
+
 export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -221,6 +224,9 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
   const canStart = start === "epic" ? Boolean(chosenEpic) : Boolean(chosen);
 
   const conversations = list.data?.conversations ?? [];
+  // Five at a time; the open one is always listed, even when further down.
+  const [shown, setShown] = useState(LIST_STEP);
+  const shownConversations = conversations.filter((c, i) => i < shown || c.id === id);
 
   return (
     <div className="shape">
@@ -292,7 +298,7 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
           <p className="muted shape-empty">{copy.empty}</p>
         ) : (
           <ul className="shape-convs">
-            {conversations.map((c) => (
+            {shownConversations.map((c) => (
               <li key={c.id} className={c.id === id ? "current" : ""}>
                 <Link to={`${copy.base}/${c.id}`}>
                   <span className="shape-conv-title">{c.title}</span>
@@ -304,6 +310,13 @@ export function ShapePage({ kind = "shape" }: { kind?: Kind } = {}) {
                 </Link>
               </li>
             ))}
+            {conversations.length > shownConversations.length && (
+              <li className="shape-more">
+                <button type="button" className="link" onClick={() => setShown((n) => n + LIST_STEP)}>
+                  See more ({conversations.length - shownConversations.length} more)
+                </button>
+              </li>
+            )}
           </ul>
         )}
       </aside>

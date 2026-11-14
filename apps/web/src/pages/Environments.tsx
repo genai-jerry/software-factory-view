@@ -23,6 +23,21 @@ export type EnvState = "running" | "waiting" | "failed" | "idle";
 
 const FAILED = new Set(["error", "timeout", "no_op"]);
 
+/** Running, or waiting for a session or its turn: what "Only live" keeps. */
+export function isLive(card: EnvCard | null | undefined): card is EnvCard {
+  return Boolean(card) && (envState(card!) === "running" || envState(card!) === "waiting");
+}
+
+const LIVE_ONLY_KEY = "compass.environments.liveOnly";
+
+function readLiveOnly(): boolean {
+  try {
+    return localStorage.getItem(LIVE_ONLY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function envState(card: EnvCard): EnvState {
   if (card.active) return card.active.state === "running" || card.active.state === "starting" ? "running" : "waiting";
   if (card.queue.length) return "waiting";
@@ -431,15 +446,30 @@ export function EnvironmentsPage() {
     refetchInterval: 5_000,
   });
   const [open, setOpen] = useState<EnvCard | null>(null);
+  const [liveOnly, setLiveOnlyState] = useState(readLiveOnly);
+  const setLiveOnly = (on: boolean) => {
+    setLiveOnlyState(on);
+    try {
+      localStorage.setItem(LIVE_ONLY_KEY, on ? "1" : "0");
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  };
   const now = q.dataUpdatedAt || Date.now();
   const data = q.data;
-  const lanes = data?.lanes ?? [];
-  const staging = data?.staging ?? [];
+  const allLanes = data?.lanes ?? [];
+  const allStaging = data?.staging ?? [];
+  // Only live: a lane stays while its epic or any task is live, showing just its live tasks.
+  const lanes = liveOnly
+    ? allLanes.filter((l) => isLive(l.epic) || l.tasks.some(isLive)).map((l) => ({ ...l, tasks: l.tasks.filter(isLive) }))
+    : allLanes;
+  const staging = liveOnly ? allStaging.filter(isLive) : allStaging;
+  const other = liveOnly ? (data?.other ?? []).filter(isLive) : (data?.other ?? []);
   const colors = useMemo(
     () => laneColors([...lanes.map((l) => l.ref), ...staging.flatMap((st) => (st.onStaging ?? []).map((e) => e.ref))]),
     [lanes, staging],
   );
-  const live = data ? [...staging, ...lanes.flatMap((l) => [l.epic, ...l.tasks]), ...data.other].filter((c): c is EnvCard => Boolean(c)) : [];
+  const live = data ? [...allStaging, ...allLanes.flatMap((l) => [l.epic, ...l.tasks]), ...data.other].filter((c): c is EnvCard => Boolean(c)) : [];
   const queued = live.reduce((n, c) => n + c.queue.length, 0);
   // Keep the open sheet current as the board refreshes.
   const openCard = open ? (live.find((c) => c.id === open.id) ?? open) : null;
@@ -463,9 +493,18 @@ export function EnvironmentsPage() {
           <div className="env-top">
             {data.sessions && <SessionMeter sessions={data.sessions} />}
             {queued > 0 && <span className="env-waiting-sum">{queued} waiting for an environment</span>}
+            <label className="env-live-toggle">
+              <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} /> Only live environments
+            </label>
           </div>
 
-          {lanes.length === 0 && staging.length === 0 && <p className="muted">No environments yet. One appears when the factory first runs on a piece of work.</p>}
+          {lanes.length === 0 && staging.length === 0 && (
+            <p className="muted">
+              {liveOnly && (allLanes.length > 0 || allStaging.length > 0)
+                ? "Nothing is running or waiting right now."
+                : "No environments yet. One appears when the factory first runs on a piece of work."}
+            </p>
+          )}
 
           {(lanes.length > 0 || staging.length > 0) && (
             <LaneColorCtx.Provider value={colors}>
@@ -482,7 +521,7 @@ export function EnvironmentsPage() {
 
               <div className="env-staging" style={{ gridRow: `2 / span ${Math.max(1, lanes.length)}` }}>
                 {staging.length === 0 ? (
-                  <p className="muted">No staging environment yet. It appears with the first release onto staging.</p>
+                  <p className="muted">{liveOnly && allStaging.length > 0 ? "Staging is idle." : "No staging environment yet. It appears with the first release onto staging."}</p>
                 ) : (
                   staging.map((s) => <EnvCardView key={s.id} card={s} now={now} onOpen={setOpen} wide />)
                 )}
@@ -508,11 +547,11 @@ export function EnvironmentsPage() {
         </section>
       )}
 
-      {data?.available && data.other.length > 0 && (
+      {data?.available && other.length > 0 && (
         <section className="card" aria-label="Other work">
           <h2>Other work</h2>
           <div className="env-tasks">
-            {data.other.map((c) => (
+            {other.map((c) => (
               <EnvCardView key={c.id} card={c} now={now} onOpen={setOpen} />
             ))}
           </div>
