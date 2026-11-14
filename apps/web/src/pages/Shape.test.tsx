@@ -89,6 +89,27 @@ describe("ShapePage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape", { repoId: "r1" }));
   });
 
+  it("lists five ideas, adds five more on See more, and always lists the open one", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...summaries[0]!, id: `c${i + 1}`, title: `Idea ${i + 1}` }));
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/shape") return { conversations: many };
+      if (path === "/api/work/targets") return targets;
+      if (path.startsWith("/api/shape/")) return { ...conversation, conversation: { ...conversation.conversation, id: "c9", title: "Idea 9" } };
+      if (path.startsWith("/api/board")) return { columns: [], cards };
+      return {};
+    });
+    renderAt("/shape/c9");
+    expect(await screen.findByRole("link", { name: /Idea 5/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Idea 6/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Idea 9/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "See more (6 more)" }));
+    expect(screen.getByRole("link", { name: /Idea 10/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Idea 11/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "See more (2 more)" }));
+    expect(screen.getByRole("link", { name: /Idea 12/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /See more/ })).toBeNull();
+  });
+
   it("offers the whole project when it has more than one repository, and opens the work where the person picks", async () => {
     const two = {
       targets: [

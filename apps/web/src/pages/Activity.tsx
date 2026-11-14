@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { Pager, pageOf } from "../components/Pager.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
 import { plainTitle } from "../lib/labels.js";
@@ -27,9 +28,14 @@ interface Line {
 
 type Who = "everyone" | "people" | "factory";
 
+/** Lines shown at a time in each day. */
+export const ACTIVITY_PAGE = 5;
+
 export function ActivityPage() {
   const focus = useFocus();
   const [who, setWho] = useState<Who>("everyone");
+  // Each day pages on its own; a new filter starts every day at its newest.
+  const [pages, setPages] = useState<Record<string, number>>({});
   const activity = useQuery({ queryKey: ["activity", focus.key], queryFn: () => api.get<{ lines: Line[] }>(`/api/activity${focus.qs}`), refetchInterval: 60_000 });
   const running = useQuery({ queryKey: ["running"], queryFn: () => api.get<{ running: RunningItem[] }>("/api/running"), refetchInterval: 30_000 });
   const usageQ = useQuery({ queryKey: ["usage"], queryFn: () => api.get<{ usage: FactoryUsage | null }>("/api/orchestrator/usage"), retry: false });
@@ -50,14 +56,24 @@ export function ActivityPage() {
         <div className="wi-main">
           <div className="act-filter" role="group" aria-label="Who">
             {(["everyone", "people", "factory"] as Who[]).map((w) => (
-              <button key={w} type="button" className={who === w ? "primary" : ""} onClick={() => setWho(w)}>
+              <button
+                key={w}
+                type="button"
+                className={who === w ? "primary" : ""}
+                onClick={() => {
+                  setWho(w);
+                  setPages({});
+                }}
+              >
                 {w === "everyone" ? "Everyone" : w === "people" ? "People" : "The factory"}
               </button>
             ))}
           </div>
           {activity.isLoading && <p className="muted">Reading…</p>}
           {activity.data && lines.length === 0 && <p className="muted">Nothing yet.</p>}
-          {[...days.entries()].map(([day, list]) => (
+          {[...days.entries()].map(([day, all]) => {
+            const { items: list, page } = pageOf(all, pages[day] ?? 0, ACTIVITY_PAGE);
+            return (
             <section className="card" key={day}>
               <h2>{day}</h2>
               {list.map((l, i) => (
@@ -73,8 +89,10 @@ export function ActivityPage() {
                   </span>
                 </Link>
               ))}
+              <Pager page={page} size={ACTIVITY_PAGE} total={all.length} label={`${day}'s activity`} onPage={(p) => setPages((m) => ({ ...m, [day]: p }))} />
             </section>
-          ))}
+            );
+          })}
         </div>
         <aside className="wi-side">
           <section className="card">

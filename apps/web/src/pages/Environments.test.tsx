@@ -130,6 +130,29 @@ describe("EnvironmentsPage", () => {
     expect(board.textContent).not.toMatch(/#\d/);
   });
 
+  it("shows only running and waiting environments when Only live is on, and remembers it", async () => {
+    localStorage.removeItem("compass.environments.liveOnly");
+    const quiet = card({ id: "acme/api#50", kind: "epic", title: "Quiet epic" });
+    show({
+      ...view,
+      lanes: [...view.lanes, { ref: "acme/api#50", epicId: "e50", title: "Quiet epic", tasksTotal: 1, tasksMerged: 0, epic: quiet, tasks: [card({ id: "acme/api#51", title: "Asleep" })] }],
+      other: [card({ id: "acme/web#9", title: "Other idle" })],
+    });
+    const board = await screen.findByLabelText("Build environments");
+    expect(within(board).getByText("Quiet epic")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Only live environments"));
+    expect(within(board).queryByText("Quiet epic")).toBeNull();
+    expect(within(board).queryByText("Idle one")).toBeNull();
+    expect(within(board).queryByText("Idle three")).toBeNull();
+    expect(within(board).getByText("Quiet hours")).toBeTruthy();
+    expect(board).toHaveTextContent("Implementer · running · 12 min");
+    expect(screen.queryByLabelText("Other work")).toBeNull();
+    expect(localStorage.getItem("compass.environments.liveOnly")).toBe("1");
+    fireEvent.click(screen.getByLabelText("Only live environments"));
+    expect(within(board).getByText("Quiet epic")).toBeTruthy();
+    localStorage.removeItem("compass.environments.liveOnly");
+  });
+
   it("names the repo of each task and each staging, and not on epics", async () => {
     show(view);
     const board = await screen.findByLabelText("Build environments");

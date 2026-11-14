@@ -1397,6 +1397,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .nw-mode legend { font-weight: 600; padding: 0 0.3rem; }
 .nw-choice { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400 !important; margin: 0 !important; }
 .nw-choice input { margin-top: 0.3rem; width: auto; }
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .act-filter { display: flex; gap: 0.4rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
 .act-line { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr) max-content; gap: 0.7rem; align-items: baseline; padding: 0.55rem 0; border-top: 1px solid var(--border); color: inherit; text-decoration: none; }
 .act-line:first-of-type { border-top: 0; }
@@ -1453,6 +1454,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .shape-list select { width: 100%; margin: 0.25rem 0 0.5rem; }
 .shape-list > button { width: 100%; margin-bottom: 0.75rem; }
 .shape-convs { list-style: none; margin: 0; padding: 0; }
+.shape-convs .shape-more { padding: 0.5rem 0.5rem 0; }
 .shape-convs li { border-top: 1px solid var(--border); }
 .shape-convs li a { display: block; padding: 0.5rem 0.25rem; color: var(--text); text-decoration: none; border-radius: 6px; }
 .shape-convs li a:hover { background: var(--bg-hover, var(--accent-soft)); text-decoration: none; }
@@ -1524,6 +1526,7 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 /* Environments: where the Claude sessions run, left to right the way work
    moves: tasks → their epic → staging. One card per build environment. */
 .env-board { overflow: hidden; }
+.env-live-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
 .env-top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; margin-bottom: 0.75rem; }
 .env-sessions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
 .env-slot {
