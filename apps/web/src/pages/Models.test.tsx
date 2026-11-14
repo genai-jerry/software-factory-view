@@ -35,7 +35,7 @@ const settings = (canEdit = true, orgChains: Record<string, string[]> = { "phase
 });
 const listed = {
   ok: true,
-  source: "claude-sign-in",
+  source: "api-key",
   listedAt: "2026-11-10T08:00:00Z",
   models: [
     { id: "claude-fable-5-1", name: "Claude Fable 5.1", deprecated: false },
@@ -67,7 +67,7 @@ describe("ModelsPage", () => {
     respond(settings());
     vi.mocked(api.put).mockResolvedValue({});
     renderPage();
-    expect(await screen.findByText(/3 models offered to the factory's Claude sign-in/)).toBeInTheDocument();
+    expect(await screen.findByText(/3 models offered to the factory's API key/)).toBeInTheDocument();
     const first = screen.getByLabelText("Design: first choice");
     expect(first).toHaveValue("claude-opus-5-5");
     expect(screen.getAllByRole("option", { name: /Claude Fable 5\.1 — claude-fable-5-1/ }).length).toBeGreaterThan(0);
@@ -89,6 +89,22 @@ describe("ModelsPage", () => {
     renderPage();
     expect(await screen.findByRole("option", { name: "claude-opus-5 (not offered to this credential)" })).toBeInTheDocument();
     expect(screen.getByLabelText("Clarify: first choice")).toHaveValue("claude-opus-5");
+  });
+
+  it("with only a Claude sign-in, suggests Compass's own list and still takes a typed id", async () => {
+    respond(settings(true, { "phase:clarify": ["claude-opus-5"] }), { ...listed, source: "known" });
+    vi.mocked(api.put).mockResolvedValue({});
+    renderPage();
+    expect(await screen.findByText(/3 current Claude models\. With only a Claude sign-in stored/)).toBeInTheDocument();
+    const clarify = screen.getByLabelText("Clarify: first choice");
+    expect(clarify.tagName).toBe("INPUT");
+    expect(clarify).toHaveValue("claude-opus-5");
+    const suggestions = document.getElementById(clarify.getAttribute("list")!)!;
+    expect([...suggestions.querySelectorAll("option")].map((o) => o.getAttribute("value"))).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]);
+    await userEvent.clear(clarify);
+    await userEvent.type(clarify, "claude-sonnet-5");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/orgs/o1/models/org", { chains: { "phase:clarify": ["claude-sonnet-5"] } }));
   });
 
   it("falls back to typing an id when Claude cannot list, and can list again", async () => {

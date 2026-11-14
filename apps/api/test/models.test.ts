@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
-import { forgetListedModels } from "../src/claude-models.js";
+import { forgetListedModels, KNOWN_MODELS } from "../src/claude-models.js";
 import { askModels, checkChains, expandChains } from "../src/model-settings.js";
 
 /**
@@ -154,8 +154,18 @@ describe("the models Claude lists for the stored credential", () => {
     expect(got.error).toMatch(/No Claude credential/);
   });
 
-  it("asks the Models API with the Claude sign-in, newest first, and caches it", async () => {
+  it("never sends a Claude sign-in to the API: it offers the known models instead", async () => {
     await deps.dbh.db.insert(orchestratorSecrets).values({ orgId: id.org!, name: "CLAUDE_CODE_OAUTH_TOKEN", encryptedValue: encryptSecret("sk-ant-oat-x", MASTER_KEY), updatedBy: "jerry" });
+    const fetched = vi.fn();
+    vi.stubGlobal("fetch", fetched);
+    const got = (await available("?refresh=1")).json();
+    expect(got).toMatchObject({ ok: true, source: "known" });
+    expect(got.models.map((m: { id: string }) => m.id)).toEqual(KNOWN_MODELS.map((m) => m.id));
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it("asks the Models API with the API key, even beside a sign-in, newest first, and caches it", async () => {
+    await deps.dbh.db.insert(orchestratorSecrets).values({ orgId: id.org!, name: "ANTHROPIC_API_KEY", encryptedValue: encryptSecret("sk-ant-api-x", MASTER_KEY), updatedBy: "jerry" });
     const seen: Array<{ url: string; headers: Headers }> = [];
     vi.stubGlobal(
       "fetch",
@@ -176,13 +186,13 @@ describe("the models Claude lists for the stored credential", () => {
         );
       }),
     );
-    const got = (await available()).json();
-    expect(got).toMatchObject({ ok: true, source: "claude-sign-in" });
+    const got = (await available("?refresh=1")).json();
+    expect(got).toMatchObject({ ok: true, source: "api-key" });
     expect(got.models.map((m: { id: string }) => m.id)).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "claude-old"]);
     expect(seen[0]!.url).toContain("/v1/models");
-    expect(seen[0]!.headers.get("authorization")).toBe("Bearer sk-ant-oat-x");
-    expect(seen[0]!.headers.get("anthropic-beta")).toContain("oauth-2025-04-20");
-    expect(seen[0]!.headers.get("x-api-key")).toBeNull();
+    expect(seen[0]!.headers.get("x-api-key")).toBe("sk-ant-api-x");
+    expect(seen[0]!.headers.get("authorization")).toBeNull();
+    expect(seen[0]!.headers.get("anthropic-beta") ?? "").not.toContain("oauth");
     await available();
     expect(seen).toHaveLength(1);
     await available("?refresh=1");
@@ -193,6 +203,6 @@ describe("the models Claude lists for the stored credential", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "bad" } }), { status: 401, headers: { "content-type": "application/json" } })));
     const got = (await available("?refresh=1")).json();
     expect(got).toMatchObject({ ok: false });
-    expect(got.error).toMatch(/refused the stored credential/);
+    expect(got.error).toMatch(/refused the stored API key/);
   });
 });
