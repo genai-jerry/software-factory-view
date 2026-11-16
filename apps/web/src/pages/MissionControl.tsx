@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { Banner } from "../components/Banner.js";
 import { IssuePeek } from "../components/IssuePeek.js";
+import { Pager, pageOf } from "../components/Pager.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { PipelineBoard } from "../components/PipelineBoard.js";
 import { RecentRuns } from "../components/RecentRuns.js";
@@ -78,10 +79,14 @@ export function MissionControl() {
   );
 }
 
+/** Rows shown at a time in each list on My work. */
+export const PIPELINE_PAGE = 10;
+
 function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
   const focus = useFocus();
   const { setHalt } = useHalt();
   const myWork = useQuery({ queryKey: ["my-work", focus.key], queryFn: () => api.get<MyWork>(`/api/my-work${focus.qs}`) });
+  const [pages, setPages] = useState({ needs: 0, mine: 0, waiting: 0 });
 
   useEffect(() => {
     const first = myWork.data?.needsYou[0];
@@ -100,7 +105,15 @@ function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
 
   if (myWork.isLoading) return <p className="muted">Loading…</p>;
   if (!myWork.data) return <p className="muted">Could not load your work.</p>;
-  const { needsYou, mine, waitingOn } = myWork.data;
+  const { needsYou, mine: mineAll, waitingOn } = myWork.data;
+  const turn = (list: keyof typeof pages) => (p: number) => setPages((m) => ({ ...m, [list]: p }));
+  const needsPage = pageOf(needsYou, pages.needs, PIPELINE_PAGE);
+  // In phase order, so a page keeps its rows under their phase headings.
+  const mineOrdered = PHASE_ORDER.flatMap((p) => mineAll.filter((m) => m.phase === p));
+  const minePage = pageOf(mineOrdered, pages.mine, PIPELINE_PAGE);
+  const mine = minePage.items;
+  const waitingPage = pageOf(waitingOn, pages.waiting, PIPELINE_PAGE);
+  const pagerWords = { prev: "‹ Previous", next: "Next ›" };
   return (
     <div>
       <RunningCards />
@@ -108,14 +121,15 @@ function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
       <div className="card">
         <h2>Needs you</h2>
         {needsYou.length === 0 && <p className="muted">Nothing is waiting on you. The factory is running.</p>}
-        {needsYou.map((e, i) => (
-          <AttentionRow entry={e} key={i} onPeek={onPeek} />
+        {needsPage.items.map((e, i) => (
+          <AttentionRow entry={e} key={`${needsPage.page}-${i}`} onPeek={onPeek} />
         ))}
+        <Pager page={needsPage.page} size={PIPELINE_PAGE} total={needsYou.length} label="Needs you" onPage={turn("needs")} {...pagerWords} />
       </div>
 
       <div className="card">
         <h2>Yours, in flight</h2>
-        {mine.length === 0 && <p className="muted">No open issues are assigned to you or filed by you.</p>}
+        {mineAll.length === 0 && <p className="muted">No open issues are assigned to you or filed by you.</p>}
         {PHASE_ORDER.filter((p) => mine.some((m) => m.phase === p)).map((phase) => (
           <div key={phase} style={{ marginBottom: "0.5rem" }}>
             <h4 className="phase-head">{PHASE_LABELS[phase]}</h4>
@@ -126,14 +140,16 @@ function MyWorkTab({ onPeek }: { onPeek: (id: string) => void }) {
               ))}
           </div>
         ))}
+        <Pager page={minePage.page} size={PIPELINE_PAGE} total={mineAll.length} label="Yours, in flight" onPage={turn("mine")} {...pagerWords} />
       </div>
 
       <div className="card">
         <h2>Waiting on others</h2>
         {waitingOn.length === 0 && <p className="muted">None of your issues are waiting on a dependency.</p>}
-        {waitingOn.map((w, i) => (
-          <WaitingRowView row={w} key={i} onPeek={onPeek} />
+        {waitingPage.items.map((w, i) => (
+          <WaitingRowView row={w} key={`${waitingPage.page}-${i}`} onPeek={onPeek} />
         ))}
+        <Pager page={waitingPage.page} size={PIPELINE_PAGE} total={waitingOn.length} label="Waiting on others" onPage={turn("waiting")} {...pagerWords} />
       </div>
     </div>
   );

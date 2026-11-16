@@ -1,14 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api.js";
+import { Pager, pageOf } from "../components/Pager.js";
 import type { Decision } from "../types.js";
+
+/** Decisions shown at a time. */
+export const DECISIONS_PAGE = 10;
 
 export function DecisionsPage() {
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
   const decisions = useQuery({
     queryKey: ["decisions", q],
     queryFn: () => api.get<{ decisions: Decision[] }>(`/api/decisions${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   });
+
+  const all = decisions.data?.decisions ?? [];
+  const shown = pageOf(all, page, DECISIONS_PAGE);
 
   return (
     <div>
@@ -18,11 +26,16 @@ export function DecisionsPage() {
         <label className="sr-only" htmlFor="decision-search">
           Search decisions
         </label>
-        <input id="decision-search" placeholder="Search decisions…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input id="decision-search" placeholder="Search decisions…" value={q} onChange={(e) => {
+            setQ(e.target.value);
+            setPage(0);
+          }}
+        />
       </div>
-      {decisions.data?.decisions.map((d) => (
+      {shown.items.map((d) => (
         <DecisionCard key={d.id} d={d} />
       ))}
+      <Pager page={shown.page} size={DECISIONS_PAGE} total={all.length} label="Decisions" onPage={setPage} />
       {decisions.data?.decisions.length === 0 && <p className="muted">No decisions recorded yet.</p>}
     </div>
   );
