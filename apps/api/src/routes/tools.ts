@@ -3,7 +3,10 @@ import { auditLog, mcpServers, projects, type McpTool } from "@console/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, type AppDeps } from "../context.js";
+import { randomBytes } from "node:crypto";
 import { listMcpTools, type ListedTool } from "../mcp-client.js";
+import { authorizeUrl, discover, exchangeCode, OAuthFailure, pkce, register } from "../mcp-oauth.js";
+import { ensureFresh, expired, sealGrant } from "../mcp-oauth-store.js";
 import { loadOrg } from "./settings.js";
 
 /**
@@ -30,6 +33,9 @@ function view(r: Row) {
     url: r.url,
     transport: r.transport,
     headerNames: r.headerNames,
+    authKind: r.authKind,
+    oauthBy: r.oauthBy,
+    oauthExpiresAt: r.oauthExpiresAt?.toISOString() ?? null,
     projectIds: r.projectIds,
     tools: r.tools,
     useShape: r.useShape,
@@ -84,6 +90,36 @@ function checkHeaders(raw: unknown): { headers: Record<string, string> } | { err
     headers[name] = value;
   }
   return { headers };
+}
+
+/**
+ * Sign-ins under way: started by an admin, finished when the server sends
+ * their browser back. Kept in memory for ten minutes, like GitHub sign-in's
+ * state (auth.ts); a restart in between only means pressing Sign in again.
+ */
+interface PendingSignIn {
+  orgId: string;
+  userId: string;
+  login: string;
+  serverId: string | null;
+  label: string;
+  url: string;
+  transport: "http" | "sse";
+  projectIds: string[];
+  clientId: string;
+  clientSecret: string | null;
+  tokenEndpoint: string;
+  resource: string;
+  scope: string | null;
+  verifier: string;
+  expiry: number;
+}
+const pendingSignIns = new Map<string, PendingSignIn>();
+const SIGN_IN_TTL_MS = 10 * 60_000;
+
+/** For tests. */
+export function pendingSignIn(state: string): PendingSignIn | undefined {
+  return pendingSignIns.get(state);
 }
 
 /** Keep earlier choices; a tool not seen before starts allowed only when it is read-only. */
@@ -153,7 +189,16 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       // Nothing is saved until the server answers: a typo should not become a broken tool.
       const listed = await listMcpTools(url.url, transport, hdr.headers, { allowLocal: !production });
-      if (!listed.ok) return reply.code(422).send({ error: `Compass could not list this server's tools: ${listed.error}.` });
+      if (!listed.ok) {
+        // A 401 with no headers given is a server that wants a sign-in, not a wrong key.
+        const signIn = /\(401\)/.test(listed.error) && Object.keys(hdr.headers).length === 0;
+        return reply.code(422).send({
+          error: signIn
+            ? "This server asks you to sign in rather than for an API key. Press Sign in instead."
+            : `Compass could not list this server's tools: ${listed.error}.`,
+          ...(signIn ? { signIn: true } : {}),
+        });
+      }
       if (listed.tools.length === 0) return reply.code(422).send({ error: "The server answered but offers no tools." });
 
       const typed = typeof body.label === "string" ? body.label.trim().slice(0, 60) : "";
@@ -205,6 +250,7 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
       set.tools = row.tools.map((t) => (typeof want[t.name] === "boolean" ? { ...t, allowed: want[t.name] as boolean } : t));
     }
     if (b.headers !== undefined) {
+      if (row.authKind === "oauth") return reply.code(409).send({ error: "This server signs in. Press Sign in again instead of typing headers." });
       const hdr = checkHeaders(b.headers);
       if ("error" in hdr) return reply.code(400).send({ error: hdr.error });
       const sealed = sealHeaders(hdr.headers);
@@ -230,9 +276,11 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (!found) return;
     const row = (await db.select().from(mcpServers).where(and(eq(mcpServers.id, req.params.sid), eq(mcpServers.orgId, found.org.id))).limit(1))[0];
     if (!row) return reply.code(404).send({ error: "tool server not found" });
+    const fresh = await ensureFresh(deps, row);
+    if (expired(fresh)) return view(fresh);
     let headers: Record<string, string>;
     try {
-      headers = openHeaders(row);
+      headers = openHeaders(fresh);
     } catch {
       return reply.code(409).send({ error: "The saved headers will not open with this Compass's master key. Enter them again." });
     }
@@ -242,6 +290,111 @@ export function registerToolRoutes(app: FastifyInstance, deps: AppDeps): void {
       : { checkedAt: new Date(), checkError: listed.error };
     const [next] = await db.update(mcpServers).set(set).where(eq(mcpServers.id, row.id)).returning();
     return view(next!);
+  });
+
+  const redirectUri = `${deps.cfg.PUBLIC_ORIGIN}/api/tools/oauth/callback`;
+  const reach = { allowLocal: !production };
+
+  /**
+   * Sign in to a server that uses OAuth: a new one (label, url, transport,
+   * projectIds) or an existing one again (serverId). Answers the address to
+   * send the browser to; the server sends it back to the callback below.
+   */
+  app.post<{ Params: { id: string }; Body: { serverId?: unknown; label?: unknown; url?: unknown; transport?: unknown; projectIds?: unknown } }>(
+    "/api/orgs/:id/tools/sign-in",
+    async (req, reply) => {
+      const ctx = await requireAuth(deps, req, reply);
+      if (!ctx) return;
+      const found = await loadOrg(deps, ctx, req.params.id, reply, { admin: true });
+      if (!found) return;
+      if (!deps.cfg.CONSOLE_MASTER_KEY) return reply.code(409).send({ error: "Sign-ins are stored sealed, and this Compass has no CONSOLE_MASTER_KEY." });
+      const body = req.body ?? {};
+      let target: Pick<PendingSignIn, "serverId" | "label" | "url" | "transport" | "projectIds">;
+      if (typeof body.serverId === "string") {
+        const row = (await db.select().from(mcpServers).where(and(eq(mcpServers.id, body.serverId), eq(mcpServers.orgId, found.org.id))).limit(1))[0];
+        if (!row) return reply.code(404).send({ error: "tool server not found" });
+        target = { serverId: row.id, label: row.label, url: row.url, transport: row.transport, projectIds: row.projectIds };
+      } else {
+        const url = checkUrl(body.url, production);
+        if ("error" in url) return reply.code(400).send({ error: url.error });
+        const scope = await checkProjects(found.org.id, body.projectIds);
+        if ("error" in scope) return reply.code(400).send({ error: scope.error });
+        const typed = typeof body.label === "string" ? body.label.trim().slice(0, 60) : "";
+        target = { serverId: null, label: typed || new URL(url.url).hostname, url: url.url, transport: body.transport === "sse" ? "sse" : "http", projectIds: scope.ids };
+      }
+      try {
+        const meta = await discover(target.url, target.transport, reach);
+        const client = await register(meta, redirectUri, reach);
+        const { verifier, challenge } = pkce();
+        const state = randomBytes(24).toString("base64url");
+        const now = Date.now();
+        for (const [k, v] of pendingSignIns) if (v.expiry < now) pendingSignIns.delete(k);
+        pendingSignIns.set(state, {
+          ...target,
+          orgId: found.org.id,
+          userId: ctx.userId,
+          login: ctx.login,
+          clientId: client.clientId,
+          clientSecret: client.clientSecret,
+          tokenEndpoint: meta.tokenEndpoint,
+          resource: meta.resource,
+          scope: meta.scope,
+          verifier,
+          expiry: now + SIGN_IN_TTL_MS,
+        });
+        return { authorizeUrl: authorizeUrl(meta, client.clientId, redirectUri, state, challenge) };
+      } catch (err) {
+        const why = err instanceof OAuthFailure ? err.message : `could not reach the server (${(err as Error).message})`;
+        return reply.code(422).send({ error: `Compass could not start the sign-in: ${why}.` });
+      }
+    },
+  );
+
+  /** Where the server sends the browser back. Ends on the Tools page, saying how it went. */
+  app.get<{ Querystring: { code?: string; state?: string; error?: string; error_description?: string } }>("/api/tools/oauth/callback", async (req, reply) => {
+    const back = (q: Record<string, string>) => reply.redirect(`/tools?${new URLSearchParams(q).toString()}`);
+    const { code, state } = req.query;
+    const pending = state ? pendingSignIns.get(state) : undefined;
+    if (state) pendingSignIns.delete(state);
+    if (!pending || pending.expiry < Date.now()) return back({ sign_in_error: "That sign-in had expired. Press Sign in again." });
+    const ctx = await requireAuth(deps, req, reply);
+    if (!ctx) return;
+    if (ctx.userId !== pending.userId) return back({ sign_in_error: "That sign-in was started by someone else." });
+    if (req.query.error || !code) {
+      return back({ sign_in_error: `${pending.label} did not sign in: ${req.query.error_description ?? req.query.error ?? "no code came back"}.` });
+    }
+    const key = deps.cfg.CONSOLE_MASTER_KEY;
+    try {
+      const grant = await exchangeCode(pending, code, pending.verifier, redirectUri, reach);
+      const listed = await listMcpTools(pending.url, pending.transport, { Authorization: `Bearer ${grant.accessToken}` }, reach);
+      if (!listed.ok) return back({ sign_in_error: `Signed in, but Compass could not list ${pending.label}'s tools: ${listed.error}.` });
+      if (listed.tools.length === 0) return back({ sign_in_error: `Signed in, but ${pending.label} offers no tools.` });
+      const sealed = sealGrant(grant, key);
+      const signedIn = { ...sealed, authKind: "oauth" as const, oauthBy: pending.login, checkedAt: new Date(), checkError: null, updatedBy: pending.login, updatedAt: new Date() };
+      const before = pending.serverId
+        ? (await db.select().from(mcpServers).where(and(eq(mcpServers.id, pending.serverId), eq(mcpServers.orgId, pending.orgId))).limit(1))[0]
+        : undefined;
+      if (before) {
+        await db.update(mcpServers).set({ ...signedIn, tools: mergeTools(listed.tools, before.tools) }).where(eq(mcpServers.id, before.id));
+      } else {
+        const taken = new Set((await db.select({ name: mcpServers.name }).from(mcpServers).where(eq(mcpServers.orgId, pending.orgId))).map((r) => r.name));
+        await db.insert(mcpServers).values({
+          orgId: pending.orgId,
+          name: slugFor(pending.label, taken),
+          label: pending.label,
+          transport: pending.transport,
+          url: pending.url,
+          projectIds: pending.projectIds,
+          tools: mergeTools(listed.tools, []),
+          ...signedIn,
+        });
+      }
+      await audit(pending.orgId, ctx.userId, "tools.sign_in", pending.label, { url: pending.url, tools: listed.tools.length });
+      return back({ signed_in: pending.label });
+    } catch (err) {
+      const why = err instanceof OAuthFailure ? err.message : (err as Error).message;
+      return back({ sign_in_error: `${pending.label} did not sign in: ${why}.` });
+    }
   });
 
   app.delete<{ Params: { id: string; sid: string } }>("/api/orgs/:id/tools/:sid", async (req, reply) => {

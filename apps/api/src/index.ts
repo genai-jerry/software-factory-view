@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { buildApp } from "./app.js";
 import { startAnswerCollector } from "./routes/shape.js";
+import { startMcpOAuthRenewal } from "./mcp-oauth-store.js";
 import { startTelegram } from "./telegram/index.js";
 
 const cfg = loadConfig();
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   const app = await buildApp(deps);
   await app.listen({ port: cfg.API_PORT, host: "0.0.0.0" });
   await startTelegram(app, deps);
+  startMcpOAuthRenewal(app, deps);
   // Shape and Investigate answers are written on the orchestrator; fetch them as they finish.
   startAnswerCollector(app);
 

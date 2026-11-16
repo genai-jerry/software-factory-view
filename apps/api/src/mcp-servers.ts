@@ -2,6 +2,7 @@ import { decryptSecret } from "@console/core";
 import { mcpServers, repos } from "@console/db";
 import { and, eq } from "drizzle-orm";
 import type { AppDeps } from "./context.js";
+import { ensureFresh, expired } from "./mcp-oauth-store.js";
 
 /**
  * An org's Compass → Tools servers as the orchestrator takes them: sent in
@@ -35,8 +36,12 @@ export async function mcpPayloadFor(deps: AppDeps, orgId: string, projectId: str
     .from(mcpServers)
     .where(and(eq(mcpServers.orgId, orgId), eq(mcpServers.enabled, true)));
   const out: McpServerPayload[] = [];
-  for (const r of rows) {
-    if (r.projectIds.length > 0 && !(projectId && r.projectIds.includes(projectId))) continue;
+  for (const row of rows) {
+    if (row.projectIds.length > 0 && !(projectId && row.projectIds.includes(projectId))) continue;
+    // A signed-in server's token is renewed on the way out; one that cannot be
+    // renewed is left out rather than sent to fail in the session.
+    const r = await ensureFresh(deps, row);
+    if (expired(r)) continue;
     const tools = r.tools.filter((t) => t.allowed).map((t) => t.name);
     if (tools.length === 0) continue;
     let headers: Record<string, string> = {};

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { CredentialStore, decryptSecret, loadConfig } from "@console/core";
 import { auditLog, mcpServers, memberships, orgs, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -11,6 +12,8 @@ import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/context.js";
 import { isPublicAddress, sseMessages } from "../src/mcp-client.js";
 import { mergeTools, slugFor } from "../src/routes/tools.js";
+import { renewDue, SIGN_IN_AGAIN } from "../src/mcp-oauth-store.js";
+import { createHash } from "node:crypto";
 
 /**
  * Compass → Tools: an admin adds a remote MCP server; Compass lists its tools
@@ -21,7 +24,7 @@ import { mergeTools, slugFor } from "../src/routes/tools.js";
 /** DNS without the network: the test hosts, plus one that points inside. */
 vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async (host: string) => {
-    if (host === "docs.example.com") return [{ address: "93.184.215.14", family: 4 }];
+    if (host === "docs.example.com" || host === "mcp.example.com" || host === "auth.example.com") return [{ address: "93.184.215.14", family: 4 }];
     if (host === "metadata.example.com") return [{ address: "169.254.169.254", family: 4 }];
     throw new Error("ENOTFOUND");
   }),
@@ -296,5 +299,192 @@ describe("helpers", () => {
       { name: "a", readOnly: false, allowed: true },
       { name: "b", readOnly: true, allowed: true },
     ]);
+  });
+});
+
+
+describe("servers that sign in (OAuth)", () => {
+  const MCP = "https://mcp.example.com/mcp";
+  const AS = "https://auth.example.com";
+  let challenge = "";
+  let tokens: Record<string, { access: string; refresh: string }>;
+  let calls: string[];
+  let registration = true;
+
+  function stubOAuthServer() {
+    calls = [];
+    tokens = { rt1: { access: "at2", refresh: "rt2" } };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const url = String(input);
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (url === MCP) {
+          const auth = headers.Authorization ?? headers.authorization;
+          if (!auth?.startsWith("Bearer at")) {
+            return new Response("", { status: 401, headers: { "www-authenticate": `Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"` } });
+          }
+          const msg = JSON.parse(String(init?.body)) as { id?: number; method: string };
+          if (msg.method === "initialize") return sse({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18" } });
+          if (msg.method === "tools/list") return sse({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "list_meetings", annotations: { readOnlyHint: true } }] } });
+          return new Response(null, { status: 202 });
+        }
+        if (url === "https://mcp.example.com/.well-known/oauth-protected-resource/mcp") {
+          return Response.json({ resource: MCP, authorization_servers: [AS], scopes_supported: ["mcp"] });
+        }
+        if (url === `${AS}/.well-known/oauth-authorization-server`) {
+          return Response.json({
+            issuer: AS,
+            authorization_endpoint: "https://login.example.com/authorize",
+            token_endpoint: `${AS}/token`,
+            ...(registration ? { registration_endpoint: `${AS}/register` } : {}),
+            code_challenge_methods_supported: ["S256"],
+          });
+        }
+        if (url === `${AS}/register`) {
+          const body = JSON.parse(String(init?.body)) as { redirect_uris: string[]; token_endpoint_auth_method: string };
+          expect(body.token_endpoint_auth_method).toBe("none");
+          expect(body.redirect_uris[0]).toMatch(/\/api\/tools\/oauth\/callback$/);
+          return Response.json({ client_id: "cid" }, { status: 201 });
+        }
+        if (url === `${AS}/token`) {
+          const form = new URLSearchParams(String(init?.body));
+          expect(form.get("client_id")).toBe("cid");
+          expect(form.get("resource")).toBe(MCP);
+          if (form.get("grant_type") === "authorization_code") {
+            const verifier = form.get("code_verifier") ?? "";
+            if (form.get("code") !== "good" || createHash("sha256").update(verifier).digest("base64url") !== challenge) {
+              return Response.json({ error: "invalid_grant" }, { status: 400 });
+            }
+            return Response.json({ access_token: "at1", refresh_token: "rt1", expires_in: 3600 });
+          }
+          const next = tokens[form.get("refresh_token") ?? ""];
+          if (!next) return Response.json({ error: "invalid_grant", error_description: "revoked" }, { status: 400 });
+          return Response.json({ access_token: next.access, refresh_token: next.refresh, expires_in: 3600 });
+        }
+        return new Response("nope", { status: 404 });
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    registration = true;
+    stubOAuthServer();
+  });
+
+  async function signIn(body: Record<string, unknown> = { label: "Fathom", url: MCP }, who = admin) {
+    const started = await app.inject({ method: "POST", url: `/api/orgs/${orgId}/tools/sign-in`, headers: who, payload: body });
+    if (started.statusCode !== 200) return { started, back: null };
+    const to = new URL(started.json().authorizeUrl);
+    challenge = to.searchParams.get("code_challenge")!;
+    const state = to.searchParams.get("state")!;
+    const back = await app.inject({ method: "GET", url: `/api/tools/oauth/callback?code=good&state=${state}`, headers: { cookie: admin.cookie } });
+    return { started, back, to };
+  }
+
+  const row = async () => (await deps.dbh.db.select().from(mcpServers))[0]!;
+  const said = (res: { headers: Record<string, unknown> }) => new URL(String(res.headers.location), "https://compass.test").searchParams.get("sign_in_error") ?? "";
+
+  it("discovers the server's sign-in, registers, sends the browser with PKCE, and saves the server with its tools", async () => {
+    const { started, back, to } = await signIn();
+    expect(started.statusCode).toBe(200);
+    expect(to!.origin + to!.pathname).toBe("https://login.example.com/authorize");
+    expect(Object.fromEntries(["response_type", "client_id", "code_challenge_method", "resource", "scope"].map((k) => [k, to!.searchParams.get(k)]))).toEqual({
+      response_type: "code",
+      client_id: "cid",
+      code_challenge_method: "S256",
+      resource: MCP,
+      scope: "mcp",
+    });
+    expect(back!.statusCode).toBe(302);
+    expect(back!.headers.location).toBe("/tools?signed_in=Fathom");
+    const r = await row();
+    expect([r.authKind, r.oauthBy, r.headerNames, r.tools.map((t) => [t.name, t.allowed])]).toEqual(["oauth", "alice", ["Authorization"], [["list_meetings", true]]]);
+    expect(JSON.parse(decryptSecret(r.encryptedHeaders!, MASTER_KEY))).toEqual({ Authorization: "Bearer at1" });
+    const listed = await app.inject({ method: "GET", url: `/api/orgs/${orgId}/tools`, headers: admin });
+    expect(listed.body).not.toMatch(/at1|rt1|cid/);
+    expect(listed.json().servers[0]).toMatchObject({ authKind: "oauth", oauthBy: "alice" });
+    expect((await deps.dbh.db.select().from(auditLog)).some((a) => a.action === "tools.sign_in")).toBe(true);
+  });
+
+  it("says when adding by URL alone meets a server that wants a sign-in", async () => {
+    const res = await add({ label: "Fathom", url: MCP });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ signIn: true });
+    expect(res.json().error).toMatch(/Press Sign in/);
+  });
+
+  it("refuses an unknown or reused state, another person's return, and a refusal on the server's page", async () => {
+    const unknown = await app.inject({ method: "GET", url: "/api/tools/oauth/callback?code=good&state=nope", headers: { cookie: admin.cookie } });
+    expect(said(unknown)).toMatch(/That sign-in had expired/);
+
+    const started = await app.inject({ method: "POST", url: `/api/orgs/${orgId}/tools/sign-in`, headers: admin, payload: { label: "Fathom", url: MCP } });
+    const state = new URL(started.json().authorizeUrl).searchParams.get("state")!;
+    const other = await app.inject({ method: "GET", url: `/api/tools/oauth/callback?code=good&state=${state}`, headers: { cookie: member.cookie } });
+    expect(said(other)).toMatch(/started by someone else/);
+    const again = await app.inject({ method: "GET", url: `/api/tools/oauth/callback?code=good&state=${state}`, headers: { cookie: admin.cookie } });
+    expect(said(again)).toMatch(/had expired/);
+
+    const s2 = new URL((await app.inject({ method: "POST", url: `/api/orgs/${orgId}/tools/sign-in`, headers: admin, payload: { label: "Fathom", url: MCP } })).json().authorizeUrl).searchParams.get("state")!;
+    const denied = await app.inject({ method: "GET", url: `/api/tools/oauth/callback?error=access_denied&state=${s2}`, headers: { cookie: admin.cookie } });
+    expect(said(denied)).toMatch(/Fathom did not sign in: access_denied/);
+    expect(await deps.dbh.db.select().from(mcpServers)).toHaveLength(0);
+  });
+
+  it("says why when the server does not let apps register", async () => {
+    registration = false;
+    const res = await app.inject({ method: "POST", url: `/api/orgs/${orgId}/tools/sign-in`, headers: admin, payload: { url: MCP } });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error).toMatch(/does not let apps register themselves/);
+  });
+
+  it("is for admins only", async () => {
+    const res = await app.inject({ method: "POST", url: `/api/orgs/${orgId}/tools/sign-in`, headers: member, payload: { url: MCP } });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("renews a token about to run out before handing it to the orchestrator, and leaves out one that cannot renew", async () => {
+    deps.cfg.ORCHESTRATOR_DISPATCH_TOKEN = "dispatch-tok";
+    const { estates, repos } = await import("@console/db");
+    const estate = (await deps.dbh.db.insert(estates).values({ orgId, name: "acme-oauth", installationId: 6 }).returning())[0]!;
+    await deps.dbh.db.insert(repos).values({ orgId, estateId: estate.id, ghNodeId: "R-oauth", fullName: "acme/oauth-app" }).onConflictDoNothing();
+    await signIn();
+    const r = await row();
+    await deps.dbh.db.update(mcpServers).set({ oauthExpiresAt: new Date(Date.now() + 60_000) }).where(eq(mcpServers.id, r.id));
+
+    const url = "/api/orchestrator/mcp-servers?repo=acme/oauth-app";
+    const got = await app.inject({ method: "GET", url, headers: { authorization: "Bearer dispatch-tok" } });
+    expect(got.json().servers[0].headers).toEqual({ Authorization: "Bearer at2" });
+    expect((await row()).oauthExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+
+    // The next renewal is refused (revoked in Fathom): the server drops out and says so.
+    await deps.dbh.db.update(mcpServers).set({ oauthExpiresAt: new Date(Date.now() - 1000) }).where(eq(mcpServers.id, r.id));
+    tokens = {};
+    const after = await app.inject({ method: "GET", url, headers: { authorization: "Bearer dispatch-tok" } });
+    expect(after.json().servers).toEqual([]);
+    expect((await row()).checkError).toContain(SIGN_IN_AGAIN);
+  });
+
+  it("renews in the background only the tokens that are due", async () => {
+    await signIn();
+    expect(await renewDue(deps)).toBe(0);
+    const r = await row();
+    await deps.dbh.db.update(mcpServers).set({ oauthExpiresAt: new Date(Date.now() + 5 * 60_000) }).where(eq(mcpServers.id, r.id));
+    expect(await renewDue(deps)).toBe(1);
+    expect(JSON.parse(decryptSecret((await row()).encryptedHeaders!, MASTER_KEY))).toEqual({ Authorization: "Bearer at2" });
+  });
+
+  it("will not take typed headers for a signed-in server, and Sign in again keeps the tool choices", async () => {
+    await signIn();
+    const r = await row();
+    const typed = await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${r.id}`, headers: admin, payload: { headers: [{ name: "x-api-key", value: "k" }] } });
+    expect(typed.statusCode).toBe(409);
+    await app.inject({ method: "PATCH", url: `/api/orgs/${orgId}/tools/${r.id}`, headers: admin, payload: { tools: { list_meetings: false } } });
+    const { back } = await signIn({ serverId: r.id });
+    expect(back!.headers.location).toBe("/tools?signed_in=Fathom");
+    const rows = await deps.dbh.db.select().from(mcpServers);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tools).toEqual([{ name: "list_meetings", readOnly: true, allowed: false }]);
   });
 });

@@ -125,3 +125,35 @@ describe("the Tools page", () => {
   });
 });
 
+
+describe("ToolsPage sign-in", () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset();
+    vi.mocked(api.post).mockReset();
+  });
+
+  it("starts a sign-in for a new server and sends the browser to the server's page", async () => {
+    vi.mocked(api.get).mockImplementation(respond([]) as never);
+    vi.mocked(api.post).mockResolvedValue({ authorizeUrl: "https://login.example.com/authorize?x=1" } as never);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, search: "", pathname: "/tools" });
+    renderPage();
+    await userEvent.type(await screen.findByPlaceholderText("Sarvam docs"), "Fathom");
+    await userEvent.type(screen.getByPlaceholderText("https://…"), "https://api.fathom.ai/mcp");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(api.post).toHaveBeenCalledWith("/api/orgs/o1/tools/sign-in", { label: "Fathom", url: "https://api.fathom.ai/mcp", transport: "http" });
+    expect(assign).toHaveBeenCalledWith("https://login.example.com/authorize?x=1");
+    vi.unstubAllGlobals();
+  });
+
+  it("shows whose account a signed-in server uses, offers Sign in again, and says how a sign-in went", async () => {
+    vi.mocked(api.get).mockImplementation(respond([{ ...sarvam, label: "Fathom", authKind: "oauth", oauthBy: "jerry", headerNames: ["Authorization"] }]) as never);
+    window.history.replaceState(null, "", "/tools?signed_in=Fathom");
+    renderPage();
+    expect(await screen.findByText("Signed in to Fathom. Its tools are listed below.")).toBeInTheDocument();
+    expect(await screen.findByText(/Signed in as jerry's account/)).toBeInTheDocument();
+    expect(screen.queryByText(/headers: Authorization/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+  });
+});
