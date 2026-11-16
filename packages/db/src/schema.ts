@@ -810,6 +810,18 @@ export const mcpServers = pgTable(
     /** Sealed JSON object of request headers (API keys); never sent to the browser. */
     encryptedHeaders: text("encrypted_headers"),
     headerNames: jsonb("header_names").$type<string[]>().notNull().default([]),
+    /**
+     * "headers": the admin typed the headers (an API key). "oauth": a person
+     * signed in; Compass keeps the grant in `encryptedOauth` and writes the
+     * current access token into `encryptedHeaders` as `Authorization`, renewing
+     * it before `oauthExpiresAt`, so the orchestrator reads it like any key.
+     */
+    authKind: text("auth_kind").$type<"headers" | "oauth">().notNull().default("headers"),
+    /** Sealed OAuthGrant (client, endpoints, refresh token); never sent to the browser or the orchestrator. */
+    encryptedOauth: text("encrypted_oauth"),
+    oauthExpiresAt: timestamp("oauth_expires_at", { withTimezone: true }),
+    /** Compass login of the person whose account the server signs in as. */
+    oauthBy: text("oauth_by"),
     /** Projects this server is for. Empty: every project of the org. Otherwise only conversations and runs in those projects get it. */
     projectIds: jsonb("project_ids").$type<string[]>().notNull().default([]),
     tools: jsonb("tools").$type<McpTool[]>().notNull().default([]),

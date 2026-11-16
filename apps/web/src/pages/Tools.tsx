@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError, api } from "../api.js";
 import type { Me, ProjectsData } from "../types.js";
 
@@ -18,6 +18,11 @@ export interface McpServerView {
   url: string;
   transport: "http" | "sse";
   headerNames: string[];
+  /** "oauth": a person signed in and Compass renews the token; "headers": an API key typed here. */
+  authKind?: "headers" | "oauth";
+  /** Compass login of whoever signed in. */
+  oauthBy?: string | null;
+  oauthExpiresAt?: string | null;
   /** The projects this server is for; empty means every project. */
   projectIds: string[];
   tools: McpToolView[];
@@ -43,6 +48,12 @@ const PLACES = [
   { key: "useBuild", label: "Builds", hint: "every factory role run, unattended" },
 ] as const;
 
+/** Send the browser to the server's sign-in page; it comes back to Tools. */
+async function startSignIn(orgId: string, body: Record<string, unknown>): Promise<void> {
+  const { authorizeUrl } = await api.post<{ authorizeUrl: string }>(`/api/orgs/${orgId}/tools/sign-in`, body);
+  window.location.assign(authorizeUrl);
+}
+
 function errorText(e: unknown): string {
   return e instanceof ApiError ? e.message : "That did not go through. Try again.";
 }
@@ -53,9 +64,19 @@ function errorText(e: unknown): string {
  * server is added here once, for the whole org.
  */
 export function ToolsPage({ me }: { me: Me }) {
+  // Coming back from a server's sign-in page: say how it went, once.
+  const [returned] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return { signedIn: q.get("signed_in"), error: q.get("sign_in_error") };
+  });
+  useEffect(() => {
+    if (returned.signedIn || returned.error) window.history.replaceState(null, "", window.location.pathname);
+  }, [returned]);
   return (
     <div>
       <h1>Tools</h1>
+      {returned.signedIn && <div className="banner info">Signed in to {returned.signedIn}. Its tools are listed below.</div>}
+      {returned.error && <div className="banner error">{returned.error}</div>}
       <p className="muted">
         MCP servers the factory&apos;s Claude can use — in Shape, when answering questions, and in builds. Connectors you added on claude.ai belong to your
         claude.ai account and do not reach the factory; add the same server here by its URL. A change applies from the next message or run.
@@ -143,7 +164,11 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
     onSuccess: done,
     onError: (e) => setFailure(errorText(e)),
   });
-  const busy = change.isPending || test.isPending || remove.isPending;
+  const signIn = useMutation({
+    mutationFn: () => startSignIn(orgId, { serverId: s.id }),
+    onError: (e) => setFailure(errorText(e)),
+  });
+  const busy = change.isPending || test.isPending || remove.isPending || signIn.isPending;
   const allowed = s.tools.filter((t) => t.allowed).length;
 
   return (
@@ -155,9 +180,15 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
         <span className="muted" style={{ wordBreak: "break-all" }}>
           {s.url}
           {s.transport === "sse" ? " · SSE" : ""}
-          {s.headerNames.length > 0 ? ` · headers: ${s.headerNames.join(", ")}` : ""}
+          {s.authKind === "oauth" ? "" : s.headerNames.length > 0 ? ` · headers: ${s.headerNames.join(", ")}` : ""}
         </span>
       </div>
+      {s.authKind === "oauth" && (
+        <p className="muted">
+          Signed in{s.oauthBy ? ` as ${s.oauthBy}'s account` : ""}. Compass renews the sign-in by itself. Every session this server is used in reads that
+          account.
+        </p>
+      )}
       {s.checkError && <p className="decision-failure">Last test failed: {s.checkError}</p>}
 
       <ProjectPicker projects={projects} value={s.projectIds ?? []} disabled={!canEdit || busy} onChange={(ids) => change.mutate({ projectIds: ids })} />
@@ -203,6 +234,11 @@ function ServerBlock({ orgId, server: s, canEdit, projects }: { orgId: string; s
           <button type="button" disabled={busy} onClick={() => test.mutate()}>
             {test.isPending ? "Testing…" : "Test again"}
           </button>
+          {s.authKind === "oauth" && (
+            <button type="button" disabled={busy} onClick={() => signIn.mutate()}>
+              {signIn.isPending ? "Opening sign-in…" : "Sign in again"}
+            </button>
+          )}
           <button type="button" disabled={busy} onClick={() => change.mutate({ enabled: !s.enabled })}>
             {s.enabled ? "Turn off" : "Turn on"}
           </button>
@@ -253,6 +289,16 @@ function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] 
       void qc.invalidateQueries({ queryKey: ["org-tools", orgId] });
     },
   });
+  const signIn = useMutation({
+    mutationFn: () =>
+      startSignIn(orgId, {
+        label: label.trim(),
+        url: url.trim(),
+        transport,
+        ...(projectIds.length > 0 ? { projectIds } : {}),
+      }),
+  });
+  const wantsSignIn = add.error instanceof ApiError && /sign in/i.test(add.error.message);
   const setHeader = (i: number, patch: Partial<{ name: string; value: string }>) => setHeaders((hs) => hs.map((h, j) => (j === i ? { ...h, ...patch } : h)));
 
   return (
@@ -306,13 +352,20 @@ function AddServer({ orgId, projects }: { orgId: string; projects: ProjectRef[] 
           <button type="button" onClick={() => setHeaders((hs) => [...hs, { name: "", value: "" }])}>
             Add a header (API key)
           </button>
-          <button type="submit" className="primary" disabled={add.isPending || !url.trim()}>
+          <button type="submit" className={wantsSignIn ? "" : "primary"} disabled={add.isPending || signIn.isPending || !url.trim()}>
             {add.isPending ? "Connecting…" : "Add server"}
           </button>
+          <button type="button" className={wantsSignIn ? "primary" : ""} disabled={add.isPending || signIn.isPending || !url.trim()} onClick={() => signIn.mutate()}>
+            {signIn.isPending ? "Opening sign-in…" : "Sign in"}
+          </button>
         </div>
-        <p className="muted">Header values are stored sealed and are never shown again.</p>
+        <p className="muted">
+          Header values are stored sealed and are never shown again. For a server that asks you to sign in (like Fathom), press Sign in: you approve
+          Compass on the server&apos;s own page, and every session this server is used in then reads your account.
+        </p>
       </div>
       {add.isError && <p className="decision-failure">{errorText(add.error)}</p>}
+      {signIn.isError && <p className="decision-failure">{errorText(signIn.error)}</p>}
     </form>
   );
 }
