@@ -353,7 +353,10 @@ describe("gate GS", () => {
   it("leaves G3 exactly as it was — the merge is the gate", async () => {
     const g3 = (await deps.dbh.db.select().from(issues).where(eq(issues.number, 600)))[0]!;
     const panel = await app.inject({ method: "GET", url: `/api/epics/${g3.id}/gate`, headers: { cookie } });
-    expect(panel.json()).toMatchObject({ gate: "release", label: "G3", commentApprovable: false, assembly: null });
+    expect(panel.json()).toMatchObject({ gate: "release", label: "G3", commentApprovable: false });
+    // G3 carries the system test evidence the production decision weighs (FACTORY.md §4b,
+    // Simulated cases) — evidence only: it is still merged, never approved by comment.
+    expect(Array.isArray(panel.json().assembly.cases)).toBe(true);
 
     const calls = stubGitHub(201, {});
     const res = await app.inject({ method: "POST", url: `/api/epics/${g3.id}/gate/approve`, headers, payload: {} });

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { CredentialStore, encryptSecret, loadConfig } from "@console/core";
-import { estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
+import { comments, estates, issues, memberships, orgs, repos, sessions, users } from "@console/db";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdir, readFile } from "node:fs/promises";
@@ -124,6 +124,37 @@ beforeAll(async () => {
 
   // An epic in a repo whose policy says no.
   id.off = (await mk({ title: "off epic", kind: "epic", factoryState: "factory:design-approved", repoId: offRepo.id })).id;
+
+  // An epic on staging whose cases were sorted into simulated and manual (FACTORY.md §4b,
+  // Simulated cases), after a simulated run: one simulated case passed and closed, one failed
+  // with no fix yet, one failed with its fix filed, and a manual one still open.
+  const sim = await mk({ title: "simulated epic", kind: "epic", factoryState: "factory:in-staging" });
+  const simPassed = await mk({ title: "test(20): ST-21 tried on days 1, 2, 9 and 10", kind: "test",
+                               factoryState: "factory:test-passed", state: "closed", parentIssueId: sim.id,
+                               body: "Part of #20\n\n**Execution:** simulated" });
+  const simFailed = await mk({ title: "test(20): ST-25 cap at 4 gives Lost", kind: "test",
+                               factoryState: "factory:test-failed", parentIssueId: sim.id,
+                               body: "Part of #20\n\n**Execution:** simulated" });
+  const simFixing = await mk({ title: "test(20): ST-26 callback is one attempt", kind: "test",
+                               factoryState: "factory:test-failed", parentIssueId: sim.id,
+                               body: "Part of #20\n\n**Execution:** simulated\n\nBlocked by #99\n" });
+  const manual = await mk({ title: "test(20): ST-1 answered call shows Connected", kind: "test",
+                            factoryState: "factory:manual-test", parentIssueId: sim.id,
+                            body: "Part of #20\n\n**Execution:** manual — real audio on a real phone" });
+  const RUN_URL = "https://github.com/acme/infra/actions/runs/4401";
+  const SHA = "a".repeat(40);
+  let c = 0;
+  const say = async (issueId: string, body: string) =>
+    d.insert(comments).values({ orgId: org.id, issueId, ghNodeId: `C${++c}`, ghId: c, body,
+                                ghCreatedAt: new Date(Date.UTC(2026, 10, 17, 0, c)),
+                                ghUpdatedAt: new Date(Date.UTC(2026, 10, 17, 0, c)) });
+  await say(simPassed.id, `**ST-21 passed in the simulated environment** — run [4401](${RUN_URL}) on \`aaaaaaaaaaaa\`. Closing it.\n\n<!-- sim-run: 4401 ${SHA} -->`);
+  await say(simFailed.id, `**ST-25 failed in the simulated environment** — run [4401](${RUN_URL}) on \`aaaaaaaaaaaa\`.\n\n- step 7 (expect): expected exactly 4 calls items with lead 'nora', found 5\n\n**You need to:** decide at G3.\n\n<!-- sim-run: 4401 ${SHA} -->`);
+  await say(simFixing.id, `**ST-26 failed in the simulated environment** — run [4401](${RUN_URL}) on \`aaaaaaaaaaaa\`.\n\n- step 3 (expect): found 0\n\n<!-- sim-run: 4401 ${SHA} -->`);
+  await say(sim.id, `**Simulated tests: 1 of 3 passed** — run [4401](${RUN_URL}) on \`aaaaaaaaaaaa\`.\n- Also failing in this run (not this epic's cases): \`retry-gaps\`.\n\n<!-- sim-run: 4401 -->`);
+  id.sim = sim.id;
+  id.simFailed = simFailed.id;
+  id.simFixing = simFixing.id;
 });
 
 const get = async (epicId: string) =>
@@ -184,6 +215,69 @@ describe("POST /api/issues/:id/test-verdict", () => {
 
   it("409s on an issue that is not a case at all", async () => {
     expect((await post(id.epic!, { verdict: "passed" })).statusCode).toBe(409);
+  });
+});
+
+describe("simulated cases in the epic payload", () => {
+  it("carries each case's kind, the run's verdict with its failing steps, and the filed fix", async () => {
+    const { tasks, systemTests } = await get(id.sim!);
+    const byCase = Object.fromEntries(tasks.map((t: { caseId: string }) => [t.caseId, t]));
+    expect(byCase["ST-21"].execution).toEqual({ kind: "simulated" });
+    expect(byCase["ST-21"].simulated).toMatchObject({ run: 4401, result: "passed", failures: [] });
+    expect(byCase["ST-25"].simulated).toMatchObject({
+      result: "failed",
+      runUrl: "https://github.com/acme/infra/actions/runs/4401",
+      failures: ["step 7 (expect): expected exactly 4 calls items with lead 'nora', found 5"],
+    });
+    expect(byCase["ST-25"].fixFiled).toBeNull();
+    expect(byCase["ST-26"].fixFiled).toBe(99);
+    expect(byCase["ST-1"].execution).toEqual({ kind: "manual", reason: "real audio on a real phone" });
+    expect(byCase["ST-1"].simulated).toBeNull();
+    expect(systemTests.simulatedRun).toEqual({
+      run: 4401,
+      runUrl: "https://github.com/acme/infra/actions/runs/4401",
+      regressions: ["retry-gaps"],
+    });
+  });
+
+  it("reads an epic with no simulated run as before", async () => {
+    const { tasks, systemTests } = await get(id.epic!);
+    expect(systemTests.simulatedRun).toBeNull();
+    expect(tasks.filter((t: { kind: string }) => t.kind === "test").every((t: { execution: unknown }) => t.execution === null)).toBe(true);
+  });
+});
+
+describe("turning a simulated failure into a fix", () => {
+  const post = (issueId: string, body: unknown) =>
+    app.inject({
+      method: "POST",
+      url: `/api/issues/${issueId}/test-verdict`,
+      headers: { cookie, "x-console-csrf": "1", "content-type": "application/json" },
+      payload: body,
+    });
+
+  it("lets Test Failed and Test Failed, expedite through on a simulated failure with no fix", async () => {
+    // Past the guard, the comment goes to GitHub as the acting user; this test's GitHub is not
+    // reachable, so anything but the guard's own 400 or 409 shows the guard let it through.
+    for (const verdict of ["failed", "failed-expedite"]) {
+      const res = await post(id.simFailed!, { verdict });
+      expect([400, 409]).not.toContain(res.statusCode);
+    }
+  });
+
+  it("refuses a pass on a simulated failure, and any verdict once its fix is filed", async () => {
+    expect((await post(id.simFailed!, { verdict: "passed" })).statusCode).toBe(409);
+    expect((await post(id.simFixing!, { verdict: "failed" })).statusCode).toBe(409);
+    expect((await post(id.simFixing!, { verdict: "failed-expedite" })).statusCode).toBe(409);
+  });
+
+  it("treats a failed case with no fix marker as a simulated failure, and refuses an unknown verdict", async () => {
+    const { tasks } = await get(id.epic!);
+    const failedNoMarker = tasks.find((t: { title: string }) => t.title.includes("ST-3"));
+    // ST-3 at factory:test-failed with no fix marker and no simulated run reads as a simulated
+    // failure too: the marker in its body is the only thing that says a fix exists.
+    expect([400, 409]).not.toContain((await post(failedNoMarker.id, { verdict: "failed-expedite" })).statusCode);
+    expect((await post(id.simFailed!, { verdict: "failed, expedite" })).statusCode).toBe(400);
   });
 });
 

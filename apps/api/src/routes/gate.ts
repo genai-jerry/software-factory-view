@@ -12,6 +12,10 @@ import {
   TEST_PASSED_STATE,
   TEST_SKIPPED_STATE,
   decryptSecret,
+  caseExecution,
+  caseFix,
+  latestSimulatedSummary,
+  latestSimulatedVerdict,
 } from "@console/core";
 import {
   artifactCache,
@@ -27,7 +31,7 @@ import {
   threads,
   type Db,
 } from "@console/db";
-import { and, desc, eq, inArray, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireAuth, userClient, type AppDeps } from "../context.js";
 import { githubMessage, postComment } from "../gh-write.js";
@@ -145,7 +149,10 @@ export function registerGateRoutes(app: FastifyInstance, deps: AppDeps): void {
     // read for the first time. The tasks table, the newest agent report on the
     // epic (assembly/dispatch report, suite results) and the PRs still open
     // against it.
-    const assembly = gateInfo.gate === "staging" ? await loadAssemblyEvidence(deps, epic, repo) : null;
+    // At G3 the same matrix is the evidence the production decision weighs: by then a simulated run
+    // has recorded its verdicts on the simulated cases (FACTORY.md §4b, Simulated cases).
+    const assembly =
+      gateInfo.gate === "staging" || gateInfo.gate === "release" ? await loadAssemblyEvidence(deps, epic, repo) : null;
     // GS approved already? The release is the factory's then; the panel says so
     // and shows what it still asks, instead of offering the release again.
     const release = gateInfo.gate === "staging" ? (await loadReleaseMeta(deps, [epic.id])).get(epic.id) : undefined;
@@ -393,8 +400,13 @@ async function loadAssemblyEvidence(
     verdict: "passed" | "failed" | "runnable" | "pending" | "skipped";
     verdictBy: string | null;
     verdictAt: Date | null;
+    id: string;
+    execution: ReturnType<typeof caseExecution>;
+    simulated: ReturnType<typeof latestSimulatedVerdict>;
+    fixFiled: number | null;
   }>;
   testsOutstanding: number;
+  simulatedRun: ReturnType<typeof latestSimulatedSummary>;
   /** The epic's bug reports (§4c) — the other half of the evidence at GS. */
   bugs: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
   bugsOpen: number;
@@ -447,7 +459,23 @@ async function loadAssemblyEvidence(
             : ("pending" as const),
     verdictBy: verdictOf.get(c.id)?.author ?? null,
     verdictAt: verdictOf.get(c.id)?.at ?? null,
+    // Simulated cases (FACTORY.md §4b): which kind, the newest simulated verdict, and the fix.
+    id: c.id,
+    execution: caseExecution(c.body),
+    simulated: latestSimulatedVerdict(
+      verdicts.filter((v) => v.issueId === c.id).map((v) => v.body ?? "").reverse(),
+    ),
+    fixFiled: caseFix(c.body),
   }));
+  const simulatedRun = latestSimulatedSummary(
+    (
+      await db
+        .select({ body: comments.body })
+        .from(comments)
+        .where(and(eq(comments.issueId, epic.id), like(comments.body, "%<!-- sim-run:%")))
+        .orderBy(comments.ghCreatedAt)
+    ).map((r) => r.body),
+  );
 
   // Bug reports (§4c) are children of the epic like cases, and like cases
   // they are neither tasks nor part of the assembly check above.
@@ -481,6 +509,8 @@ async function loadAssemblyEvidence(
      * button would strand it.
      */
     testsOutstanding: cases.filter((c) => c.verdict !== "passed" && c.verdict !== "skipped").length,
+    /** The newest simulated run recorded on the epic, with the regressions it named. */
+    simulatedRun,
     bugs,
     /**
      * Open bug reports (FACTORY.md §4c). Under `mode: gate` with an epic

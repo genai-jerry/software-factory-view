@@ -316,3 +316,78 @@ describe("bugs raised in testing", () => {
     expect(screen.getByText(/Bug reports are off in this repository/)).toBeTruthy();
   });
 });
+
+describe("simulated cases (FACTORY.md §4b, Simulated cases)", () => {
+  const RUN = "https://github.com/acme/infra/actions/runs/4401";
+  const verdict = (result: "passed" | "failed", failures: string[] = []) => ({
+    run: 4401, sha: "a".repeat(40), runUrl: RUN, result, failures,
+  });
+  const simFailed = {
+    ...failedCase, id: "case-25", caseId: "ST-25", title: "test(9): ST-25 Cap at 4 gives Lost",
+    execution: { kind: "simulated" as const }, fixFiled: null,
+    simulated: verdict("failed", ["step 7 (expect): expected exactly 4 calls items with lead 'nora', found 5"]),
+  };
+  const simPassed = {
+    ...passedCase, id: "case-21", caseId: "ST-21", execution: { kind: "simulated" as const },
+    simulated: verdict("passed"), fixFiled: null,
+  };
+  const manualCase = {
+    ...runnableCase, execution: { kind: "manual" as const, reason: "real audio on a real phone" },
+    simulated: null, fixFiled: null,
+  };
+  const run = { run: 4401, runUrl: RUN, regressions: ["retry-gaps"] };
+
+  it("marks each case simulated or manual, with the reason a case is manual", () => {
+    renderIn(<TestsTab data={workspace([simPassed, manualCase], { simulatedRun: run })} />);
+    expect(screen.getAllByText("Simulated").length).toBeGreaterThan(0);
+    expect(screen.getByText("Manual — real audio on a real phone")).toBeTruthy();
+  });
+
+  it("shows a simulated failure clearly: the failing step, the run and the commit", () => {
+    renderIn(<TestsTab data={workspace([simFailed])} />);
+    expect(screen.getByText("Failed in the simulated environment")).toBeTruthy();
+    expect(screen.getByText("step 7 (expect): expected exactly 4 calls items with lead 'nora', found 5")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "run 4401" }).getAttribute("href")).toBe(RUN);
+    expect(screen.getByText("aaaaaaaaaaaa")).toBeTruthy();
+  });
+
+  it("sums the simulated and manual cases, links the run and names the regressions", () => {
+    renderIn(<TestsTab data={workspace([simPassed, simFailed, manualCase], { simulatedRun: run })} />);
+    expect(screen.getByText(/Simulated: 1 passed, 1 failed/)).toBeTruthy();
+    expect(screen.getByText(/Manual: 1 still open/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "latest run 4401" })).toBeTruthy();
+    expect(screen.getByText("retry-gaps")).toBeTruthy();
+  });
+
+  it("turns a simulated failure into a fix, after saying what it will do", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderIn(<TestsTab data={workspace([simFailed])} />);
+    await userEvent.click(screen.getByRole("button", { name: "Create fix task" }));
+    expect(screen.getByText(/File a task to fix ST-25\?/)).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/issues/case-25/test-verdict", { verdict: "failed" }));
+  });
+
+  it("can ask for the fix expedited", async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    renderIn(<TestsTab data={workspace([simFailed])} />);
+    await userEvent.click(screen.getByRole("button", { name: "Create fix task (expedite)" }));
+    expect(screen.getByText(/builds itself up to the staging release/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/issues/case-25/test-verdict", { verdict: "failed-expedite" }),
+    );
+  });
+
+  it("shows the filed fix instead of the buttons once there is one", () => {
+    renderIn(<TestsTab data={workspace([{ ...simFailed, fixFiled: 99 }])} />);
+    expect(screen.getByText(/Fix filed: #99/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create fix task" })).toBeNull();
+  });
+
+  it("offers no fix buttons on a manual failure, which already filed its fix", () => {
+    renderIn(<TestsTab data={workspace([failedCase])} />);
+    expect(screen.queryByRole("button", { name: "Create fix task" })).toBeNull();
+  });
+});

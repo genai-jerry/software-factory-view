@@ -287,6 +287,12 @@ export interface EpicWorkspace {
     title: string;
     kind: string;
     caseId: string | null;
+    /** A case's kind (FACTORY.md §4b, Simulated cases): simulated, or manual with the reason. */
+    execution?: SimulatedCaseExecution | null;
+    /** The newest simulated run's verdict on this case. */
+    simulated?: SimulatedCaseVerdict | null;
+    /** The fix already filed for this case (`Blocked by #<n>`). */
+    fixFiled?: number | null;
     state: string | null;
     open: boolean;
     htmlUrl: string;
@@ -344,6 +350,8 @@ export interface EpicWorkspace {
     runOn?: "epic" | "staging" | null;
     /** A plan exists: the document, the cases, or both. */
     planned: boolean;
+    /** The newest simulated run recorded on this epic, and the regressions it named. */
+    simulatedRun?: { run: number; runUrl: string | null; regressions: string[] } | null;
     /** The plan document. `merged: false` is why cases are not runnable yet. */
     plan: { path: string; merged: boolean } | null;
     /** Whether to offer Plan tests, and — when not — why not. */
@@ -416,8 +424,13 @@ export interface GatePanelData {
       verdict: "passed" | "failed" | "runnable" | "pending" | "skipped";
       verdictBy: string | null;
       verdictAt: string | null;
+      id?: string;
+      execution?: SimulatedCaseExecution | null;
+      simulated?: SimulatedCaseVerdict | null;
+      fixFiled?: number | null;
     }>;
     testsOutstanding: number;
+    simulatedRun?: { run: number; runUrl: string | null; regressions: string[] } | null;
     /** Bug reports raised against this epic (FACTORY.md §4c). */
     bugs: Array<{ number: number; title: string; state: string | null; open: boolean; htmlUrl: string }>;
     bugsOpen: number;
@@ -827,4 +840,15 @@ export interface EnvironmentsView {
   staging: EnvCard[];
   lanes: EnvLane[];
   other: EnvCard[];
+}
+
+export type SimulatedCaseExecution = { kind: "simulated" } | { kind: "manual"; reason: string | null };
+
+export interface SimulatedCaseVerdict {
+  run: number;
+  sha: string;
+  runUrl: string | null;
+  result: "passed" | "failed";
+  /** The failing steps, as the scenario runner wrote them. */
+  failures: string[];
 }
