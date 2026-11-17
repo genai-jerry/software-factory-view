@@ -30,24 +30,38 @@ export interface SimulatedSummary {
   regressions: string[];
 }
 
-const EXECUTION = /\*\*Execution:\*\*\s*(simulated|manual)\b(?:\s*[—–-]\s*([^\n]+))?/i;
 const CASE_RUN = /<!--\s*sim-run:\s*(\d+)\s+([0-9a-f]{7,40})\s*-->/i;
 const EPIC_RUN = /<!--\s*sim-run:\s*(\d+)\s*-->/i;
 const RUN_LINK = /\[(\d+)\]\((https?:\/\/[^)\s]+)\)/;
-const REGRESSIONS = /^- Also failing in this run[^:]*:\s*(.+?)\.?\s*$/m;
-const FIX = /(?:^|\n)\s*blocked by\s*#(\d+)/i;
 
+const EXECUTION_LABEL = "**execution:**";
+
+/** Read line by line rather than with one pattern: a case body is user-editable text. */
 export function caseExecution(body: string | null | undefined): CaseExecution | null {
-  const m = EXECUTION.exec(body ?? "");
-  if (!m) return null;
-  if (m[1]!.toLowerCase() === "simulated") return { kind: "simulated" };
-  return { kind: "manual", reason: m[2]?.trim() || null };
+  for (const raw of (body ?? "").split("\n")) {
+    const at = raw.toLowerCase().indexOf(EXECUTION_LABEL);
+    if (at < 0) continue;
+    const rest = raw.slice(at + EXECUTION_LABEL.length).trim();
+    const word = rest.split(/[\s—–-]/, 1)[0]!.toLowerCase();
+    if (word === "simulated") return { kind: "simulated" };
+    if (word !== "manual") continue;
+    const reason = rest.slice("manual".length).trim().replace(/^[—–-]/, "").trim();
+    return { kind: "manual", reason: reason || null };
+  }
+  return null;
 }
 
 /** The fix already filed for a case (`Blocked by #<n>`), or null. */
 export function caseFix(body: string | null | undefined): number | null {
-  const m = FIX.exec(body ?? "");
-  return m ? Number(m[1]) : null;
+  for (const raw of (body ?? "").split("\n")) {
+    const line = raw.trim().toLowerCase();
+    if (!line.startsWith("blocked by")) continue;
+    const ref = line.slice("blocked by".length).trim();
+    if (!ref.startsWith("#")) continue;
+    const digits = ref.slice(1).match(/^\d+/);
+    if (digits) return Number(digits[0]);
+  }
+  return null;
 }
 
 export function simulatedVerdict(comment: string | null | undefined): SimulatedVerdict | null {
@@ -73,8 +87,8 @@ export function simulatedSummary(comment: string | null | undefined): SimulatedS
   const mark = EPIC_RUN.exec(body);
   if (!mark) return null;
   const link = RUN_LINK.exec(body.split("\n", 1)[0] ?? "");
-  const r = REGRESSIONS.exec(body);
-  const regressions = r ? Array.from(r[1]!.matchAll(/`([^`]+)`/g), (x) => x[1]!) : [];
+  const line = body.split("\n").find((l) => l.startsWith("- Also failing in this run"));
+  const regressions = line ? line.split("`").filter((_, i) => i % 2 === 1) : [];
   return { run: Number(mark[1]), runUrl: link ? link[2]! : null, regressions };
 }
 
