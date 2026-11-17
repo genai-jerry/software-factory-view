@@ -332,4 +332,44 @@ describe("the GS gate panel", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.queryByText("What was assembled")).toBeNull();
   });
+
+  it("shows the system tests at G3: the simulated run's verdicts and a fix for a failure", async () => {
+    const RUN = "https://github.com/acme/infra/actions/runs/4401";
+    vi.mocked(api.get).mockResolvedValue({
+      ...gsPanel,
+      gate: "release",
+      label: "G3",
+      state: "factory:in-staging",
+      approversFrom: null,
+      commentApprovable: false,
+      assembly: {
+        ...gsPanel.assembly,
+        cases: [
+          { id: "case-21", number: 30, title: "test(9): ST-21 Tried on days 1, 2, 9 and 10", state: "factory:test-passed",
+            open: false, htmlUrl: "https://gh/30", caseId: "ST-21", verdict: "passed", verdictBy: null, verdictAt: null,
+            execution: { kind: "simulated" }, fixFiled: null,
+            simulated: { run: 4401, sha: "a".repeat(40), runUrl: RUN, result: "passed", failures: [] } },
+          { id: "case-25", number: 31, title: "test(9): ST-25 Cap at 4 gives Lost", state: "factory:test-failed",
+            open: true, htmlUrl: "https://gh/31", caseId: "ST-25", verdict: "failed", verdictBy: null, verdictAt: null,
+            execution: { kind: "simulated" }, fixFiled: null,
+            simulated: { run: 4401, sha: "a".repeat(40), runUrl: RUN, result: "failed", failures: ["step 7 (expect): found 5"] } },
+          { id: "case-1", number: 32, title: "test(9): ST-1 Answered call shows Connected", state: "factory:manual-test",
+            open: true, htmlUrl: "https://gh/32", caseId: "ST-1", verdict: "runnable", verdictBy: null, verdictAt: null,
+            execution: { kind: "manual", reason: "real audio on a real phone" }, fixFiled: null, simulated: null },
+        ],
+        testsOutstanding: 2,
+        simulatedRun: { run: 4401, runUrl: RUN, regressions: [] },
+      },
+      releasePrs: [],
+    } as never);
+    renderIn(<GateTab epicId="epic-9" me={me} />);
+    expect(await screen.findByText("Before production: system tests")).toBeTruthy();
+    expect(screen.getByText(/Simulated: 1 passed, 1 failed/)).toBeTruthy();
+    expect(screen.getByText(/Manual: 1 still open/)).toBeTruthy();
+    expect(screen.getByText("step 7 (expect): found 5")).toBeTruthy();
+    expect(screen.getByText("Manual — real audio on a real phone")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create fix task" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create fix task (expedite)" })).toBeTruthy();
+    expect(screen.queryByText("What was assembled")).toBeNull();
+  });
 });

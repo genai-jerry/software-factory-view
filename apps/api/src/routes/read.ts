@@ -3,7 +3,11 @@ import {
   BUG_RETEST_STATE,
   BUG_VERIFIED_STATE,
   bugReportAvailability,
+  caseExecution,
+  caseFix,
   decryptSecret,
+  latestSimulatedSummary,
+  latestSimulatedVerdict,
   deriveExpedited,
   effectiveStage,
   epicStatus,
@@ -44,7 +48,7 @@ import {
   users,
   webhookDeliveries,
 } from "@console/db";
-import { and, desc, eq, ilike, inArray, isNotNull, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, like, sql as dsql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { FastifyInstance } from "fastify";
 import { buildAttention } from "../attention.js";
@@ -304,6 +308,22 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
     const bugRows = taskRows.filter((t) => t.kind === "bug");
     const codeAndCaseRows = taskRows.filter((t) => t.kind !== "bug");
 
+    // Simulated cases (FACTORY.md §4b): the factory records a simulated run's verdict on each case,
+    // and a summary on the epic, as comments carrying `<!-- sim-run: … -->`. Only those comments
+    // are read, oldest first, so the newest of each wins.
+    const simComments = await db
+      .select({ issueId: comments.issueId, body: comments.body })
+      .from(comments)
+      .where(
+        and(
+          inArray(comments.issueId, [epic.id, ...codeAndCaseRows.filter((t) => t.kind === "test").map((t) => t.id)]),
+          like(comments.body, "%<!-- sim-run:%"),
+        ),
+      )
+      .orderBy(comments.ghCreatedAt);
+    const simBodies = new Map<string, string[]>();
+    for (const c of simComments) simBodies.set(c.issueId, [...(simBodies.get(c.issueId) ?? []), c.body]);
+
     const change = (await db.select().from(changes).where(eq(changes.epicIssueId, epic.id)).limit(1))[0];
     const artifacts = change
       ? await db.select().from(changeArtifacts).where(eq(changeArtifacts.changeId, change.id))
@@ -471,6 +491,14 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
           // task offers a start.
           kind: t.kind,
           caseId: caseIdOf(t.title),
+          // A case's kind and the simulated run's verdict on it (FACTORY.md §4b, Simulated cases).
+          ...(t.kind === "test"
+            ? {
+                execution: caseExecution(t.body),
+                simulated: latestSimulatedVerdict(simBodies.get(t.id) ?? []),
+                fixFiled: caseFix(t.body),
+              }
+            : { execution: null, simulated: null, fixFiled: null }),
           state: t.factoryState,
           open: t.state === "open",
           htmlUrl: t.htmlUrl,
@@ -559,6 +587,8 @@ export function registerReadRoutes(app: FastifyInstance, deps: AppDeps): void {
         // epic has passed gate GS, and the Test board has to say so.
         runOn: (repo.testRunOn as "epic" | "staging" | null) ?? null,
         planned: hasPlan,
+        // The latest simulated run recorded on this epic, with any regression it named.
+        simulatedRun: latestSimulatedSummary(simBodies.get(epic.id) ?? []),
         plan: plan
           ? {
               path: plan.path,

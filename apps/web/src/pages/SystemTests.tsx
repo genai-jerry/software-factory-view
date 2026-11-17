@@ -49,7 +49,7 @@ export function TestsTab({ data }: { data: EpicWorkspace }) {
           This epic has a test plan; no case sub-issues are on it. They appear here as the Test Planner opens them.
         </p>
       )}
-      <SystemTestCases cases={cases} />
+      <SystemTestCases cases={cases} simulatedRun={tests.simulatedRun ?? null} />
       {/* Bugs sit under the cases, on the same tab, because they come from
           the same hour of somebody's work: a tester runs the cases and finds
           things the cases did not predict. Splitting them onto a tab of their
@@ -308,7 +308,13 @@ export function PlanTests({
  * yet" is the honest reading of an epic mid-build; hiding them would make the
  * tests look absent rather than waiting.
  */
-export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
+export function SystemTestCases({
+  cases,
+  simulatedRun = null,
+}: {
+  cases: EpicWorkspace["tasks"];
+  simulatedRun?: EpicWorkspace["systemTests"]["simulatedRun"];
+}) {
   if (cases.length === 0) return null;
   const runnable = cases.filter((c) => c.state === "factory:manual-test");
   const skipped = cases.filter((c) => c.state === "factory:test-skipped");
@@ -322,6 +328,7 @@ export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
       <h4 className="phase-head">
         System tests ({passed.length}/{cases.length} passed{skipped.length > 0 ? `, ${skipped.length} skipped` : ""})
       </h4>
+      <SimulatedSummary cases={cases} run={simulatedRun ?? null} />
       {runnable.length > 0 && (
         <div className="banner info">
           {runnable.length} case{runnable.length === 1 ? "" : "s"} ready to run. Run it against the environment the
@@ -370,10 +377,15 @@ export function SystemTestCases({ cases }: { cases: EpicWorkspace["tasks"] }) {
                       after {c.blockedBy.filter((d) => d.open).map((d) => `#${d.number}`).join(", ")}
                     </span>
                   )}
+                  <ExecutionChip execution={c.execution ?? null} />
                   <GitHubLink href={c.htmlUrl} />
                 </div>
+                <SimulatedResult c={c} />
                 <NextStepLine step={c.nextStep} />
                 {c.state === "factory:manual-test" && <TestVerdict caseId={c.id} label={c.caseId ?? `#${c.number}`} />}
+                {c.state === "factory:test-failed" && c.open && c.simulated?.result === "failed" && !c.fixFiled && (
+                  <FixFromFailure caseId={c.id} label={c.caseId ?? `#${c.number}`} />
+                )}
               </div>
             ))}
           </div>
@@ -435,6 +447,154 @@ export function TestVerdict({ caseId, label, bug }: { caseId: string; label: str
               : bug
                 ? `Report ${label} as still open? The factory files another fix and brings it back when that lands.`
                 : `Record ${label} as failed? The factory files a task to fix it and brings this case back when that lands.`}
+          </span>
+          <button type="button" onClick={() => post.mutate(confirming)} disabled={post.isPending}>
+            {post.isPending ? "Posting…" : "Confirm"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(null)} disabled={post.isPending}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {post.isError && <div className="banner error">{(post.error as ApiError).message}</div>}
+    </div>
+  );
+}
+
+
+type Case = EpicWorkspace["tasks"][number];
+
+/** Simulated or manual (FACTORY.md §4b, Simulated cases); nothing for a case planned before the split. */
+export function ExecutionChip({ execution }: { execution: Case["execution"] }) {
+  if (!execution) return null;
+  if (execution.kind === "simulated") {
+    return (
+      <span className="badge state" title="Runs by itself in the simulated environment after the staging merge">
+        Simulated
+      </span>
+    );
+  }
+  return (
+    <span className="badge state" title={execution.reason ? `A tester runs it: ${execution.reason}` : "A tester runs it"}>
+      Manual{execution.reason ? ` — ${execution.reason}` : ""}
+    </span>
+  );
+}
+
+/** The newest simulated run's verdict on a case: what failed, step by step, and the run. */
+export function SimulatedResult({ c }: { c: Pick<Case, "simulated" | "fixFiled"> }) {
+  const v = c.simulated;
+  if (!v) return null;
+  const run = v.runUrl ? (
+    <a href={v.runUrl} target="_blank" rel="noreferrer">
+      run {v.run}
+    </a>
+  ) : (
+    <>run {v.run}</>
+  );
+  if (v.result === "passed") {
+    return <div className="muted">Passed in the simulated environment ({run}).</div>;
+  }
+  return (
+    <div className="banner error" role="status">
+      <strong>Failed in the simulated environment</strong> ({run}, commit <code>{v.sha.slice(0, 12)}</code>)
+      {v.failures.length > 0 && (
+        <ul>
+          {v.failures.map((f, i) => (
+            <li key={i}>
+              <code>{f}</code>
+            </li>
+          ))}
+        </ul>
+      )}
+      {c.fixFiled ? <div>Fix filed: #{c.fixFiled}. The next run after it lands records this case again.</div> : null}
+    </div>
+  );
+}
+
+/**
+ * The simulated runs at a glance: how many simulated cases passed and failed, how many manual ones
+ * are still open, and any other scenario that failed in the same run (a regression).
+ */
+export function SimulatedSummary({
+  cases,
+  run,
+}: {
+  cases: Array<Pick<Case, "execution" | "simulated" | "open">>;
+  run: EpicWorkspace["systemTests"]["simulatedRun"] | null;
+}) {
+  const simulated = cases.filter((c) => c.execution?.kind === "simulated");
+  if (simulated.length === 0 && !run) return null;
+  const passed = simulated.filter((c) => c.simulated?.result === "passed").length;
+  const failed = simulated.filter((c) => c.simulated?.result === "failed").length;
+  const notRun = simulated.length - passed - failed;
+  const manualOpen = cases.filter((c) => c.execution?.kind === "manual" && c.open).length;
+  return (
+    <div className={`banner ${failed > 0 || (run?.regressions.length ?? 0) > 0 ? "error" : "info"}`}>
+      <strong>
+        Simulated: {passed} passed, {failed} failed
+        {notRun > 0 ? `, ${notRun} not run yet` : ""}
+      </strong>
+      {" · "}Manual: {manualOpen} still open
+      {run && (
+        <>
+          {" · "}
+          {run.runUrl ? (
+            <a href={run.runUrl} target="_blank" rel="noreferrer">
+              latest run {run.run}
+            </a>
+          ) : (
+            <>latest run {run.run}</>
+          )}
+        </>
+      )}
+      {run && run.regressions.length > 0 && (
+        <div>
+          Also failing in that run (not this epic&apos;s cases):{" "}
+          {run.regressions.map((r, i) => (
+            <span key={r}>
+              {i > 0 ? ", " : ""}
+              <code>{r}</code>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Turn a simulated failure into a fix. The run opened nothing: **Create fix task** posts
+ * `Test Failed`, and **Create fix task (expedite)** posts `Test Failed, expedite`, which the factory
+ * honours from an expedite approver by letting that one fix build itself up to gate GS.
+ */
+export function FixFromFailure({ caseId, label }: { caseId: string; label: string }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState<null | "failed" | "failed-expedite">(null);
+  const post = useMutation({
+    mutationFn: (verdict: "failed" | "failed-expedite") => api.post(`/api/issues/${caseId}/test-verdict`, { verdict }),
+    onSuccess: () => {
+      setConfirming(null);
+      void qc.invalidateQueries();
+    },
+  });
+  return (
+    <div className="dep-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "0.4rem" }}>
+      {confirming === null ? (
+        <div className="dep-actions">
+          <button type="button" onClick={() => setConfirming("failed")} disabled={post.isPending}>
+            Create fix task
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming("failed-expedite")} disabled={post.isPending}>
+            Create fix task (expedite)
+          </button>
+        </div>
+      ) : (
+        <div className="dep-actions">
+          <span className="muted">
+            {confirming === "failed"
+              ? `File a task to fix ${label}? It waits for an implementer start like any task.`
+              : `File an expedited task to fix ${label}? It builds itself up to the staging release, if you are an expedite approver.`}
           </span>
           <button type="button" onClick={() => post.mutate(confirming)} disabled={post.isPending}>
             {post.isPending ? "Posting…" : "Confirm"}

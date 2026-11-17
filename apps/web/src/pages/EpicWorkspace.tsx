@@ -15,7 +15,7 @@ import type {
 import { DecisionCard } from "./Decisions.js";
 import { DependencyTreeTab } from "./DependencyTree.js";
 import { QaPanel } from "./QaPanel.js";
-import { TestsTab } from "./SystemTests.js";
+import { ExecutionChip, FixFromFailure, SimulatedResult, SimulatedSummary, TestsTab } from "./SystemTests.js";
 import { FactoryRunStatus } from "../components/FactoryRunStatus.js";
 import { GitHubLink } from "../components/GitHubLink.js";
 import { SegmentedTabs } from "../components/SegmentedTabs.js";
@@ -720,9 +720,15 @@ export function GateTab({ epicId, me }: { epicId: string; me: Me }) {
         </div>
       )}
 
+      {/* G3 decides on what reached staging. Simulated cases have their verdicts by now (FACTORY.md
+          §4b, Simulated cases): what passed, what failed and how, and a way to turn a failure into a fix. */}
+      {g.assembly && g.gate === "release" && g.assembly.cases.length > 0 && (
+        <ProductionTests assembly={g.assembly} />
+      )}
+
       {/* GS decides on an assembly, not on a document: what the factory built,
           what it said about it, and whether every task actually landed. */}
-      {g.assembly && (
+      {g.assembly && g.gate === "staging" && (
         <div className="card">
           <div className="spread">
             <h3 style={{ margin: 0 }}>What was assembled</h3>
@@ -1454,6 +1460,61 @@ function TimelineRail({ epicId }: { epicId: string }) {
         </div>
       ))}
       {timeline.data?.events.length === 0 && <p className="muted">No events yet.</p>}
+    </div>
+  );
+}
+
+/**
+ * The system tests at the production decision (G3): the simulated run's verdicts beside the manual
+ * cases still open. A failed simulated case shows what failed and offers to file its fix.
+ */
+function ProductionTests({ assembly }: { assembly: NonNullable<GatePanelData["assembly"]> }) {
+  const cases = assembly.cases.map((c) => ({ ...c, execution: c.execution ?? null, simulated: c.simulated ?? null }));
+  return (
+    <div className="card">
+      <div className="spread">
+        <h3 style={{ margin: 0 }}>Before production: system tests</h3>
+        <span className={`badge ${assembly.testsOutstanding === 0 ? "merge" : "task-start"}`}>
+          {assembly.cases.length - assembly.testsOutstanding}/{assembly.cases.length} passed
+        </span>
+      </div>
+      <SimulatedSummary cases={cases} run={assembly.simulatedRun ?? null} />
+      <table className="assembly-table">
+        <thead>
+          <tr>
+            <th scope="col">Case</th>
+            <th scope="col">Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cases.map((c) => (
+            <tr key={c.number}>
+              <td>
+                {c.caseId ? <strong>{c.caseId}</strong> : null} #{c.number}{" "}
+                {c.title.replace(/^test\([^)]*\):?\s*(ST-\d+)?\s*/i, "")} <ExecutionChip execution={c.execution} />{" "}
+                <GitHubLink href={c.htmlUrl} />
+              </td>
+              <td>
+                <span className={`badge ${c.verdict === "passed" ? "merge" : c.verdict === "failed" ? "blocked" : "state"}`}>
+                  {c.verdict === "passed"
+                    ? "Passed"
+                    : c.verdict === "failed"
+                      ? "Failed"
+                      : c.verdict === "skipped"
+                        ? "Skipped"
+                        : c.verdict === "runnable"
+                          ? "Not run"
+                          : "Not runnable"}
+                </span>
+                <SimulatedResult c={{ simulated: c.simulated, fixFiled: c.fixFiled ?? null }} />
+                {c.verdict === "failed" && c.open && c.simulated?.result === "failed" && !c.fixFiled && c.id && (
+                  <FixFromFailure caseId={c.id} label={c.caseId ?? `#${c.number}`} />
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

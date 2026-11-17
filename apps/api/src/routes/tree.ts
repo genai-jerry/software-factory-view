@@ -15,6 +15,9 @@ import {
   planTestsAvailability,
   TEST_PASSED_BODY,
   TEST_FAILED_BODY,
+  TEST_FAILED_EXPEDITE_BODY,
+  TEST_FAILED_STATE,
+  caseFix,
   startStatusIsAutomatic,
   startStatusTakesApproval,
 } from "@console/core";
@@ -328,8 +331,10 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       const ctx = await requireAuth(deps, req, reply);
       if (!ctx) return;
       const verdict = req.body?.verdict;
-      if (verdict !== "passed" && verdict !== "failed") {
-        return reply.code(400).send({ error: "verdict must be \"passed\" or \"failed\"" });
+      // `failed-expedite` posts `Test Failed, expedite`: the fix the factory files advances itself
+      // when the person is an expedite approver (FACTORY.md §4b, Simulated cases).
+      if (verdict !== "passed" && verdict !== "failed" && verdict !== "failed-expedite") {
+        return reply.code(400).send({ error: "verdict must be \"passed\", \"failed\" or \"failed-expedite\"" });
       }
       const found = await loadIssue(deps, ctx, req.params.id);
       if (!found) return reply.code(404).send({ error: "issue not found" });
@@ -337,12 +342,20 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
       // The same two words answer a bug's re-test (FACTORY.md §4c), from the
       // same list, so one endpoint carries both: `factory:bug-retest` is where
       // a report is waiting for exactly this.
-      const verdictable = issue.factoryState === MANUAL_TEST_STATE || issue.factoryState === BUG_RETEST_STATE;
+      // A case a simulated run failed waits at factory:test-failed with no fix filed: a failure
+      // verdict there is the person turning it into a fix.
+      const simulatedFailure =
+        issue.factoryState === TEST_FAILED_STATE && caseFix(issue.body) === null && verdict !== "passed";
+      const verdictable =
+        issue.factoryState === MANUAL_TEST_STATE || issue.factoryState === BUG_RETEST_STATE || simulatedFailure;
       if (issue.state !== "open" || !verdictable) {
         return reply.code(409).send({
           error:
-            "only an open system test case at factory:manual-test, or a bug report at factory:bug-retest, can take a verdict",
+            "only an open system test case at factory:manual-test, a case a simulated run failed with no fix filed yet, or a bug report at factory:bug-retest, can take a verdict",
         });
+      }
+      if (verdict === "failed-expedite" && issue.factoryState === BUG_RETEST_STATE) {
+        return reply.code(400).send({ error: "a bug's re-test takes \"passed\" or \"failed\"" });
       }
       const [owner, name] = repo.fullName.split("/") as [string, string];
       // The evidence first, so the verdict is the newest comment and the
@@ -352,7 +365,8 @@ export function registerTreeRoutes(app: FastifyInstance, deps: AppDeps): void {
         const note = await postComment(deps, ctx, reply, owner, name, issue.number, evidence);
         if (!note) return;
       }
-      const body = verdict === "passed" ? TEST_PASSED_BODY : TEST_FAILED_BODY;
+      const body =
+        verdict === "passed" ? TEST_PASSED_BODY : verdict === "failed-expedite" ? TEST_FAILED_EXPEDITE_BODY : TEST_FAILED_BODY;
       const comment = await postComment(deps, ctx, reply, owner, name, issue.number, body);
       if (!comment) return;
       await db.insert(auditLog).values({
