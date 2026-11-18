@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api.js";
 import { Diagram } from "../components/Diagram.js";
@@ -48,7 +48,7 @@ const COPY = {
     newButton: "New idea",
     empty: "Nothing shaped yet. Start with a question or a screenshot, and the factory answers from the code.",
     intro: "Pick a product on the left and press New idea. Ask what a page does today, paste a screenshot, or ask for a new screen to be drawn. When the idea is clear, the factory writes the requirement and you open it as work.",
-    placeholder: "Describe the idea, ask about the code, or paste a screenshot. Enter sends; Shift+Enter for a new line.",
+    placeholder: "Describe the idea, ask about the code, or paste a screenshot.",
     writeSpec: "Write the requirement",
     showSpec: "Show the requirement",
     specWord: "requirement",
@@ -62,7 +62,7 @@ const COPY = {
     newButton: "New investigation",
     empty: "Nothing investigated yet. Describe what you noticed — what, roughly when, and who it affected.",
     intro: "Pick where it happened on the left and press New investigation. Describe what you noticed. The factory looks at the production logs and the code, tells you what happened and why, and plans the fix. When the cause is clear, you turn the fix into work.",
-    placeholder: "What did you notice? What, roughly when, and who or what did it affect? Enter sends; Shift+Enter for a new line.",
+    placeholder: "What did you notice? What, roughly when, and who or what did it affect?",
     writeSpec: "Write the fix plan",
     showSpec: "Show the fix plan",
     specWord: "fix plan",
@@ -436,12 +436,6 @@ function Conversation({ id }: { id: string }) {
     if (send.isPending || answering) return;
     send.mutate({ body: body || "What do you see in this screenshot?", files: pending });
   };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
-  };
 
   if (q.isError) {
     const err = q.error as ApiError;
@@ -651,7 +645,6 @@ function Conversation({ id }: { id: string }) {
                 value={text}
                 placeholder={answering ? "Waiting for the answer…" : copy.placeholder}
                 onChange={(e) => setText(e.target.value)}
-                onKeyDown={onKey}
                 onPaste={onPaste}
                 onDrop={onDrop}
                 onDragOver={(e) => e.preventDefault()}

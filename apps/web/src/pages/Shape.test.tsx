@@ -181,6 +181,18 @@ describe("ShapePage", () => {
     expect(vi.mocked(api.post).mock.calls.find((c) => c[0] === "/api/shape/c1/attachments")?.[1]).toMatchObject({ name: "shot.png", mime: "image/png", dataB64: expect.any(String) });
   });
 
+  it("keeps Enter as a new line and sends only on Send", async () => {
+    vi.mocked(api.post).mockResolvedValue({ message: conversation.messages[1], conversation: { title: "Day-wise calling panel" } });
+    renderAt("/shape/c1");
+    await screen.findByText("Here is the page with the panel.");
+    const box = screen.getByLabelText("Your message");
+    await userEvent.type(box, "First line{Enter}Second line");
+    expect(box).toHaveValue("First line\nSecond line");
+    expect(api.post).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/shape/c1/messages", { text: "First line\nSecond line", attachmentIds: [] }));
+  });
+
   it("writes the requirement and shows it beside the conversation", async () => {
     const spec = "## What should be built?\n- A day-wise panel beside the monthly table.\n## Open questions\n1. Which time zone?";
     vi.mocked(api.post).mockImplementation(async (path: string) => {
