@@ -143,6 +143,54 @@ describe("WorkPage: shipped work", () => {
     expect(within(working).queryByText("Whatsapp outbox, shipped")).toBeNull();
     expect(within(working).getByText("Sarvam changes")).toBeInTheDocument();
   });
+
+  it("shows live epics five at a time, newest first, with Newer and Older", async () => {
+    const live: BoardCard[] = Array.from({ length: 12 }, (_, i) => ({
+      ...epic,
+      epicId: `live${i}`,
+      number: 100 + i,
+      title: `Live epic ${i}`,
+      state: "factory:deployed",
+      daysInState: i,
+    }));
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/board")) return { columns: [], cards: live };
+      if (path.startsWith("/api/my-work")) return { needsYou: [], mine: [], waitingOn: [] };
+      if (path.startsWith("/api/running")) return { running: [] };
+      if (path.startsWith("/api/estates")) return { estates: [], ingestion: { lastReceivedAt: null, lastProcessedAt: null, pending: 0 } };
+      throw new Error(`unexpected GET ${path}`);
+    });
+    renderAt("/", <WorkPage />);
+    const heading = await screen.findByRole("heading", { name: /In production/ });
+    expect(heading).toHaveTextContent("(12)");
+    const shipped = heading.closest("section")!;
+    const titles = () => within(shipped).getAllByText(/^Live epic \d+$/).map((el) => el.textContent);
+    expect(titles()).toEqual(["Live epic 0", "Live epic 1", "Live epic 2", "Live epic 3", "Live epic 4"]);
+    const pager = within(shipped).getByRole("navigation", { name: "In production" });
+    expect(pager).toHaveTextContent("1–5 of 12");
+    expect(within(pager).getByRole("button", { name: "‹ Newer" })).toBeDisabled();
+    await userEvent.click(within(pager).getByRole("button", { name: "Older ›" }));
+    await userEvent.click(within(pager).getByRole("button", { name: "Older ›" }));
+    expect(titles()).toEqual(["Live epic 10", "Live epic 11"]);
+    expect(pager).toHaveTextContent("11–12 of 12");
+    expect(within(pager).getByRole("button", { name: "Older ›" })).toBeDisabled();
+    await userEvent.click(within(pager).getByRole("button", { name: "‹ Newer" }));
+    expect(titles()[0]).toBe("Live epic 5");
+  });
+
+  it("has no pager when every live epic fits on one page", async () => {
+    const live: BoardCard = { ...epic, epicId: "e50", number: 50, title: "Whatsapp outbox, shipped", state: "factory:deployed", daysInState: 0 };
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/board")) return { columns: [], cards: [live] };
+      if (path.startsWith("/api/my-work")) return { needsYou: [], mine: [], waitingOn: [] };
+      if (path.startsWith("/api/running")) return { running: [] };
+      if (path.startsWith("/api/estates")) return { estates: [], ingestion: { lastReceivedAt: null, lastProcessedAt: null, pending: 0 } };
+      throw new Error(`unexpected GET ${path}`);
+    });
+    renderAt("/", <WorkPage />);
+    const heading = await screen.findByRole("heading", { name: /In production/ });
+    expect(within(heading.closest("section")!).queryByRole("navigation", { name: "In production" })).toBeNull();
+  });
 });
 
 describe("DecisionsQueuePage", () => {

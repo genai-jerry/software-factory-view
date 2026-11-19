@@ -1,12 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api.js";
 import { Banner } from "../components/Banner.js";
+import { Pager, pageOf } from "../components/Pager.js";
 import { RepoChip } from "../components/RepoChip.js";
 import { useFocus } from "../lib/filter.js";
 import { EXPEDITE_BADGE, EXPEDITE_TITLE, peopleLabel } from "../lib/labels.js";
 import { STAGES, STAGE_LABEL, buildWork, type WorkItem } from "../lib/work.js";
 import type { BoardCard, EstateSummary, IngestionHealth, MyWork, RunningItem } from "../types.js";
+
+/** How many live epics the In production list shows at a time, newest first. */
+export const PRODUCTION_PAGE = 5;
 
 /**
  * Work — the team's list (redesign board 1). Three counters, then every work
@@ -44,6 +49,8 @@ export function WorkPage() {
   const loading = board.isLoading || myWork.isLoading;
   const lists = board.data && myWork.data ? buildWork(board.data.cards, myWork.data.needsYou, running.data?.running ?? []) : null;
   const doneThisWeek = lists?.done.filter((w) => w.card.daysInState <= 7) ?? [];
+  const [productionPage, setProductionPage] = useState(0);
+  const production = pageOf(lists?.inProduction ?? [], productionPage, PRODUCTION_PAGE);
 
   return (
     <div className="work-page">
@@ -121,9 +128,16 @@ export function WorkPage() {
                 In production <span className="muted">({lists.inProduction.length})</span>
               </h2>
               <p className="muted">Live for customers. Nothing is running on these and nothing waits on you.</p>
-              {lists.inProduction.map((w) => (
+              {production.items.map((w) => (
                 <WorkRow item={w} key={w.card.epicId} />
               ))}
+              <Pager
+                page={production.page}
+                size={PRODUCTION_PAGE}
+                total={lists.inProduction.length}
+                label="In production"
+                onPage={setProductionPage}
+              />
             </section>
           )}
 
