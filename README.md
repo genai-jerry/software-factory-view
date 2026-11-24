@@ -1,18 +1,35 @@
 # Compass
 
-[![CI](https://github.com/genai-jerry/software-factory-view/actions/workflows/ci.yml/badge.svg)](https://github.com/genai-jerry/software-factory-view/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/genai-jerry/software-factory-view/actions/workflows/codeql.yml/badge.svg)](https://github.com/genai-jerry/software-factory-view/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Compass is the web app for the
-[Claude Software Factory](https://github.com/genai-jerry/claude-software-factory).
-It gives the people who work with the factory one place to set it up, see where
-every piece of work is, and approve or reject it at each gate.
+Compass is the optional web app for the
+**[Software Factory](https://github.com/genai-jerry/claude-software-factory)**:
+one place to set the factory up on a repository, see where every piece of work
+is, and approve or reject it at each gate, from a browser or a phone.
 
-The Console is a view over GitHub and a set of controls, never a second source
-of truth. GitHub stays the state machine and OpenSpec stays the content. Every
-action you take in the Console becomes a GitHub operation made under your own
+> **New here? Start with the
+> [Software Factory](https://github.com/genai-jerry/claude-software-factory).**
+> It is the pipeline itself, and it runs without Compass. Compass only adds
+> the screens. If the two are useful to you, a star on the factory repo helps
+> other people find them.
+
+<!-- TODO(Jerry): add 2-3 screenshots here and delete this table's TODO text.
+     Suggested files: docs/screenshots/my-work.png, flow-board.png,
+     gate-panel-mobile.png. Check that no real repo names, people or hostnames
+     show in them (see the PR checklist). -->
+| My work | Flow board | Gate panel on a phone |
+|---|---|---|
+| _TODO: screenshot_ | _TODO: screenshot_ | _TODO: screenshot_ |
+
+Compass is a view over GitHub and a set of controls, never a second source of
+truth. GitHub stays the state machine and OpenSpec stays the content. Every
+action you take in Compass becomes a GitHub operation made under your own
 GitHub identity.
+
+To look around on your own machine, follow the [Quick start](#quick-start).
+It needs Node.js, pnpm and Docker. With `DEV_FAKE_LOGIN=1` you can browse a
+read-only UI without registering a GitHub App.
 
 > **Status: MVP (v0.1.0), under active development.** It runs the author's own
 > factory estate day to day. Expect rough edges and breaking changes before 1.0.
