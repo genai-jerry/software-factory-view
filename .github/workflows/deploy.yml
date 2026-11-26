@@ -53,17 +53,47 @@ jobs:
     name: typecheck-test-build
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # The check covers what the pull request can affect (scripts/ci-scope.mjs): nothing
+    # for documentation alone, which passes in seconds (the check stays required, so it
+    # must still finish green); only the changed packages and the ones that use them;
+    # everything when a file outside the packages changed (lockfile, root config, this
+    # workflow). The job's name never changes, so the required check is the same one.
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: What to check
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: node scripts/ci-scope.mjs "$BASE"
+      - if: steps.scope.outputs.run == 'true'
+        uses: pnpm/action-setup@v6
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm -r build
-      - run: pnpm test
+      - if: steps.scope.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: The scope rules
+        if: steps.scope.outputs.run == 'true'
+        run: node --test scripts/ci-scope.test.mjs
+      - name: Typecheck
+        if: steps.scope.outputs.run == 'true'
+        env:
+          TEST: ${{ steps.scope.outputs.scope == 'all' && '-r' || steps.scope.outputs.test }}
+        run: pnpm $TEST typecheck
+      - name: Build
+        if: steps.scope.outputs.run == 'true'
+        env:
+          BUILD: ${{ steps.scope.outputs.scope == 'all' && '-r' || steps.scope.outputs.build }}
+        run: pnpm $BUILD build
+      - name: Test
+        if: steps.scope.outputs.run == 'true'
+        env:
+          TEST: ${{ steps.scope.outputs.scope == 'all' && '-r' || steps.scope.outputs.test }}
+        run: pnpm $TEST test
 
   deploy:
     name: vps
