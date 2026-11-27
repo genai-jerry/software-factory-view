@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api.js";
 import { FocusProvider } from "../lib/filter.js";
-import type { EnvCard, EnvironmentsView } from "../types.js";
+import type { EnvCard, EnvironmentsView, SimRun } from "../types.js";
 import { EnvironmentsPage, envState, laneColors, mergedWords } from "./Environments.js";
+import { simLatestWords } from "./SimRuns.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -65,8 +66,8 @@ const view: EnvironmentsView = {
   other: [],
 };
 
-function show(data: EnvironmentsView) {
-  vi.spyOn(api, "get").mockImplementation((async () => data) as never);
+function show(data: EnvironmentsView, sims: SimRun[] = []) {
+  vi.spyOn(api, "get").mockImplementation((async (path: string) => (path.startsWith("/api/sim-runs") ? { sims } : data)) as never);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -259,5 +260,80 @@ describe("EnvironmentsPage", () => {
     expect(envState(card({ queue: [{ runId: "a", role: "QA", title: null, state: "waiting", since: null }] }))).toBe("waiting");
     expect(envState(card({ notes: [{ at: null, role: "QA", title: null, outcome: "timeout", summary: "", runId: null }] }))).toBe("failed");
     expect(envState(card({}))).toBe("idle");
+  });
+});
+
+const sim = (over: Partial<SimRun>): SimRun => ({
+  repo: "acme/api", runRepo: "acme/infra", statusContext: "acme/sim-scenarios", mode: "automatic", reason: null,
+  latest: { state: "failure", description: "2 of 37 scenarios failed: a, b", url: "https://github.com/acme/infra/actions/runs/9", sha: "abc" },
+  ...over,
+});
+
+describe("Simulated runs", () => {
+  it("shows one switch per run repo, naming the repos it covers, with each staging's latest run", async () => {
+    show(view, [sim({}), sim({ repo: "acme/connectors", latest: null })]);
+    const panel = await screen.findByRole("region", { name: "Simulated runs in acme/infra" });
+    expect(within(panel).getByRole("radio", { name: "Automatic" })).toBeChecked();
+    expect(within(panel).getByRole("radio", { name: "By hand" })).not.toBeChecked();
+    expect(within(panel).getByText(/Every deploy to staging starts a run/)).toBeInTheDocument();
+    expect(within(panel).getByText(/Applies to the whole sim in acme\/infra: every repo that deploys to it \(api, connectors\)/)).toBeInTheDocument();
+    const failed = within(panel).getByRole("link", { name: "2 of 37 failed" });
+    expect(failed).toHaveAttribute("href", "https://github.com/acme/infra/actions/runs/9");
+    expect(within(panel).getByText("no run yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: /^Simulated runs in/ })).toHaveLength(1);
+  });
+
+  it("switches to by hand, disabled while saving", async () => {
+    show(view, [sim({})]);
+    let finish: (v: unknown) => void = () => undefined;
+    const post = vi.spyOn(api, "post").mockImplementation((() => new Promise((r) => (finish = r))) as never);
+    const panel = await screen.findByRole("region", { name: "Simulated runs in acme/infra" });
+    fireEvent.click(within(panel).getByRole("radio", { name: "By hand" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/sim-runs/mode", { runRepo: "acme/infra", mode: "manual" }));
+    expect(await within(panel).findByText("Saving…")).toBeInTheDocument();
+    expect(within(panel).getByRole("radio", { name: "Automatic" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Run now" })).toBeDisabled();
+    finish({ runRepo: "acme/infra", mode: "manual" });
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Run now" })).toBeEnabled());
+  });
+
+  it("starts a run by hand and shows the API's refusal in its own words", async () => {
+    show(view, [sim({ mode: "manual" })]);
+    const post = vi.spyOn(api, "post").mockRejectedValue(new Error("GitHub declined to start the simulated run on acme/infra: Not Found."));
+    const panel = await screen.findByRole("region", { name: "Simulated runs in acme/infra" });
+    expect(within(panel).getByText(/Deploys wait. Press Run now/)).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Run now" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/sim-runs/run", { runRepo: "acme/infra" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("GitHub declined to start the simulated run on acme/infra");
+  });
+
+  it("says why when the mode could not be read", async () => {
+    show(view, [sim({ mode: null, reason: "GitHub would not show the SIM_SCENARIOS variable on acme/infra (Forbidden)." })]);
+    const panel = await screen.findByRole("region", { name: "Simulated runs in acme/infra" });
+    expect(within(panel).getByText(/would not show the SIM_SCENARIOS variable/)).toBeInTheDocument();
+    expect(within(panel).getByRole("radio", { name: "Automatic" })).not.toBeChecked();
+    expect(within(panel).getByRole("radio", { name: "By hand" })).not.toBeChecked();
+  });
+
+  it("shows nothing when no repo has a simulate block", async () => {
+    show(view);
+    await screen.findAllByText("Booker status");
+    expect(screen.queryByRole("region", { name: /^Simulated runs/ })).toBeNull();
+  });
+
+  it("brings its own card when there is no staging column", async () => {
+    show({ available: false, sessions: null, staging: [], lanes: [], other: [] }, [sim({})]);
+    expect(await screen.findByRole("region", { name: "Simulated runs in acme/infra" })).toBeInTheDocument();
+  });
+
+  it("words the latest run", () => {
+    const l = (state: string, description: string | null = null) => ({ state, description, url: null, sha: "s" });
+    expect(simLatestWords(null)).toBeNull();
+    expect(simLatestWords(l("pending", "Every scenario is running in a throwaway copy of the simulated stack"))).toBe("Running");
+    expect(simLatestWords(l("pending", "Waits for the next run, with the deploys after it"))).toBe("Waiting for the next run");
+    expect(simLatestWords(l("success", "Every scenario passed"))).toBe("Passed");
+    expect(simLatestWords(l("failure", "2 of 37 scenarios failed: a, b"))).toBe("2 of 37 failed");
+    expect(simLatestWords(l("failure", "At least one scenario failed: see the run"))).toBe("Failed");
+    expect(simLatestWords(l("error", "The run could not start (exit 2)"))).toBe("Could not start");
   });
 });
