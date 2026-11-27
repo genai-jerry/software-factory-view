@@ -8,6 +8,7 @@ import { useFocus } from "../lib/filter.js";
 import { lengthWords } from "../lib/runs.js";
 import type { EnvCard, EnvironmentsView, EnvLane, EnvMerge, EnvPull, EnvSession, EnvTurn } from "../types.js";
 import { localTimesText } from "../lib/localTimes.js";
+import { SimRunsPanel } from "./SimRuns.js";
 
 /**
  * Environments: where the Claude sessions run. The page reads left to right,
@@ -525,6 +526,7 @@ export function EnvironmentsPage() {
                 ) : (
                   staging.map((s) => <EnvCardView key={s.id} card={s} now={now} onOpen={setOpen} wide />)
                 )}
+                <SimRunsPanel />
               </div>
             </div>
             </LaneColorCtx.Provider>
@@ -546,6 +548,9 @@ export function EnvironmentsPage() {
           </div>
         </section>
       )}
+
+      {/* Without the board's staging column, the simulated runs bring their own card. */}
+      {data && !(data.available && (lanes.length > 0 || staging.length > 0)) && <SimRunsPanel standalone />}
 
       {data?.available && other.length > 0 && (
         <section className="card" aria-label="Other work">

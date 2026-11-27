@@ -70,3 +70,23 @@ export function testsHoldTheGate(policy: TestingPolicy, hasEpicBranch: boolean):
 export function bugsHoldTheGate(policy: TestingPolicy, hasEpicBranch: boolean): boolean {
   return policy.bugReports && policy.mode === "gate" && hasEpicBranch;
 }
+
+/**
+ * The repo's simulated runs (the `simulate` block of the same file): the
+ * repo whose workflow runs the scenarios and the commit status context each
+ * run posts. Null when the block is absent or names no run repo.
+ */
+export interface SimulateConfig {
+  runRepo: string;
+  /** Null when the block names none: the runs still happen, their result is just not read here. */
+  statusContext: string | null;
+}
+
+export function parseSimulate(json: unknown): SimulateConfig | null {
+  const sim = ((json ?? {}) as Record<string, unknown>).simulate as Record<string, unknown> | undefined;
+  if (!sim || typeof sim !== "object") return null;
+  const runRepo = typeof sim.run_repo === "string" ? sim.run_repo.trim() : "";
+  if (!/^[\w.-]+\/[\w.-]+$/.test(runRepo)) return null;
+  const statusContext = typeof sim.status_context === "string" && sim.status_context.trim() ? sim.status_context.trim() : null;
+  return { runRepo, statusContext };
+}

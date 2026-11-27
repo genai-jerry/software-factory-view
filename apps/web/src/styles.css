@@ -1598,6 +1598,23 @@ a.button.primary { background: var(--accent); border-color: var(--accent); color
 .env-mem b { color: var(--text); font-weight: 600; }
 .env-merged { font-size: 0.76rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .env-merged a { color: var(--text); }
+/* Simulated runs: the run repo's switch, under the staging cards it tests. */
+.sim-runs {
+  display: flex; flex-direction: column; gap: 0.35rem; min-width: 0;
+  padding: 0.5rem 0.65rem; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem;
+}
+.env-sim-card { display: flex; flex-direction: column; gap: 0.5rem; }
+.sim-mode { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.sim-mode label { flex: 1 1 6rem; display: flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.sim-mode label.on { border-color: var(--accent); color: var(--text); font-weight: 600; }
+.sim-mode input { width: auto; margin: 0; }
+.sim-reason { font-size: 0.78rem; color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--amber); border-radius: 6px; padding: 0.3rem 0.5rem; overflow-wrap: anywhere; }
+.sim-latest { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.sim-latest-repo { color: var(--text-dim); }
+.sim-latest .sim-state-success a { color: var(--green); }
+.sim-latest .sim-state-failure a, .sim-latest .sim-state-error a { color: var(--red); }
+.sim-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.sim-error { margin: 0; overflow-wrap: anywhere; }
 .env-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.4rem; vertical-align: 1px; background: var(--text-dim); }
 .env-running { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .env-running .env-dot, .env-dot.running { background: var(--accent); }

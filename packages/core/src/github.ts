@@ -597,6 +597,66 @@ export class RepoReader {
   async listLabels(owner: string, repo: string): Promise<Array<{ name: string; color: string; description: string | null }>> {
     return (await this.req("GET", `/repos/${owner}/${repo}/labels?per_page=100`)) as never;
   }
+
+  /**
+   * The newest status a context posted on a commit (branch name or sha), or
+   * null when it has posted none — or the ref does not exist.
+   */
+  async getCommitStatus(
+    owner: string,
+    repo: string,
+    ref: string,
+    context: string,
+  ): Promise<{ state: string; description: string | null; target_url: string | null; sha: string } | null> {
+    try {
+      const json = (await this.req("GET", `/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}/status?per_page=100`)) as {
+        sha: string;
+        statuses: Array<{ context: string; state: string; description: string | null; target_url: string | null }>;
+      };
+      const hit = json.statuses.find((s) => s.context === context);
+      return hit ? { state: hit.state, description: hit.description, target_url: hit.target_url, sha: json.sha } : null;
+    } catch (e) {
+      if (e instanceof GitHubHttpError && (e.status === 404 || e.status === 422)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * An Actions repository variable's value, or null when the repo has no
+   * such variable. A refusal (403) throws: "unset" and "not allowed to look"
+   * must stay distinct for the caller.
+   */
+  async getActionsVariable(owner: string, repo: string, name: string): Promise<string | null> {
+    try {
+      const json = (await this.req("GET", `/repos/${owner}/${repo}/actions/variables/${encodeURIComponent(name)}`)) as {
+        value: string;
+      };
+      return json.value;
+    } catch (e) {
+      if (e instanceof GitHubHttpError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  /** Create or update an Actions repository variable (Variables: write). */
+  async setActionsVariable(owner: string, repo: string, name: string, value: string): Promise<void> {
+    try {
+      await this.req("PATCH", `/repos/${owner}/${repo}/actions/variables/${encodeURIComponent(name)}`, { name, value });
+    } catch (e) {
+      if (!(e instanceof GitHubHttpError && e.status === 404)) throw e;
+      await this.req("POST", `/repos/${owner}/${repo}/actions/variables`, { name, value });
+    }
+  }
+
+  /** Remove an Actions repository variable; one that is already gone is fine. */
+  async deleteActionsVariable(owner: string, repo: string, name: string): Promise<void> {
+    try {
+      await this.req("DELETE", `/repos/${owner}/${repo}/actions/variables/${encodeURIComponent(name)}`);
+    } catch (e) {
+      if (e instanceof GitHubHttpError && e.status === 404) return;
+      throw e;
+    }
+  }
 }
 
 /* ---------------------------------- installation client ---------------------------------- */

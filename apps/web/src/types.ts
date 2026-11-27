@@ -842,6 +842,22 @@ export interface EnvironmentsView {
   other: EnvCard[];
 }
 
+/** A repo's simulated scenario runs, as `/api/sim-runs` reads them. */
+export interface SimRun {
+  repo: string;
+  /** The repo whose workflow runs the scenarios; its SIM_SCENARIOS variable is the switch. */
+  runRepo: string;
+  statusContext: string | null;
+  /** Null when the variable could not be read; `reason` says why. */
+  mode: "automatic" | "manual" | null;
+  reason: string | null;
+  latest: { state: string; description: string | null; url: string | null; sha: string } | null;
+}
+
+export interface SimRunsView {
+  sims: SimRun[];
+}
+
 export type SimulatedCaseExecution = { kind: "simulated" } | { kind: "manual"; reason: string | null };
 
 export interface SimulatedCaseVerdict {
